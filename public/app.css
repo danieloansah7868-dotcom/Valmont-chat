@@ -4,50 +4,59 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --wa-green: #00a884;
-  --wa-green-dark: #008069;
-  --wa-green-deep: #005c4b;
-  --bubble-out: #d9fdd3;
+  --brand-green: #469f86;      /* Valmont's signature premium surgical green */
+  --brand-green-dark: #306e5d; /* Darker Valmont green */
+  --brand-green-deep: #1d5345; /* Deep Valmont green */
+  --brand-gold: #c19052;       /* Valmont's signature gold */
+  --brand-gold-light: #e7ca8c; /* Soft gold accent */
+  --brand-gold-dark: #8a6623;  /* Deep gold shadow */
+
+  --wa-green: var(--brand-green);
+  --wa-green-dark: var(--brand-green-dark);
+  --wa-green-deep: var(--brand-green-deep);
+  --bubble-out: #e4f5f0;       /* Light, clean sage-mint tint instead of generic green */
   --bubble-in: #ffffff;
   --panel: #ffffff;
-  --panel-header: #f0f2f5;
-  --panel-alt: #f0f2f5;
-  --chat-bg: #efeae2;
-  --border: #e9edef;
-  --divider: #e9edef;
-  --text: #111b21;
-  --text-secondary: #667781;
-  --text-muted: #8696a0;
-  --hover: #f5f6f6;
-  --active: #f0f2f5;
-  --badge: #25d366;
-  --tick-read: #53bdeb;
+  --panel-header: #f7f9f8;     /* Slightly off-white with cool undertones */
+  --panel-alt: #f0f3f2;
+  --chat-bg: #eaeaea;          /* Premium neutral light gray background */
+  --border: #e2e7e5;
+  --divider: #e2e7e5;
+  --text: #1b2723;             /* Rich charcoal-slate green */
+  --text-secondary: #566c64;   /* Soft slate slate */
+  --text-muted: #829a92;
+  --hover: #f1f4f3;
+  --active: #e7ecea;
+  --badge: var(--brand-gold);  /* Gold for notification badges instead of loud green */
+  --tick-read: var(--brand-gold); /* Gold ticks for read receipts for an ultra-premium feel */
   --danger: #ea0038;
-  --shadow-sm: 0 1px 0.5px rgba(11,20,26,.13);
-  --shadow-md: 0 2px 5px rgba(11,20,26,.26);
-  --shadow-lg: 0 12px 32px rgba(11,20,26,.24);
+  --shadow-sm: 0 1px 0.5px rgba(27,39,35,.08);
+  --shadow-md: 0 2px 5px rgba(27,39,35,.15);
+  --shadow-lg: 0 12px 32px rgba(27,39,35,.12);
   --radius: 7.5px;
   --sidebar-w: 400px;
 }
 
 body.dark {
-  --wa-green: #00a884;
-  --wa-green-dark: #202c33;
-  --wa-green-deep: #005c4b;
-  --bubble-out: #005c4b;
-  --bubble-in: #202c33;
-  --panel: #111b21;
-  --panel-header: #202c33;
-  --panel-alt: #202c33;
-  --chat-bg: #0b141a;
-  --border: #222d34;
-  --divider: #222d34;
-  --text: #e9edef;
-  --text-secondary: #8696a0;
-  --text-muted: #8696a0;
-  --hover: #202c33;
-  --active: #2a3942;
+  --wa-green: var(--brand-green);
+  --wa-green-dark: #1b2723;
+  --wa-green-deep: var(--brand-green-deep);
+  --bubble-out: #233c32;       /* Rich dark sage bubble */
+  --bubble-in: #1c2723;        /* Dark slate green bubble */
+  --panel: #111a17;            /* Dark luxury forest-black */
+  --panel-header: #1b2723;
+  --panel-alt: #1b2723;
+  --chat-bg: #090e0c;
+  --border: #23342f;
+  --divider: #23342f;
+  --text: #e7ecea;
+  --text-secondary: #829a92;
+  --text-muted: #829a92;
+  --hover: #1b2723;
+  --active: #23342f;
   --shadow-sm: 0 1px 0.5px rgba(0,0,0,.3);
+  --badge: var(--brand-gold);
+  --tick-read: var(--brand-gold);
 }
 
 html, body {
