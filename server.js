@@ -8,12 +8,12 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.static(__dirname));
+app.disable('x-powered-by');
 
-app.get('/', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
-});
+// Static assets (uploads live under /public/uploads)
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
+
+app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 const httpServer = http.createServer(app);
 
@@ -22,7 +22,6 @@ messenger.attach(httpServer, app);
 
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log('');
-  console.log('  🗨️  VChat is LIVE');
-  console.log('  http://localhost:' + PORT);
+  console.log('  🟢 VChat is live  →  http://localhost:' + PORT);
   console.log('');
 });
