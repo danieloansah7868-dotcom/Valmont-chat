@@ -10,10 +10,40 @@ npm install
 npm start
 ```
 
-Open <http://localhost:3000>. Pick a display name and an avatar and you're in.
-To try a conversation, open a second browser (or a private window) and join as someone else.
+Open <http://localhost:3000> and sign in with your phone number. Without an SMS
+provider configured the app runs in **dev mode**: the verification code is printed to
+the server console and shown on the code screen, so you can sign in offline.
+
+To try a conversation, open a second browser (or a private window) and sign in with a
+different number.
 
 Set a different port with `PORT=8080 npm start`.
+
+## Signing in
+
+Sign-in is by phone number, WhatsApp-style:
+
+1. Pick your country and enter your number — it is normalised to E.164 (`+233241112233`).
+2. Enter the 6-digit code sent to that number.
+3. First time on a number, choose a display name and avatar. After that the number
+   signs you straight back into the same account.
+
+The session token is kept in `localStorage`, so you stay signed in across reloads
+until you log out.
+
+### Real SMS
+
+Set these environment variables to send codes through Twilio:
+
+```bash
+TWILIO_ACCOUNT_SID=ACxxxxxxxx
+TWILIO_AUTH_TOKEN=xxxxxxxx
+TWILIO_FROM=+15551234567
+```
+
+With none of them set, codes go to the console instead. Codes are 6 digits, stored
+only as a salted SHA-256 hash, expire after 5 minutes, allow 5 attempts, and are rate
+limited to one every 30 seconds and 5 per number per hour.
 
 ## Features
 
@@ -65,6 +95,11 @@ conversations. Delete that file to start from a clean slate.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
+| `POST` | `/api/auth/request-code` | `{dialCode, number}` → sends a code, `{phone, registered, username, delivered, devCode}` |
+| `POST` | `/api/auth/verify` | `{phone, code}` → `{token, user}`, or `{needsProfile: true}` for a new number |
+| `POST` | `/api/auth/register` | `{phone, username, avatar}` → `{token, user}` (needs a recent verification) |
+| `POST` | `/api/auth/session` | `{token}` → `{user}`, for resuming a session |
+| `POST` | `/api/auth/logout` | `{token}` → `{ok: true}` |
 | `POST` | `/api/messenger/upload` | Multipart upload (field `file`) → `{url, name, size, mimeType}` |
 | `GET` | `/api/messenger/users` | All known users |
 | `GET` | `/api/messenger/chats?userId=` | Chats visible to a user |
@@ -84,5 +119,7 @@ conversations. Delete that file to start from a clean slate.
 
 ## Notes
 
-There are no passwords — anyone who can reach the server can join under any unused name.
+Accounts are tied to a phone number and there are no passwords — whoever receives the
+code owns the account. In dev mode the code is handed straight to the caller, so
+configure Twilio before exposing the server to anyone you don't trust.
 It's built for a trusted network (a team, a classroom, a LAN), not the open internet.

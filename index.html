@@ -54,18 +54,59 @@
       <span class="logo-badge"><svg class="icon"><use href="#i-chat"/></svg></span>
       <h1>VChat</h1>
     </div>
-    <h2>Use VChat on your computer</h2>
-    <p class="sub">Pick a display name and an avatar — your chats, groups and history stay linked to that name on this server.</p>
 
-    <label class="field-label" for="name-input">Your name</label>
-    <input id="name-input" type="text" placeholder="e.g. Daniel" autocomplete="off" maxlength="24" />
+    <!-- Step 1 — phone number -->
+    <section class="auth-step" id="step-phone">
+      <h2>Enter your phone number</h2>
+      <p class="sub">VChat will send an SMS to verify your number. Carrier charges may apply.</p>
 
-    <label class="field-label">Choose an avatar</label>
-    <div class="avatar-picker" id="avatar-picker"></div>
+      <label class="field-label" for="phone-input">Phone number</label>
+      <div class="phone-row">
+        <select id="dial-select" aria-label="Country code"></select>
+        <input id="phone-input" type="tel" inputmode="tel" placeholder="20 123 4567" autocomplete="tel-national" maxlength="18" />
+      </div>
 
-    <button class="btn-primary" id="login-btn">Start chatting</button>
-    <div class="login-err" id="login-err"></div>
-    <p class="login-hint">Tip: open a second browser window (or an incognito tab) with a different name to see real-time messaging, typing indicators and blue ticks in action.</p>
+      <button class="btn-primary" id="btn-send-code">Next</button>
+      <div class="login-err" id="login-err"></div>
+      <p class="login-hint">We never share your number. It is only used to sign you in and let contacts find you.</p>
+    </section>
+
+    <!-- Step 2 — verification code -->
+    <section class="auth-step" id="step-code" hidden>
+      <button class="link-back" id="code-back"><svg class="icon-sm"><use href="#i-back"/></svg> Change number</button>
+      <h2>Verify your number</h2>
+      <p class="sub">Enter the 6-digit code sent to <strong id="code-target"></strong>.</p>
+
+      <div class="code-boxes" id="code-boxes">
+        <input class="code-box" inputmode="numeric" maxlength="1" aria-label="Digit 1" />
+        <input class="code-box" inputmode="numeric" maxlength="1" aria-label="Digit 2" />
+        <input class="code-box" inputmode="numeric" maxlength="1" aria-label="Digit 3" />
+        <input class="code-box" inputmode="numeric" maxlength="1" aria-label="Digit 4" />
+        <input class="code-box" inputmode="numeric" maxlength="1" aria-label="Digit 5" />
+        <input class="code-box" inputmode="numeric" maxlength="1" aria-label="Digit 6" />
+      </div>
+
+      <div class="dev-code" id="dev-code" hidden></div>
+
+      <button class="btn-primary" id="btn-verify">Verify</button>
+      <button class="link-btn" id="btn-resend">Resend code</button>
+      <div class="login-err" id="code-err"></div>
+    </section>
+
+    <!-- Step 3 — profile (new numbers only) -->
+    <section class="auth-step" id="step-profile" hidden>
+      <h2>Profile info</h2>
+      <p class="sub">Please provide your name and an optional profile photo.</p>
+
+      <label class="field-label" for="name-input">Your name</label>
+      <input id="name-input" type="text" placeholder="e.g. Daniel" autocomplete="name" maxlength="24" />
+
+      <label class="field-label">Choose an avatar</label>
+      <div class="avatar-picker" id="avatar-picker"></div>
+
+      <button class="btn-primary" id="login-btn">Start chatting</button>
+      <div class="login-err" id="profile-err"></div>
+    </section>
   </div>
 </div>
 
@@ -222,6 +263,8 @@
         <input type="text" id="profile-name" maxlength="24" />
         <label class="field-label" style="margin-top:20px">About</label>
         <input type="text" id="profile-about" maxlength="80" />
+        <label class="field-label" style="margin-top:20px">Phone number</label>
+        <div class="profile-phone" id="profile-phone"></div>
       </div>
     </div>
     <div class="modal-foot">

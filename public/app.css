@@ -111,6 +111,46 @@ body.dark .avatar-opt.sel { background: #005c4b; }
 .login-err { color: var(--danger); font-size: 13px; margin-top: 12px; min-height: 18px; }
 .login-hint { margin-top: 18px; font-size: 12.5px; color: var(--text-muted); line-height: 1.6; }
 
+/* ── Phone sign-in ──────────────────────────────────────────── */
+.auth-step[hidden] { display: none; }
+.phone-row { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 26px; }
+#dial-select {
+  flex: 0 0 auto; max-width: 168px; padding: 10px 4px; font-size: 16px;
+  background: transparent; color: var(--text); border: none;
+  border-bottom: 2px solid var(--wa-green); outline: none; cursor: pointer;
+}
+#dial-select option { background: var(--panel); color: var(--text); }
+.login-card input[type=tel] {
+  flex: 1; min-width: 0; padding: 10px 4px; font-size: 17px; letter-spacing: .5px;
+  background: transparent; color: var(--text);
+  border: none; border-bottom: 2px solid var(--wa-green); outline: none;
+}
+.code-boxes { display: flex; gap: 10px; margin-bottom: 20px; }
+.code-box {
+  width: 100%; max-width: 54px; aspect-ratio: 3 / 4; text-align: center;
+  font-size: 24px; font-weight: 500; color: var(--text);
+  background: var(--panel-alt); border: 2px solid var(--border);
+  border-radius: 8px; outline: none; transition: .15s;
+}
+.code-box:focus { border-color: var(--wa-green); background: var(--panel); }
+.code-box.filled { border-color: var(--wa-green); }
+.link-btn {
+  display: block; margin-top: 14px; color: var(--wa-green);
+  font-size: 14px; font-weight: 500; background: none; padding: 4px 0;
+}
+.link-btn:disabled { color: var(--text-muted); cursor: not-allowed; }
+.link-back {
+  display: inline-flex; align-items: center; gap: 6px; margin-bottom: 14px;
+  color: var(--text-secondary); font-size: 13px; background: none; padding: 0;
+}
+.link-back:hover { color: var(--wa-green); }
+.dev-code {
+  background: #fff4d4; border: 1px dashed #e0b34d; color: #6b4e00;
+  border-radius: 8px; padding: 10px 14px; font-size: 13px; line-height: 1.6; margin-bottom: 18px;
+}
+.dev-code b { font-size: 19px; letter-spacing: 3px; font-family: var(--mono, ui-monospace, monospace); }
+body.dark .dev-code { background: #3a3520; border-color: #7a6a30; color: #f0d999; }
+
 /* ── App shell ──────────────────────────────────────────────── */
 #app { display: none; height: 100vh; height: 100dvh; }
 body.ready #app { display: block; }
@@ -506,4 +546,10 @@ body.dark .search-result mark { background: #6b5a24; }
   .messages { padding: 12px 12px 8px; }
   .composer { padding: 5px 8px; }
   .emoji-panel { width: calc(100vw - 24px); left: 12px; }
+}
+
+/* Read-only phone row in the profile modal */
+.profile-phone {
+  padding: 10px 4px; font-size: 16px; color: var(--text-secondary);
+  border-bottom: 2px solid var(--border); letter-spacing: .4px;
 }

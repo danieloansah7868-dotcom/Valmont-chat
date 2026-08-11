@@ -152,36 +152,298 @@ function buildAvatarPicker(container, selected, onPick) {
   });
 }
 
-function initLogin() {
-  buildAvatarPicker($('avatar-picker'), pickedAvatar, a => { pickedAvatar = a; });
-  const saved = localStorage.getItem('vchat.name');
-  if (saved) $('name-input').value = saved;
-  const savedAvatar = localStorage.getItem('vchat.avatar');
-  if (savedAvatar) { pickedAvatar = savedAvatar; buildAvatarPicker($('avatar-picker'), pickedAvatar, a => { pickedAvatar = a; }); }
+// Dial codes — the user's country is guessed from the browser locale/timezone.
+const DIAL_CODES = [
+  ['GH', '233', 'Ghana'], ['NG', '234', 'Nigeria'], ['KE', '254', 'Kenya'],
+  ['ZA', '27', 'South Africa'], ['US', '1', 'United States'], ['GB', '44', 'United Kingdom'],
+  ['CA', '1', 'Canada'], ['IN', '91', 'India'], ['DE', '49', 'Germany'],
+  ['FR', '33', 'France'], ['ES', '34', 'Spain'], ['IT', '39', 'Italy'],
+  ['NL', '31', 'Netherlands'], ['BR', '55', 'Brazil'], ['MX', '52', 'Mexico'],
+  ['AU', '61', 'Australia'], ['CN', '86', 'China'], ['JP', '81', 'Japan'],
+  ['AE', '971', 'United Arab Emirates'], ['EG', '20', 'Egypt'], ['ET', '251', 'Ethiopia'],
+  ['TZ', '255', 'Tanzania'], ['UG', '256', 'Uganda'], ['CI', '225', "Côte d'Ivoire"],
+  ['SN', '221', 'Senegal'], ['CM', '237', 'Cameroon'], ['MA', '212', 'Morocco'],
+  ['PK', '92', 'Pakistan'], ['BD', '880', 'Bangladesh'], ['PH', '63', 'Philippines'],
+];
 
-  $('login-btn').onclick = doLogin;
-  $('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
-  $('name-input').focus();
+const flagOf = cc => cc.replace(/./g, c => String.fromCodePoint(127397 + c.charCodeAt(0)));
 
-  if (localStorage.getItem('vchat.theme') === 'dark') document.body.classList.add('dark');
+let authPhone = null;      // E.164 string from the server
+let resendTimer = null;
+
+// Timezone → country, for the dial codes we list. Timezone reflects where the
+// user physically is, which beats the browser's language region (an en-US
+// browser in Accra should still default to +233).
+const TZ_COUNTRY = {
+  'Africa/Accra': 'GH', 'Africa/Lagos': 'NG', 'Africa/Nairobi': 'KE',
+  'Africa/Johannesburg': 'ZA', 'Africa/Cairo': 'EG', 'Africa/Addis_Ababa': 'ET',
+  'Africa/Dar_es_Salaam': 'TZ', 'Africa/Kampala': 'UG', 'Africa/Abidjan': 'CI',
+  'Africa/Dakar': 'SN', 'Africa/Douala': 'CM', 'Africa/Casablanca': 'MA',
+  'Europe/London': 'GB', 'Europe/Berlin': 'DE', 'Europe/Paris': 'FR',
+  'Europe/Madrid': 'ES', 'Europe/Rome': 'IT', 'Europe/Amsterdam': 'NL',
+  'America/Sao_Paulo': 'BR', 'America/Mexico_City': 'MX', 'America/Toronto': 'CA',
+  'Asia/Kolkata': 'IN', 'Asia/Calcutta': 'IN', 'Asia/Dubai': 'AE',
+  'Asia/Karachi': 'PK', 'Asia/Dhaka': 'BD', 'Asia/Manila': 'PH',
+  'Asia/Shanghai': 'CN', 'Asia/Tokyo': 'JP', 'Australia/Sydney': 'AU',
+};
+
+function guessCountry() {
+  const known = cc => cc && DIAL_CODES.some(d => d[0] === cc);
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    if (known(TZ_COUNTRY[tz])) return TZ_COUNTRY[tz];
+    if (/^America\//.test(tz)) return 'US';
+  } catch { /* no Intl */ }
+  try {
+    const region = new Intl.Locale(navigator.language).region;
+    if (known(region)) return region;
+  } catch { /* older browsers */ }
+  return 'GH';
 }
 
-function doLogin() {
+function showStep(id) {
+  ['step-phone', 'step-code', 'step-profile'].forEach(s => { $(s).hidden = s !== id; });
+}
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  let data = {};
+  try { data = await res.json(); } catch { /* empty body */ }
+  return { ok: res.ok, data };
+}
+
+function initLogin() {
+  if (localStorage.getItem('vchat.theme') === 'dark') document.body.classList.add('dark');
+
+  // Country picker
+  const sel = $('dial-select');
+  const home = guessCountry();
+  DIAL_CODES.forEach(([cc, dial, name]) => {
+    const o = document.createElement('option');
+    o.value = dial;
+    o.textContent = `${flagOf(cc)} ${name} +${dial}`;
+    o.dataset.cc = cc;
+    if (cc === home) o.selected = true;
+    sel.appendChild(o);
+  });
+
+  buildAvatarPicker($('avatar-picker'), pickedAvatar, a => { pickedAvatar = a; });
+  const savedAvatar = localStorage.getItem('vchat.avatar');
+  if (savedAvatar) { pickedAvatar = savedAvatar; buildAvatarPicker($('avatar-picker'), pickedAvatar, a => { pickedAvatar = a; }); }
+  const savedName = localStorage.getItem('vchat.name');
+  if (savedName) $('name-input').value = savedName;
+
+  const savedPhone = localStorage.getItem('vchat.phone');
+  if (savedPhone) {
+    const match = DIAL_CODES.filter(d => savedPhone.startsWith('+' + d[1]))
+      .sort((a, b) => b[1].length - a[1].length)[0];
+    if (match) { sel.value = match[1]; $('phone-input').value = savedPhone.slice(match[1].length + 1); }
+  }
+
+  $('btn-send-code').onclick = () => requestCode(false);
+  $('phone-input').addEventListener('keydown', e => { if (e.key === 'Enter') requestCode(false); });
+  $('phone-input').addEventListener('input', () => { $('login-err').textContent = ''; });
+
+  $('code-back').onclick = () => { clearInterval(resendTimer); showStep('step-phone'); $('phone-input').focus(); };
+  $('btn-verify').onclick = submitCode;
+  $('btn-resend').onclick = () => requestCode(true);
+  initCodeBoxes();
+
+  $('login-btn').onclick = submitProfile;
+  $('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitProfile(); });
+
+  $('phone-input').focus();
+  restoreSession();
+}
+
+/** Silently resume an existing session so you are not asked to verify twice. */
+async function restoreSession() {
+  const token = localStorage.getItem('vchat.token');
+  if (!token) return;
+  const { ok, data } = await api('/api/auth/session', { token });
+  if (ok && data.user) connect(token);
+  else localStorage.removeItem('vchat.token');
+}
+
+// ── Step 1: request a code ─────────────────────────────────────────────
+async function requestCode(resend) {
+  const isResend = resend === true;
+  const dialCode = $('dial-select').value;
+  const number = $('phone-input').value.trim();
+  const errBox = isResend ? $('code-err') : $('login-err');
+  errBox.textContent = '';
+
+  if (number.replace(/\D/g, '').length < 6) {
+    errBox.textContent = 'Enter a valid phone number';
+    return;
+  }
+
+  const btn = isResend ? $('btn-resend') : $('btn-send-code');
+  btn.disabled = true;
+  const { ok, data } = await api('/api/auth/request-code', { dialCode, number });
+  btn.disabled = false;
+
+  if (!ok) { errBox.textContent = data.error || 'Could not send the code'; return; }
+
+  authPhone = data.phone;
+  $('code-target').textContent = data.phone;
+  localStorage.setItem('vchat.phone', data.phone);
+  if (data.username) $('name-input').value = data.username;
+
+  // Dev mode: no SMS provider configured, so surface the code in the UI.
+  const dev = $('dev-code');
+  if (data.devCode) {
+    dev.hidden = false;
+    dev.innerHTML = `SMS is not configured on this server, so here is your code:<br><b>${esc(data.devCode)}</b>`;
+  } else {
+    dev.hidden = true;
+  }
+
+  showStep('step-code');
+  startResendCountdown();
+  const boxes = [...$('code-boxes').children];
+  boxes.forEach(b => { b.value = ''; b.classList.remove('filled'); });
+  boxes[0].focus();
+  if (isResend) toast('New code sent');
+}
+
+function startResendCountdown() {
+  clearInterval(resendTimer);
+  let left = 30;
+  const btn = $('btn-resend');
+  btn.disabled = true;
+  btn.textContent = `Resend code in ${left}s`;
+  resendTimer = setInterval(() => {
+    left -= 1;
+    if (left <= 0) {
+      clearInterval(resendTimer);
+      btn.disabled = false;
+      btn.textContent = 'Resend code';
+    } else {
+      btn.textContent = `Resend code in ${left}s`;
+    }
+  }, 1000);
+}
+
+// ── Step 2: enter the 6 digits ─────────────────────────────────────────
+function codeValue() {
+  return [...$('code-boxes').children].map(b => b.value).join('');
+}
+
+function initCodeBoxes() {
+  const boxes = [...$('code-boxes').children];
+  boxes.forEach((box, i) => {
+    box.addEventListener('input', () => {
+      box.value = box.value.replace(/\D/g, '').slice(0, 1);
+      box.classList.toggle('filled', !!box.value);
+      $('code-err').textContent = '';
+      if (box.value && i < boxes.length - 1) boxes[i + 1].focus();
+      if (codeValue().length === 6) submitCode();
+    });
+    box.addEventListener('keydown', e => {
+      if (e.key === 'Backspace' && !box.value && i > 0) boxes[i - 1].focus();
+      if (e.key === 'ArrowLeft' && i > 0) boxes[i - 1].focus();
+      if (e.key === 'ArrowRight' && i < boxes.length - 1) boxes[i + 1].focus();
+      if (e.key === 'Enter') submitCode();
+    });
+    box.addEventListener('paste', e => {
+      e.preventDefault();
+      const digits = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6);
+      if (!digits) return;
+      digits.split('').forEach((d, k) => {
+        if (boxes[k]) { boxes[k].value = d; boxes[k].classList.add('filled'); }
+      });
+      boxes[Math.min(digits.length, 5)].focus();
+      if (digits.length === 6) submitCode();
+    });
+  });
+}
+
+let verifying = false;
+async function submitCode() {
+  const code = codeValue();
+  if (code.length !== 6 || verifying) return;
+  verifying = true;
+  $('btn-verify').disabled = true;
+  $('code-err').textContent = '';
+
+  const { ok, data } = await api('/api/auth/verify', {
+    phone: authPhone,
+    code,
+    username: $('name-input').value.trim() || undefined,
+    avatar: pickedAvatar,
+  });
+  verifying = false;
+  $('btn-verify').disabled = false;
+
+  if (!ok) {
+    $('code-err').textContent = data.error || 'Verification failed';
+    const boxes = [...$('code-boxes').children];
+    boxes.forEach(b => { b.value = ''; b.classList.remove('filled'); });
+    boxes[0].focus();
+    return;
+  }
+
+  clearInterval(resendTimer);
+
+  if (data.needsProfile) {          // new number → ask for a name
+    showStep('step-profile');
+    $('name-input').focus();
+    return;
+  }
+
+  finishAuth(data);
+}
+
+// ── Step 3: name + avatar for first-time numbers ───────────────────────
+async function submitProfile() {
   const username = $('name-input').value.trim();
-  if (username.length < 2) { $('login-err').textContent = 'Please enter at least 2 characters'; return; }
-  $('login-err').textContent = '';
+  if (username.length < 2) { $('profile-err').textContent = 'Please enter at least 2 characters'; return; }
+  $('profile-err').textContent = '';
   $('login-btn').disabled = true;
-  connect(username, pickedAvatar);
+
+  // The code was consumed by the previous call, so ask for a fresh one and
+  // verify in a single step is not possible — instead the server accepts the
+  // profile with the still-valid pending registration.
+  const { ok, data } = await api('/api/auth/register', {
+    phone: authPhone, username, avatar: pickedAvatar,
+  });
+  $('login-btn').disabled = false;
+
+  if (!ok) { $('profile-err').textContent = data.error || 'Could not create your profile'; return; }
+  finishAuth(data);
+}
+
+function finishAuth({ token, user }) {
+  localStorage.setItem('vchat.token', token);
+  localStorage.setItem('vchat.name', user.username);
+  localStorage.setItem('vchat.avatar', user.avatar || '');
+  connect(token);
 }
 
 // ── Socket ─────────────────────────────────────────────────────────────
-function connect(username, avatar) {
-  socket = io({ transports: ['websocket', 'polling'] });
+function connect(token) {
+  if (socket) socket.close();
+  socket = io({ transports: ['websocket', 'polling'], auth: { token } });
 
   socket.on('connect', () => {
-    socket.emit('user:join', { username, avatar }, (res) => {
+    socket.emit('user:join', { token }, (res) => {
       $('login-btn').disabled = false;
-      if (!res || res.error) { $('login-err').textContent = res?.error || 'Could not join'; return; }
+      if (!res || res.error) {
+        if (res?.signedOut) {           // token no longer valid → back to step 1
+          localStorage.removeItem('vchat.token');
+          socket.close();
+          showStep('step-phone');
+          $('login-err').textContent = 'Your session expired. Please sign in again.';
+          return;
+        }
+        $('code-err').textContent = res?.error || 'Could not join';
+        return;
+      }
       me = res.user;
       chats = res.chats;
       users = res.users;
@@ -328,6 +590,8 @@ function openProfile() {
   });
   $('profile-name').value = me.username;
   $('profile-about').value = me.about || '';
+  const phoneRow = $('profile-phone');
+  if (phoneRow) phoneRow.textContent = me.phone || 'Not linked';
   $('profile-save').onclick = () => {
     socket.emit('profile:update', {
       username: $('profile-name').value.trim(),
@@ -845,6 +1109,11 @@ function openDrawer() {
     body.appendChild(el('div', 'drawer-block left', `
       <div class="drawer-label">About</div>
       <div class="drawer-value">${esc(entity?.about || 'Hey there! I am using VChat.')}</div>`));
+    if (entity?.phone) {
+      body.appendChild(el('div', 'drawer-block left', `
+        <div class="drawer-label">Phone number</div>
+        <div class="drawer-value">${esc(entity.phone)}</div>`));
+    }
   } else {
     const members = el('div', 'drawer-block left');
     members.style.padding = '14px 0';
@@ -1005,7 +1274,12 @@ function mainMenu(e) {
     { sep: true },
     { label: document.body.classList.contains('dark') ? 'Light mode' : 'Dark mode', fn: toggleTheme },
     { sep: true },
-    { label: 'Log out', danger: true, fn: () => { localStorage.removeItem('vchat.name'); location.reload(); } },
+    { label: 'Log out', danger: true, fn: async () => {
+      const token = localStorage.getItem('vchat.token');
+      localStorage.removeItem('vchat.token');
+      try { await api('/api/auth/logout', { token }); } catch { /* offline */ }
+      location.reload();
+    } },
   ]);
 }
 
