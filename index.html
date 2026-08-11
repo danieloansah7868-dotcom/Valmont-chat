@@ -183,6 +183,8 @@
         <button class="hdr-btn" id="btn-chat-menu" title="Menu"><svg class="icon"><use href="#i-menu"/></svg></button>
       </header>
 
+      <div class="offline-bar" id="offline-bar"></div>
+
       <div class="messages" id="messages"></div>
 
       <button class="jump-btn" id="jump-btn"><svg class="icon"><use href="#i-chevron"/></svg><span class="n" id="jump-n" style="display:none"></span></button>
@@ -268,6 +270,30 @@
       <button class="btn-text" data-close>Cancel</button>
       <button class="btn-primary" id="group-create">Create group</button>
     </div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-lite">
+  <div class="modal">
+    <div class="modal-head">Lite mode</div>
+    <div class="modal-body">
+      <p class="lite-intro">For when the bundle is nearly finished. Talking stays; the expensive extras wait.</p>
+      <label class="lite-row">
+        <span>
+          <span class="lite-title">Use lite mode</span>
+          <span class="lite-note">Everything below turns on together</span>
+        </span>
+        <input type="checkbox" id="lite-toggle" class="switch" />
+      </label>
+      <ul class="lite-list">
+        <li><span>Photos load only when you tap them</span></li>
+        <li><span>Photos you send are shrunk much smaller</span></li>
+        <li><span>Videos never load by themselves</span></li>
+        <li><span>Voice calls only — around 8&nbsp;MB an hour</span></li>
+      </ul>
+      <div class="lite-saved" id="lite-saved"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Done</button></div>
   </div>
 </div>
 

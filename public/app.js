@@ -465,10 +465,12 @@ function connect(token) {
         const first = chats[0];
         if (first) openChat(first.id);
       }
+      updateOfflineBar();
+      flushOutbox();
     });
   });
 
-  socket.on('disconnect', () => setPeerStatus('connecting…'));
+  socket.on('disconnect', () => { setPeerStatus('connecting…'); updateOfflineBar(); });
 
   socket.on('chats:list', list => {
     chats = list;
@@ -787,10 +789,14 @@ function openChat(chatId) {
   renderChatList();
   updateHeaderForActive();
 
+  // Show anything still queued for this chat even before the server answers.
+  messages = pendingFor(chatId);
+  renderMessages();
+
   socket.emit('chat:open', { chatId }, res => {
     if (res?.error) return toast(res.error);
     if (activeId !== chatId) return;
-    messages = res.messages || [];
+    messages = [...(res.messages || []), ...pendingFor(chatId)];
     renderMessages();
     scrollBottom(true);
     $('msg-input').focus();
@@ -890,7 +896,7 @@ function renderMessages() {
 function messageRow(m, grouped) {
   const out = m.senderId === me.id;
   const c = activeChat();
-  const row = el('div', `msg-row ${out ? 'out' : 'in'}${grouped ? ' grouped' : ''}`);
+  const row = el('div', `msg-row ${out ? 'out' : 'in'}${grouped ? ' grouped' : ''}${m.pending ? ' pending' : ''}`);
   row.dataset.id = m.id;
 
   let inner = '';
@@ -913,9 +919,17 @@ function messageRow(m, grouped) {
     if (m.file) {
       const t = m.file.mimeType || '';
       if (t.startsWith('image/')) {
-        inner += `<img class="photo" src="${esc(m.file.url)}" alt="${esc(m.file.name)}" data-photo="${esc(m.file.url)}" data-name="${esc(m.file.name)}" />`;
+        // In lite mode a photo costs nothing until it is actually wanted.
+        inner += (lite && !shownPhotos.has(m.file.url))
+          ? `<button class="photo-hold" data-load="${esc(m.file.url)}">
+               <span class="ph-icon">${icon('photo', 'icon-sm')}</span>
+               <span class="ph-label">Tap to load photo</span>
+               <span class="ph-size">${fileSize(m.file.size)}</span>
+             </button>`
+          : `<img class="photo" src="${esc(m.file.url)}" alt="${esc(m.file.name)}" data-photo="${esc(m.file.url)}" data-name="${esc(m.file.name)}" />`;
       } else if (t.startsWith('video/')) {
-        inner += `<video class="clip" src="${esc(m.file.url)}" controls preload="metadata"></video>`;
+        // preload="none" in lite mode: metadata alone can be hundreds of KB.
+        inner += `<video class="clip" src="${esc(m.file.url)}" controls preload="${lite ? 'none' : 'metadata'}"></video>`;
       } else if (m.file.voice) {
         inner += voiceHTML(m.file);
       } else if (t.startsWith('audio/')) {
@@ -957,6 +971,11 @@ function messageRow(m, grouped) {
   bubble.querySelectorAll('[data-voice]').forEach(wireVoice);
   bubble.querySelector('[data-photo]')?.addEventListener('click', ev => {
     openLightbox(ev.target.dataset.photo, ev.target.dataset.name);
+  });
+  bubble.querySelector('[data-load]')?.addEventListener('click', ev => {
+    // Tapped a held-back photo: remember it and swap the placeholder for the image.
+    shownPhotos.add(ev.currentTarget.dataset.load);
+    renderMessages();
   });
   bubble.querySelector('[data-jump]')?.addEventListener('click', ev => {
     const target = $('messages').querySelector(`[data-id="${ev.currentTarget.dataset.jump}"]`);
@@ -1030,13 +1049,16 @@ function sendMessage() {
   const text = input.value.trim();
   if ((!text && !pendingFile) || !activeId) return;
 
-  socket.emit('message:send', {
+  const payload = {
     chatId: activeId,
     text,
     file: pendingFile,
     type: pendingFile ? (pendingFile.mimeType?.split('/')[0] || 'file') : 'text',
     replyTo,
-  });
+  };
+  // No connection? Keep it and send it the moment there is one.
+  if (online()) socket.emit('message:send', payload);
+  else queueMessage(payload);
 
   input.value = '';
   input.style.height = 'auto';
@@ -1058,6 +1080,170 @@ function onInput() {
   typingTimers[activeId] = setTimeout(() => socket.emit('typing:stop', { chatId: activeId }), 1800);
 }
 
+// ── Offline outbox ─────────────────────────────────────────────────────
+/**
+ * Messages written while there is no connection. They are kept in
+ * localStorage so they survive a refresh, a dead battery or a closed tab,
+ * shown in the thread with a clock tick, and flushed in order the moment the
+ * socket comes back. Ten seconds of signal is enough to empty a day of
+ * writing.
+ */
+const OUTBOX_KEY = 'vchat.outbox';
+let outbox = [];
+let flushing = false;
+
+function loadOutbox() {
+  try { outbox = JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); }
+  catch { outbox = []; }
+  if (!Array.isArray(outbox)) outbox = [];
+}
+
+function saveOutbox() {
+  try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox)); }
+  catch { /* storage full or blocked — the queue stays in memory */ }
+}
+
+function online() { return !!socket && socket.connected; }
+
+/** Queue a message for later and show it straight away. */
+function queueMessage(payload) {
+  const item = {
+    ...payload,
+    tempId: 'q' + Date.now() + Math.random().toString(36).slice(2, 7),
+    queuedAt: Date.now(),
+  };
+  outbox.push(item);
+  saveOutbox();
+  if (item.chatId === activeId) {
+    messages.push(outboxToMessage(item));
+    renderMessages();
+    scrollBottom();
+  }
+  updateOfflineBar();
+  return item;
+}
+
+/** Dress a queued item up as a message so the thread can render it. */
+function outboxToMessage(item) {
+  return {
+    id: item.tempId,
+    chatId: item.chatId,
+    senderId: me.id,
+    sender: { id: me.id, username: me.username, avatar: me.avatar, color: me.color },
+    text: item.text || '',
+    file: item.file || null,
+    type: item.type || 'text',
+    replyTo: item.replyTo || null,
+    timestamp: item.queuedAt,
+    reactions: {},
+    status: 'pending',
+    pending: true,
+  };
+}
+
+/** Anything queued for this chat, so opening it shows unsent messages too. */
+function pendingFor(chatId) {
+  return outbox.filter(i => i.chatId === chatId).map(outboxToMessage);
+}
+
+/**
+ * Send everything, oldest first. Each send waits for its ack so the server
+ * stores them in the order they were written rather than the order they land.
+ */
+async function flushOutbox() {
+  if (!online() || !outbox.length || flushing) return;
+  flushing = true;
+  updateOfflineBar();
+
+  while (outbox.length && online()) {
+    const item = outbox[0];
+    const sent = await new Promise(resolve => {
+      let settled = false;
+      const done = ok => { if (!settled) { settled = true; resolve(ok); } };
+      // A silent server is treated as a failure so we keep the message.
+      const bail = setTimeout(() => done(false), 10000);
+      socket.emit('message:send', {
+        chatId: item.chatId,
+        text: item.text,
+        file: item.file,
+        type: item.type,
+        replyTo: item.replyTo,
+        tempId: item.tempId,
+      }, res => { clearTimeout(bail); done(!res || !res.error); });
+    });
+
+    if (!sent) break;            // still queued, try again on the next connect
+    outbox.shift();
+    saveOutbox();
+    // Drop the placeholder; the real message arrives over message:new.
+    const at = messages.findIndex(m => m.id === item.tempId);
+    if (at !== -1) { messages.splice(at, 1); renderMessages(); }
+  }
+
+  flushing = false;
+  updateOfflineBar();
+}
+
+/** The banner that tells you the app is holding your messages. */
+function updateOfflineBar() {
+  const bar = $('offline-bar');
+  if (!bar) return;
+  const waiting = outbox.length;
+  const off = !online();
+  bar.classList.toggle('show', off || waiting > 0);
+  bar.textContent = off
+    ? (waiting ? `Offline — ${waiting} message${waiting > 1 ? 's' : ''} waiting to send` : 'Offline — messages will send when you reconnect')
+    : (flushing ? `Sending ${waiting} queued message${waiting > 1 ? 's' : ''}…` : '');
+}
+
+// ── Lite mode ──────────────────────────────────────────────────────────
+/**
+ * Data-saver. Built for the very common case where one person is nearly out
+ * of bundle: photos arrive as a tap-to-load placeholder instead of
+ * downloading themselves, outgoing photos are squeezed much harder, and
+ * video calling is traded for voice — an hour of talking costs a few MB
+ * instead of a few hundred.
+ */
+let lite = localStorage.getItem('vchat.lite') === '1';
+
+// URLs the user tapped to load — they stay visible for the rest of the session.
+const shownPhotos = new Set();
+
+// Bytes we did not spend, counted so the saving is visible rather than claimed.
+let liteSaved = Number(localStorage.getItem('vchat.liteSaved') || 0);
+
+function liteOn() { return lite; }
+
+function addSaved(bytes) {
+  if (!(bytes > 0)) return;
+  liteSaved += bytes;
+  localStorage.setItem('vchat.liteSaved', String(liteSaved));
+}
+
+function setLite(on) {
+  lite = !!on;
+  localStorage.setItem('vchat.lite', lite ? '1' : '0');
+  document.body.classList.toggle('lite', lite);
+  updateCallButtons();
+  if (activeId) renderMessages();
+  toast(lite ? 'Lite mode on — photos load on tap' : 'Lite mode off');
+}
+
+function openLiteMode() {
+  const box = $('lite-toggle');
+  box.checked = lite;
+  box.onchange = () => {
+    setLite(box.checked);
+    $('lite-saved').textContent = liteSummary();
+  };
+  $('lite-saved').textContent = liteSummary();
+  openModal('modal-lite');
+}
+
+function liteSummary() {
+  return liteSaved > 0 ? `You have saved about ${fileSize(liteSaved)} so far.` : '';
+}
+
 /**
  * Shrink big photos before upload, the way WhatsApp does. A 12MP phone photo is
  * ~5MB of JPEG that nobody views above ~1600px in a chat bubble, so we redraw it
@@ -1068,19 +1254,25 @@ function onInput() {
 const IMG_MAX_EDGE = 1600;      // longest side we keep
 const IMG_QUALITY = 0.82;       // JPEG quality
 const IMG_SKIP_BELOW = 200 * 1024;  // don't bother under 200KB
+const LITE_MAX_EDGE = 900;      // lite mode: still fine on a phone screen
+const LITE_QUALITY = 0.6;       // lite mode: visibly softer, a fraction of the bytes
 
 async function compressImage(file) {
   if (!file.type.startsWith('image/')) return file;
   // GIFs would lose animation; SVG is vector and tiny already.
   if (/gif|svg/.test(file.type)) return file;
-  if (file.size < IMG_SKIP_BELOW) return file;
+  // Lite mode squeezes everything, even the small ones.
+  if (file.size < IMG_SKIP_BELOW && !lite) return file;
+
+  const maxEdge = lite ? LITE_MAX_EDGE : IMG_MAX_EDGE;
+  const quality = lite ? LITE_QUALITY : IMG_QUALITY;
 
   try {
     const bitmap = await createImageBitmap(file);
     const { width: w, height: h } = bitmap;
-    const scale = Math.min(1, IMG_MAX_EDGE / Math.max(w, h));
+    const scale = Math.min(1, maxEdge / Math.max(w, h));
     // Already small enough and re-encoding probably won't help a modern JPEG.
-    if (scale === 1 && file.size < 1024 * 1024) { bitmap.close?.(); return file; }
+    if (scale === 1 && file.size < 1024 * 1024 && !lite) { bitmap.close?.(); return file; }
 
     const cw = Math.round(w * scale), ch = Math.round(h * scale);
     const canvas = document.createElement('canvas');
@@ -1094,7 +1286,7 @@ async function compressImage(file) {
     const keepPng = file.type === 'image/png' && hasAlpha(ctx, cw, ch);
     const outType = keepPng ? 'image/png' : 'image/jpeg';
 
-    const blob = await new Promise(res => canvas.toBlob(res, outType, IMG_QUALITY));
+    const blob = await new Promise(res => canvas.toBlob(res, outType, quality));
     if (!blob || blob.size >= file.size) return file;   // no win, keep original
 
     const base = file.name.replace(/\.[^.]+$/, '');
@@ -1127,6 +1319,7 @@ async function uploadFile(file) {
   const fd = new FormData();
   fd.append('file', file);
   const saved = original - file.size;
+  addSaved(saved);
   toast(saved > 50 * 1024 ? `Uploading… (saved ${fileSize(saved)})` : 'Uploading…');
   try {
     const res = await fetch('/api/messenger/upload', { method: 'POST', body: fd });
@@ -1284,13 +1477,15 @@ async function finishRecording() {
     const res = await fetch('/api/messenger/upload', { method: 'POST', body: fd });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
-    socket.emit('message:send', {
+    const payload = {
       chatId: activeId,
       text: '',
       file: { ...data, voice: true, duration: secs },
       type: 'voice',
       replyTo,
-    });
+    };
+    if (online()) socket.emit('message:send', payload);
+    else queueMessage(payload);
     replyTo = null; setReplyBar(null);
   } catch (err) {
     toast('Could not send voice note: ' + err.message);
@@ -1569,6 +1764,7 @@ function mainMenu(e) {
     { label: 'Profile', fn: openProfile },
     { label: 'Archived', fn: () => setFilter('archived') },
     { label: 'Call quality', fn: openCallQuality },
+    { label: lite ? 'Lite mode: on' : 'Lite mode: off', fn: openLiteMode },
     { sep: true },
     { label: document.body.classList.contains('dark') ? 'Light mode' : 'Dark mode', fn: toggleTheme },
     { sep: true },
@@ -1698,10 +1894,30 @@ function ringShow(from, media) {
 function ringHide() { $('ring').classList.remove('on'); }
 
 async function getMedia(media) {
+  // Lite mode asks for a smaller picture at the source, so there is less to encode.
+  const size = lite ? { width: { ideal: 480 }, height: { ideal: 360 } }
+                    : { width: { ideal: 1280 }, height: { ideal: 720 } };
   const want = media === 'video'
-    ? { audio: true, video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } }
+    ? { audio: true, video: { ...size, facingMode: 'user' } }
     : { audio: true, video: false };
   return navigator.mediaDevices.getUserMedia(want);
+}
+
+/**
+ * Cap what the connection is allowed to spend. Opus stays intelligible far
+ * below its default, and this is what turns an hour of talking into a few MB.
+ */
+function applyBitrateCap(conn) {
+  if (!lite || !conn.getSenders) return;
+  for (const sender of conn.getSenders()) {
+    if (!sender.track || !sender.getParameters) continue;
+    try {
+      const params = sender.getParameters();
+      if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+      params.encodings[0].maxBitrate = sender.track.kind === 'audio' ? 16000 : 150000;
+      sender.setParameters(params).catch(() => {});
+    } catch { /* older browser — the call still works, just uncapped */ }
+  }
 }
 
 function makePeer(callId) {
@@ -1790,6 +2006,7 @@ async function acceptCall() {
 
   pc = makePeer(call.id);
   stream.getTracks().forEach(t => pc.addTrack(t, stream));
+  applyBitrateCap(pc);
   socket.emit('call:accept', { callId: call.id });
 }
 
@@ -1805,6 +2022,7 @@ async function onCallAccepted({ callId }) {
   callSetState('Connecting…');
   pc = makePeer(callId);
   localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+  applyBitrateCap(pc);
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   socket.emit('call:signal', { callId, data: { sdp: pc.localDescription } });
@@ -1933,7 +2151,8 @@ function updateCallButtons() {
   const dm = !!c && c.type === 'dm';
   const show = dm && callSupported();
   $('btn-call-voice').style.display = show ? '' : 'none';
-  $('btn-call-video').style.display = show ? '' : 'none';
+  // Video is the expensive one — lite mode hides it and leaves voice.
+  $('btn-call-video').style.display = (show && !lite) ? '' : 'none';
 }
 
 // ── Call rating ────────────────────────────────────────────────────────
@@ -2180,6 +2399,11 @@ function wire() {
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────
+loadOutbox();
+document.body.classList.toggle('lite', lite);
+// The browser tells us before the socket does.
+window.addEventListener('online', () => flushOutbox());
+window.addEventListener('offline', () => updateOfflineBar());
 initLogin();
 wire();
 
