@@ -723,3 +723,54 @@ body.dark .search-result mark { background: #6b5a24; }
   .call-actions{ gap:16px; }
   .call-btn{ width:54px; height:54px; }
 }
+
+/* ── Call rating ───────────────────────────────────────── */
+.rate-modal{ width:min(400px,calc(100vw - 32px)); text-align:center; }
+.rate-modal .modal-body{ padding:26px 24px 4px; }
+.rate-top .avatar{ margin:0 auto 14px; }
+.rate-head{ font-size:19px; font-weight:500; color:var(--text); }
+.rate-sub{ font-size:13.5px; color:var(--text-secondary); margin-top:5px; }
+
+.stars{ display:flex; justify-content:center; gap:6px; margin:22px 0 6px; }
+.star{
+  width:46px; height:46px; border:0; background:none; cursor:pointer; padding:0;
+  display:grid; place-items:center; color:var(--border);
+  transition:transform .12s cubic-bezier(.3,1.4,.5,1), color .12s;
+}
+.star .icon{ width:34px; height:34px; }
+.star:hover{ transform:scale(1.15); }
+.star:active{ transform:scale(.92); }
+.star.lit{ color:#f5b301; }
+.star.lit.pop{ animation:star-pop .32s cubic-bezier(.3,1.5,.5,1); }
+@keyframes star-pop{ 0%{ transform:scale(.6); } 60%{ transform:scale(1.25); } 100%{ transform:scale(1); } }
+.star:focus-visible{ outline:2px solid var(--wa-green); outline-offset:2px; border-radius:8px; }
+
+.rate-word{ font-size:14px; font-weight:500; color:var(--text-secondary); min-height:20px; }
+.rate-word.good{ color:var(--wa-green); }
+.rate-word.bad{ color:var(--danger); }
+
+.rate-more{ margin-top:18px; text-align:left; animation:rate-slide .22s ease-out; }
+@keyframes rate-slide{ from{ opacity:0; transform:translateY(-6px); } to{ opacity:1; transform:none; } }
+.rate-ask{ font-size:13px; color:var(--text-secondary); margin-bottom:10px; }
+.rate-tags{ display:flex; flex-wrap:wrap; gap:7px; }
+.rate-tag{
+  padding:7px 13px; border-radius:16px; font-size:13px; cursor:pointer;
+  background:var(--panel-alt); color:var(--text-secondary);
+  border:1px solid transparent; transition:background .13s, color .13s, border-color .13s;
+}
+.rate-tag:hover{ background:var(--hover); }
+.rate-tag.on{ background:#d9fdd3; color:var(--wa-green-deep); border-color:var(--wa-green); }
+body.dark .rate-tag.on{ background:rgba(0,168,132,.22); color:#7ae3c3; }
+.rate-modal textarea{
+  width:100%; margin-top:12px; resize:none; font:inherit; font-size:14px;
+  padding:10px 12px; border-radius:8px; border:1px solid var(--border);
+  background:var(--panel); color:var(--text); outline:none;
+}
+.rate-modal textarea:focus{ border-color:var(--wa-green); }
+.rate-thanks{ padding:34px 24px 10px; }
+.rate-thanks .tick-big{
+  width:62px; height:62px; margin:0 auto 16px; border-radius:50%;
+  background:var(--wa-green); color:#fff; display:grid; place-items:center;
+  animation:star-pop .4s cubic-bezier(.3,1.5,.5,1);
+}
+.rate-thanks .tick-big .icon{ width:32px; height:32px; }

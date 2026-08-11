@@ -1450,7 +1450,11 @@ function refreshDrawerIfOpen() { if ($('drawer').classList.contains('open')) ope
 function openModal(id) { $(id).classList.add('show'); }
 function closeModal(id) { $(id).classList.remove('show'); }
 document.querySelectorAll('.overlay').forEach(o => {
-  o.addEventListener('click', e => { if (e.target === o) o.classList.remove('show'); });
+  o.addEventListener('click', e => {
+    if (e.target !== o) return;
+    o.classList.remove('show');
+    if (o.id === 'modal-rate') rating = null;
+  });
   o.querySelectorAll('[data-close]').forEach(b => b.onclick = () => o.classList.remove('show'));
 });
 
@@ -1564,6 +1568,7 @@ function mainMenu(e) {
     { label: 'New group', fn: openNewGroup },
     { label: 'Profile', fn: openProfile },
     { label: 'Archived', fn: () => setFilter('archived') },
+    { label: 'Call quality', fn: openCallQuality },
     { sep: true },
     { label: document.body.classList.contains('dark') ? 'Light mode' : 'Dark mode', fn: toggleTheme },
     { sep: true },
@@ -1831,7 +1836,7 @@ async function onCallSignal({ callId, data }) {
   }
 }
 
-function onCallEnded({ callId, reason }) {
+function onCallEnded({ callId, reason, rateable }) {
   if (!call || call.id !== callId) return;
   const msg = {
     timeout: 'No answer',
@@ -1840,15 +1845,32 @@ function onCallEnded({ callId, reason }) {
     disconnected: 'Call disconnected',
   }[reason];
   if (msg) toast(msg);
+  const info = callSummary();
   teardown();
+  if (rateable) askForRating(info);
+}
+
+/** Snapshot the call before teardown wipes it, for the rating prompt. */
+function callSummary() {
+  if (!call) return null;
+  return {
+    callId: call.id,
+    peer: call.peer,
+    media: call.media,
+    duration: callStart ? Math.round((Date.now() - callStart) / 1000) : 0,
+    connected: call.state === 'active',
+  };
 }
 
 function hangUp() {
   if (!call) return;
+  const info = callSummary();
   if (call.role === 'caller' && call.state === 'ringing') socket.emit('call:cancel', { callId: call.id });
   else if (call.role === 'callee' && call.state === 'ringing') socket.emit('call:decline', { callId: call.id });
   else socket.emit('call:end', { callId: call.id });
   teardown();
+  // Only worth asking about a call that actually connected.
+  if (info && info.connected) askForRating(info);
 }
 
 function teardown() {
@@ -1862,6 +1884,7 @@ function teardown() {
   if (rv) rv.srcObject = null;
   if (lv) lv.srcObject = null;
   call = null;
+  callStart = 0;
 }
 
 function toggleMute() {
@@ -1913,6 +1936,159 @@ function updateCallButtons() {
   $('btn-call-video').style.display = show ? '' : 'none';
 }
 
+// ── Call rating ────────────────────────────────────────────────────────
+const RATING_TAGS = [
+  'Audio was choppy',
+  'Could not hear anything',
+  'Video was frozen',
+  'Video was blurry',
+  'Audio and video out of sync',
+  'Call dropped',
+  'Echo or background noise',
+  'Took too long to connect',
+];
+const RATE_WORDS = { 1: 'Terrible', 2: 'Bad', 3: 'Okay', 4: 'Good', 5: 'Great' };
+
+// Set of calls we've already prompted for, so a hang-up race can't ask twice.
+const ratedCalls = new Set();
+let rating = null;   // { callId, peer, media, duration, stars, tags:Set }
+
+/** Ask about the call that just ended. Only for calls that actually connected. */
+function askForRating(info) {
+  if (!info || !info.callId || ratedCalls.has(info.callId)) return;
+  ratedCalls.add(info.callId);
+
+  rating = { callId: info.callId, peer: info.peer, media: info.media, duration: info.duration || 0, stars: 0, tags: new Set() };
+
+  $('rate-avatar-wrap').innerHTML = avatarHTML(info.peer, 64);
+  const kind = info.media === 'video' ? 'Video call' : 'Voice call';
+  $('rate-sub').textContent = info.duration
+    ? `${kind} with ${info.peer?.username || 'them'} · ${callDuration(info.duration)}`
+    : `${kind} with ${info.peer?.username || 'them'}`;
+
+  // reset
+  $('rate-stars').querySelectorAll('.star').forEach(b => {
+    b.classList.remove('lit', 'pop');
+    b.setAttribute('aria-checked', 'false');
+  });
+  $('rate-word').textContent = 'Tap a star to rate';
+  $('rate-word').className = 'rate-word';
+  $('rate-more').hidden = true;
+  $('rate-note').value = '';
+  $('rate-send').disabled = true;
+  buildRatingTags();
+
+  openModal('modal-rate');
+}
+
+function buildRatingTags() {
+  const box = $('rate-tags');
+  box.innerHTML = '';
+  RATING_TAGS.forEach(tag => {
+    const b = el('button', 'rate-tag', esc(tag));
+    b.type = 'button';
+    b.setAttribute('aria-pressed', 'false');
+    b.onclick = () => {
+      if (rating.tags.has(tag)) rating.tags.delete(tag);
+      else rating.tags.add(tag);
+      const on = rating.tags.has(tag);
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    };
+    box.appendChild(b);
+  });
+}
+
+function setStars(n) {
+  if (!rating) return;
+  rating.stars = n;
+  $('rate-stars').querySelectorAll('.star').forEach(b => {
+    const lit = Number(b.dataset.star) <= n;
+    b.classList.toggle('lit', lit);
+    b.classList.toggle('pop', lit);
+    b.setAttribute('aria-checked', String(Number(b.dataset.star) === n));
+  });
+  // The form can be torn down before this fires (submitting is fast).
+  setTimeout(() => {
+    const box = $('rate-stars');
+    if (box) box.querySelectorAll('.star').forEach(b => b.classList.remove('pop'));
+  }, 340);
+
+  const w = $('rate-word');
+  w.textContent = RATE_WORDS[n];
+  w.className = 'rate-word ' + (n >= 4 ? 'good' : n <= 2 ? 'bad' : '');
+
+  // Only chase the details when something went wrong — a 5-star call
+  // shouldn't be interrogated.
+  $('rate-ask').textContent = n <= 3 ? 'What went wrong?' : 'Anything we could do better?';
+  $('rate-more').hidden = n === 5;
+  $('rate-send').disabled = false;
+}
+
+function submitRating() {
+  if (!rating || !rating.stars) return;
+  const payload = {
+    callId: rating.callId,
+    stars: rating.stars,
+    tags: [...rating.tags],
+    note: $('rate-note').value.trim(),
+  };
+  socket.emit('call:rate', payload, res => {
+    if (res && res.error) toast(res.error);
+  });
+  showRatingThanks();
+  rating = null;
+}
+
+function showRatingThanks() {
+  const body = $('modal-rate').querySelector('.modal-body');
+  const keep = body.innerHTML;
+  body.innerHTML = `<div class="rate-thanks">
+      <div class="tick-big">${icon('check')}</div>
+      <div class="rate-head">Thanks for the feedback</div>
+      <div class="rate-sub">It helps us make calls better.</div>
+    </div>`;
+  $('modal-rate').querySelector('.modal-foot').style.visibility = 'hidden';
+  setTimeout(() => {
+    closeModal('modal-rate');
+    body.innerHTML = keep;
+    $('modal-rate').querySelector('.modal-foot').style.visibility = '';
+    wireRatingStars();
+  }, 1400);
+}
+
+function dismissRating() {
+  rating = null;
+  closeModal('modal-rate');
+}
+
+function wireRatingStars() {
+  $('rate-stars').querySelectorAll('.star').forEach(b => {
+    b.onclick = () => setStars(Number(b.dataset.star));
+  });
+  $('rate-send').onclick = () => submitRating();
+  $('rate-skip').onclick = () => dismissRating();
+  $('rate-note').onkeydown = e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitRating(); };
+}
+
+/** Your own call-quality history, from the main menu. */
+function openCallQuality() {
+  socket.emit('call:ratings', {}, res => {
+    if (!res || res.error) return toast(res?.error || 'Could not load call quality');
+    if (!res.count) return toast('You have not rated any calls yet');
+    const stars = n => '★'.repeat(n) + '☆'.repeat(5 - n);
+    const lines = [
+      `${res.average} out of 5 across ${res.count} rated call${res.count === 1 ? '' : 's'}`,
+      '',
+      ...[5, 4, 3, 2, 1].map(n => `${stars(n)}  ${res.spread[n]}`),
+    ];
+    if (res.topIssues.length) {
+      lines.push('', 'Most reported:', ...res.topIssues.slice(0, 3).map(i => `• ${i.tag} (${i.count})`));
+    }
+    alert(lines.join('\n'));
+  });
+}
+
 // ── Wiring ─────────────────────────────────────────────────────────────
 function wire() {
   $('btn-new-chat').onclick = openNewChat;
@@ -1926,6 +2102,7 @@ function wire() {
   $('call-mute').onclick = () => toggleMute();
   $('call-cam').onclick = () => toggleCam();
   $('ring-accept').onclick = () => acceptCall();
+  wireRatingStars();
   $('ring-decline').onclick = () => declineCall();
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape' || !call) return;
