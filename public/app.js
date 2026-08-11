@@ -128,6 +128,7 @@ function previewOf(m) {
   if (m.type === 'system') return m.text;
   if (m.file) {
     const t = m.file.mimeType || '';
+    if (m.file.voice) return `🎤 Voice note (${clockOf(m.file.duration || 0)})`;
     if (t.startsWith('image/')) return '📷 Photo';
     if (t.startsWith('video/')) return '🎥 Video';
     if (t.startsWith('audio/')) return '🎵 Audio';
@@ -900,6 +901,8 @@ function messageRow(m, grouped) {
         inner += `<img class="photo" src="${esc(m.file.url)}" alt="${esc(m.file.name)}" data-photo="${esc(m.file.url)}" data-name="${esc(m.file.name)}" />`;
       } else if (t.startsWith('video/')) {
         inner += `<video class="clip" src="${esc(m.file.url)}" controls preload="metadata"></video>`;
+      } else if (m.file.voice) {
+        inner += voiceHTML(m.file);
       } else if (t.startsWith('audio/')) {
         inner += `<audio src="${esc(m.file.url)}" controls preload="metadata"></audio>`;
       } else {
@@ -936,6 +939,7 @@ function messageRow(m, grouped) {
   tools.querySelector('[data-act=more]').onclick = e => messageMenu(e, m);
   row.oncontextmenu = e => { e.preventDefault(); messageMenu(e, m); };
 
+  bubble.querySelectorAll('[data-voice]').forEach(wireVoice);
   bubble.querySelector('[data-photo]')?.addEventListener('click', ev => {
     openLightbox(ev.target.dataset.photo, ev.target.dataset.name);
   });
@@ -1002,6 +1006,8 @@ function setReplyBar(r) {
 function updateSendBtn() {
   const has = $('msg-input').value.trim().length > 0 || !!pendingFile;
   $('btn-send').classList.toggle('ready', has);
+  // Empty composer shows the mic; typing swaps it for send, like WhatsApp.
+  $('composer').classList.toggle('has-text', has);
 }
 
 function sendMessage() {
@@ -1037,10 +1043,76 @@ function onInput() {
   typingTimers[activeId] = setTimeout(() => socket.emit('typing:stop', { chatId: activeId }), 1800);
 }
 
+/**
+ * Shrink big photos before upload, the way WhatsApp does. A 12MP phone photo is
+ * ~5MB of JPEG that nobody views above ~1600px in a chat bubble, so we redraw it
+ * to fit and re-encode. Returns the original untouched if it is already small,
+ * is not a bitmap we can safely re-encode (GIF animation, SVG), or if anything
+ * in the canvas path fails — compression is an optimisation, never a blocker.
+ */
+const IMG_MAX_EDGE = 1600;      // longest side we keep
+const IMG_QUALITY = 0.82;       // JPEG quality
+const IMG_SKIP_BELOW = 200 * 1024;  // don't bother under 200KB
+
+async function compressImage(file) {
+  if (!file.type.startsWith('image/')) return file;
+  // GIFs would lose animation; SVG is vector and tiny already.
+  if (/gif|svg/.test(file.type)) return file;
+  if (file.size < IMG_SKIP_BELOW) return file;
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const { width: w, height: h } = bitmap;
+    const scale = Math.min(1, IMG_MAX_EDGE / Math.max(w, h));
+    // Already small enough and re-encoding probably won't help a modern JPEG.
+    if (scale === 1 && file.size < 1024 * 1024) { bitmap.close?.(); return file; }
+
+    const cw = Math.round(w * scale), ch = Math.round(h * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = cw; canvas.height = ch;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bitmap, 0, 0, cw, ch);
+    bitmap.close?.();
+
+    // PNGs with transparency must stay PNG or they get a black background.
+    const keepPng = file.type === 'image/png' && hasAlpha(ctx, cw, ch);
+    const outType = keepPng ? 'image/png' : 'image/jpeg';
+
+    const blob = await new Promise(res => canvas.toBlob(res, outType, IMG_QUALITY));
+    if (!blob || blob.size >= file.size) return file;   // no win, keep original
+
+    const base = file.name.replace(/\.[^.]+$/, '');
+    const ext = keepPng ? 'png' : 'jpg';
+    return new File([blob], `${base}.${ext}`, { type: outType, lastModified: Date.now() });
+  } catch {
+    return file;   // canvas blocked, decode failed, out of memory — send as-is
+  }
+}
+
+/** Sample the canvas for any non-opaque pixel. */
+function hasAlpha(ctx, w, h) {
+  try {
+    const step = Math.max(1, Math.floor(Math.min(w, h) / 64));
+    const d = ctx.getImageData(0, 0, w, h).data;
+    for (let y = 0; y < h; y += step)
+      for (let x = 0; x < w; x += step)
+        if (d[(y * w + x) * 4 + 3] < 255) return true;
+    return false;
+  } catch { return true; }   // tainted canvas — assume alpha, keep PNG
+}
+
 async function uploadFile(file) {
+  const original = file.size;
+  if (file.type.startsWith('image/')) {
+    toast('Compressing…');
+    file = await compressImage(file);
+  }
+
   const fd = new FormData();
   fd.append('file', file);
-  toast('Uploading…');
+  const saved = original - file.size;
+  toast(saved > 50 * 1024 ? `Uploading… (saved ${fileSize(saved)})` : 'Uploading…');
   try {
     const res = await fetch('/api/messenger/upload', { method: 'POST', body: fd });
     const data = await res.json();
@@ -1057,6 +1129,212 @@ async function uploadFile(file) {
   } catch (err) {
     toast('Upload failed: ' + err.message);
   }
+}
+
+// ── Voice notes ────────────────────────────────────────────────────────
+let rec = null;            // MediaRecorder
+let recChunks = [];
+let recStream = null;
+let recTimer = null;
+let recStart = 0;
+let recCancelled = false;
+let recAnalyser = null;
+let recRaf = 0;
+let recPeaks = [];         // amplitude samples, drawn as the live waveform
+
+function recSupported() {
+  return !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+}
+
+/** Pick a container the browser can actually record. Safari only does mp4. */
+function recMime() {
+  const want = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+  return want.find(t => MediaRecorder.isTypeSupported?.(t)) || '';
+}
+
+async function startRecording() {
+  if (rec || !activeId) return;
+  if (!recSupported()) return toast('Recording is not supported in this browser');
+
+  try {
+    recStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+  } catch (err) {
+    // Denied, dismissed, or no mic attached.
+    return toast(err.name === 'NotAllowedError'
+      ? 'Microphone access denied'
+      : 'No microphone found');
+  }
+
+  recCancelled = false;
+  recChunks = [];
+  recPeaks = [];
+  const mime = recMime();
+  try {
+    rec = new MediaRecorder(recStream, mime ? { mimeType: mime } : undefined);
+  } catch {
+    stopTracks();
+    return toast('Recording is not supported in this browser');
+  }
+
+  rec.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
+  rec.onstop = finishRecording;
+  rec.start();
+
+  recStart = Date.now();
+  $('rec-time').textContent = '0:00';
+  $('composer').classList.add('recording');
+  recTimer = setInterval(tickRecording, 200);
+  meterStart();
+}
+
+function tickRecording() {
+  const secs = Math.floor((Date.now() - recStart) / 1000);
+  $('rec-time').textContent = clockOf(secs);
+  if (secs >= 300) { toast('Voice notes are capped at 5 minutes'); stopRecording(); }
+}
+
+/** Live input level → a scrolling bar waveform. */
+function meterStart() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = ctx.createMediaStreamSource(recStream);
+    recAnalyser = ctx.createAnalyser();
+    recAnalyser.fftSize = 512;
+    src.connect(recAnalyser);
+    const buf = new Uint8Array(recAnalyser.frequencyBinCount);
+    const wave = $('rec-wave');
+
+    const draw = () => {
+      if (!recAnalyser) return;
+      recAnalyser.getByteTimeDomainData(buf);
+      let peak = 0;
+      for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+      recPeaks.push(Math.min(1, peak / 90));
+      if (recPeaks.length > 48) recPeaks.shift();
+      wave.innerHTML = recPeaks
+        .map(v => `<i style="height:${Math.max(10, v * 100)}%"></i>`).join('');
+      recRaf = requestAnimationFrame(draw);
+    };
+    draw();
+    recAnalyser._ctx = ctx;
+  } catch { /* metering is decorative */ }
+}
+
+function meterStop() {
+  cancelAnimationFrame(recRaf);
+  try { recAnalyser?._ctx?.close(); } catch { /* already closed */ }
+  recAnalyser = null;
+  $('rec-wave').innerHTML = '';
+}
+
+function stopTracks() {
+  recStream?.getTracks().forEach(t => t.stop());
+  recStream = null;
+}
+
+function stopRecording() {
+  if (!rec) return;
+  clearInterval(recTimer);
+  meterStop();
+  try { rec.stop(); } catch { /* already stopped */ }
+}
+
+function cancelRecording() {
+  if (!rec) return;
+  recCancelled = true;
+  stopRecording();
+}
+
+async function finishRecording() {
+  const secs = Math.round((Date.now() - recStart) / 1000);
+  const chunks = recChunks;
+  const type = rec?.mimeType || 'audio/webm';
+  rec = null; recChunks = [];
+  stopTracks();
+  $('composer').classList.remove('recording');
+
+  if (recCancelled) return;
+  if (secs < 1 || !chunks.length) return toast('Hold on — that was too short');
+
+  const ext = /mp4/.test(type) ? 'm4a' : /ogg/.test(type) ? 'ogg' : 'webm';
+  const blob = new Blob(chunks, { type });
+  const file = new File([blob], `voice-${Date.now()}.${ext}`, { type });
+
+  // Voice notes send immediately — no preview step, like WhatsApp.
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const res = await fetch('/api/messenger/upload', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    socket.emit('message:send', {
+      chatId: activeId,
+      text: '',
+      file: { ...data, voice: true, duration: secs },
+      type: 'voice',
+      replyTo,
+    });
+    replyTo = null; setReplyBar(null);
+  } catch (err) {
+    toast('Could not send voice note: ' + err.message);
+  }
+}
+
+function clockOf(secs) {
+  const m = Math.floor(secs / 60), sec = secs % 60;
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+/**
+ * WhatsApp-style voice bubble: play/pause, a seekable bar and a running clock.
+ * Wired up after the bubble is in the DOM.
+ */
+function voiceHTML(file) {
+  return `<div class="voice" data-voice="${esc(file.url)}">
+    <button class="v-play" type="button">${icon('play', 'icon-sm')}</button>
+    <div class="v-track"><div class="v-fill"></div></div>
+    <span class="v-time">${clockOf(file.duration || 0)}</span>
+  </div>`;
+}
+
+function wireVoice(box) {
+  const url = box.dataset.voice;
+  const btn = box.querySelector('.v-play');
+  const track = box.querySelector('.v-track');
+  const fill = box.querySelector('.v-fill');
+  const time = box.querySelector('.v-time');
+  const total = time.textContent;
+  let audio = null;
+
+  const setIcon = playing => { btn.innerHTML = icon(playing ? 'pause' : 'play', 'icon-sm'); };
+
+  btn.onclick = () => {
+    if (!audio) {
+      audio = new Audio(url);
+      audio.preload = 'metadata';
+      audio.ontimeupdate = () => {
+        if (!audio.duration || !isFinite(audio.duration)) return;
+        fill.style.width = (audio.currentTime / audio.duration) * 100 + '%';
+        time.textContent = clockOf(Math.floor(audio.currentTime));
+      };
+      audio.onended = () => { setIcon(false); fill.style.width = '0%'; time.textContent = total; };
+      audio.onpause = () => setIcon(false);
+      audio.onplay = () => setIcon(true);
+    }
+    if (audio.paused) {
+      // Only one voice note at a time.
+      document.querySelectorAll('audio').forEach(a => a !== audio && a.pause());
+      audio.play().catch(() => toast('Could not play this clip'));
+    } else audio.pause();
+  };
+
+  track.onclick = e => {
+    if (!audio || !audio.duration || !isFinite(audio.duration)) return;
+    const r = track.getBoundingClientRect();
+    audio.currentTime = ((e.clientX - r.left) / r.width) * audio.duration;
+  };
 }
 
 function clearPendingFile() {
@@ -1332,6 +1610,10 @@ function wire() {
     if (e.key === 'Escape') { replyTo = null; setReplyBar(null); }
   });
   $('btn-send').onclick = sendMessage;
+  $('btn-mic').onclick = startRecording;
+  $('rec-send').onclick = stopRecording;
+  $('rec-cancel').onclick = cancelRecording;
+  if (!recSupported()) $('btn-mic').style.display = 'none';
   $('rb-close').onclick = () => { replyTo = null; setReplyBar(null); };
   $('fb-close').onclick = clearPendingFile;
 

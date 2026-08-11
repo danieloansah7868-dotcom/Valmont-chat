@@ -65,6 +65,11 @@ limited to one every 30 seconds and 5 per number per hour.
 - Unread badges per chat plus an unread counter in the browser tab title
 
 **Media**
+- Voice notes: hold the mic to record, with a live waveform and running timer,
+  then send or discard. Playback bubbles have their own play/pause and seek bar.
+- Photos are compressed in the browser before upload — resized to fit 1600px and
+  re-encoded, so a 5 MB phone photo becomes a few hundred KB. Transparent PNGs
+  stay PNG, GIFs keep their animation, and the original is sent if anything fails.
 - Send images, video, audio, and documents up to 25 MB
 - Drag-and-drop onto the window, paste from clipboard, or use the attach menu
 - Inline photo bubbles with a full-screen lightbox and download link

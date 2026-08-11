@@ -32,6 +32,8 @@
   <symbol id="i-pin" viewBox="0 0 24 24"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></symbol>
   <symbol id="i-mute" viewBox="0 0 24 24"><path d="M3.6 2.3 2.3 3.6l4.4 4.4V11c0 3-1.6 5-1.6 5h11.2l2.5 2.5 1.3-1.3L3.6 2.3zM12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm5.3-6.6.6.6c.6-1 1.1-2.4 1.1-4V8a6.7 6.7 0 0 0-5-6.5V1a1.5 1.5 0 0 0-3 0v.5c-.6.2-1.2.4-1.7.7l8 8v1.8z"/></symbol>
   <symbol id="i-archive" viewBox="0 0 24 24"><path d="M20.5 3h-17L2 6.5V20a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1V6.5L20.5 3zM12 17.5 6.5 12H10v-3h4v3h3.5L12 17.5zM4.2 5l.5-1h14.6l.5 1H4.2z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></symbol>
   <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></symbol>
   <symbol id="i-photo" viewBox="0 0 24 24"><path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.9 13.9l2.1 2.6 3.1-4 4 5H6l2.9-3.6z"/></symbol>
@@ -177,7 +179,7 @@
 
       <button class="jump-btn" id="jump-btn"><svg class="icon"><use href="#i-chevron"/></svg><span class="n" id="jump-n" style="display:none"></span></button>
 
-      <footer class="composer">
+      <footer class="composer" id="composer">
         <div class="reply-bar" id="reply-bar">
           <div class="rb-strip"></div>
           <div class="rb-body"><div class="rb-name" id="rb-name"></div><div class="rb-text" id="rb-text"></div></div>
@@ -200,6 +202,15 @@
             <textarea class="msg-input" id="msg-input" rows="1" placeholder="Type a message"></textarea>
           </div>
           <button class="send-btn" id="btn-send" title="Send"><svg class="icon"><use href="#i-send"/></svg></button>
+          <button class="mic-btn" id="btn-mic" title="Record voice note"><svg class="icon"><use href="#i-mic"/></svg></button>
+        </div>
+
+        <div class="rec-row" id="rec-row">
+          <button class="rec-cancel" id="rec-cancel" title="Cancel"><svg class="icon"><use href="#i-trash"/></svg></button>
+          <span class="rec-dot"></span>
+          <span class="rec-time" id="rec-time">0:00</span>
+          <div class="rec-wave" id="rec-wave"></div>
+          <button class="rec-send" id="rec-send" title="Send"><svg class="icon"><use href="#i-send"/></svg></button>
         </div>
 
         <div class="emoji-panel" id="emoji-panel"></div>
