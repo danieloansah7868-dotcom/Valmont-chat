@@ -130,7 +130,7 @@ conversations. Delete that file to start from a clean slate.
 **Client → server:** `user:join`, `profile:update`, `message:send`, `message:edit`,
 `message:delete`, `message:react`, `messages:read`, `typing:start`, `typing:stop`,
 `chat:createGroup`, `chat:startDM`, `chat:open`, `chat:flag`, `chat:clear`, `chat:leave`,
-`chat:addMembers`, `search:messages`, `call:start`, `call:accept`, `call:decline`,
+`chat:addMembers`, `search:messages`, `users:lookup`, `call:start`, `call:accept`, `call:decline`,
 `call:cancel`, `call:end`, `call:signal`
 
 **Server → client:** `chats:list`, `chats:refresh`, `chat:new`, `chat:removed`,
