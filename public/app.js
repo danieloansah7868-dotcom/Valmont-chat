@@ -470,7 +470,12 @@ function connect(token) {
     });
   });
 
-  socket.on('disconnect', () => { setPeerStatus('connecting…'); updateOfflineBar(); });
+  socket.on('disconnect', () => {
+    setPeerStatus('connecting…');
+    // No point counting down a retry while there is nothing to retry over.
+    clearTimeout(retryTimer); retryTimer = null;
+    updateOfflineBar();
+  });
 
   socket.on('chats:list', list => {
     chats = list;
@@ -507,6 +512,14 @@ function connect(token) {
   });
 
   socket.on('message:new', m => {
+    // Our own message coming back: the queued copy has served its purpose,
+    // whether or not we ever saw the acknowledgement.
+    if (m.senderId === me.id && m.clientId) {
+      const q = outbox.findIndex(i => i.clientId === m.clientId);
+      if (q !== -1) { outbox.splice(q, 1); saveOutbox(); updateOfflineBar(); }
+      const at = messages.findIndex(x => x.id === m.clientId);
+      if (at !== -1) messages.splice(at, 1);
+    }
     if (m.chatId === activeId) {
       const stick = nearBottom();
       messages.push(m);
@@ -896,7 +909,7 @@ function renderMessages() {
 function messageRow(m, grouped) {
   const out = m.senderId === me.id;
   const c = activeChat();
-  const row = el('div', `msg-row ${out ? 'out' : 'in'}${grouped ? ' grouped' : ''}${m.pending ? ' pending' : ''}`);
+  const row = el('div', `msg-row ${out ? 'out' : 'in'}${grouped ? ' grouped' : ''}${m.pending ? ' pending' : ''}${m.stuck ? ' stuck' : ''}`);
   row.dataset.id = m.id;
 
   let inner = '';
@@ -945,6 +958,7 @@ function messageRow(m, grouped) {
   }
 
   const emojiOnly = !m.file && !m.deleted && isEmojiOnly(m.text);
+  if (m.stuck) inner += `<div class="stuck-note">${icon('clock', 'icon-sm')} Waiting for a connection</div>`;
   inner += `<span class="meta-line">${m.editedAt ? 'edited ' : ''}${timeOf(m.timestamp)} ${out ? tickHTML(m.status || 'sent') : ''}</span>`;
 
   const reactions = Object.entries(m.reactions || {});
@@ -998,6 +1012,17 @@ function reactionMenu(e, m) {
 }
 
 function messageMenu(e, m) {
+  // A queued message does not exist on the server yet, so editing, reacting
+  // and deleting-for-everyone have nothing to act on. Offer what does work.
+  if (m.pending) {
+    const items = [];
+    if (m.text) items.push({ label: 'Copy text', fn: () => { navigator.clipboard?.writeText(m.text); toast('Copied'); } });
+    items.push({ label: 'Try sending now', fn: () => retryOutboxNow() });
+    items.push({ sep: true });
+    items.push({ label: 'Delete unsent message', danger: true, fn: () => discardQueued(m.id) });
+    return showCtxMenu(e, items);
+  }
+
   const out = m.senderId === me.id;
   const items = [{ label: 'Reply', fn: () => startReply(m) }];
   if (m.text && !m.deleted) items.push({ label: 'Copy text', fn: () => { navigator.clipboard?.writeText(m.text); toast('Copied'); } });
@@ -1056,9 +1081,11 @@ function sendMessage() {
     type: pendingFile ? (pendingFile.mimeType?.split('/')[0] || 'file') : 'text',
     replyTo,
   };
-  // No connection? Keep it and send it the moment there is one.
-  if (online()) socket.emit('message:send', payload);
-  else queueMessage(payload);
+  // Everything goes through the outbox, connection or not. A message is only
+  // dropped from it once the server has confirmed it, so a send that dies
+  // halfway is retried instead of lost.
+  queueMessage(payload);
+  flushOutbox();
 
   input.value = '';
   input.style.height = 'auto';
@@ -1089,13 +1116,25 @@ function onInput() {
  * writing.
  */
 const OUTBOX_KEY = 'vchat.outbox';
+// A send is given this long to be acknowledged before we assume the phone lost
+// signal mid-flight. Short enough to notice a dead bundle, long enough that a
+// slow 2G round trip is not mistaken for failure.
+const SEND_TIMEOUT_MS = 12000;
+// Waits between retries. A phone that has run out of data gets a few quick
+// tries, then we back off instead of burning battery on a dead radio.
+const RETRY_BACKOFF_MS = [3000, 8000, 20000, 60000];
 let outbox = [];
 let flushing = false;
+let retryTimer = null;
+let inflight = null;     // resolver of the send we are currently waiting on
+let flushAgain = false;
 
 function loadOutbox() {
   try { outbox = JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); }
   catch { outbox = []; }
   if (!Array.isArray(outbox)) outbox = [];
+  // Nothing is mid-flight after a reload, however it ended.
+  for (const i of outbox) i.sending = false;
 }
 
 function saveOutbox() {
@@ -1105,13 +1144,17 @@ function saveOutbox() {
 
 function online() { return !!socket && socket.connected; }
 
-/** Queue a message for later and show it straight away. */
+/** Queue a message and show it straight away. */
 function queueMessage(payload) {
   const item = {
     ...payload,
-    tempId: 'q' + Date.now() + Math.random().toString(36).slice(2, 7),
+    // Survives retries and reloads: the server uses it to recognise a message
+    // it has already stored, so a retry can never post twice.
+    clientId: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 9),
     queuedAt: Date.now(),
+    tries: 0,
   };
+  item.tempId = item.clientId;
   outbox.push(item);
   saveOutbox();
   if (item.chatId === activeId) {
@@ -1138,6 +1181,9 @@ function outboxToMessage(item) {
     reactions: {},
     status: 'pending',
     pending: true,
+    // Shown only once a send has actually failed, so a message on its way
+    // out does not flash a warning at someone whose connection is fine.
+    stuck: !!item.failed,
   };
 }
 
@@ -1146,22 +1192,38 @@ function pendingFor(chatId) {
   return outbox.filter(i => i.chatId === chatId).map(outboxToMessage);
 }
 
-/**
- * Send everything, oldest first. Each send waits for its ack so the server
- * stores them in the order they were written rather than the order they land.
- */
-async function flushOutbox() {
-  if (!online() || !outbox.length || flushing) return;
-  flushing = true;
-  updateOfflineBar();
+/** Replace a queued placeholder in the open thread with what the server stored. */
+function settleQueued(tempId) {
+  const at = messages.findIndex(m => m.id === tempId);
+  if (at !== -1) { messages.splice(at, 1); renderMessages(); }
+}
 
-  while (outbox.length && online()) {
-    const item = outbox[0];
-    const sent = await new Promise(resolve => {
-      let settled = false;
-      const done = ok => { if (!settled) { settled = true; resolve(ok); } };
-      // A silent server is treated as a failure so we keep the message.
-      const bail = setTimeout(() => done(false), 10000);
+/** Redraw a placeholder after its state changed (e.g. it is now struggling). */
+function refreshQueued(item) {
+  if (item.chatId !== activeId) return;
+  const at = messages.findIndex(m => m.id === item.tempId);
+  if (at !== -1) { messages[at] = outboxToMessage(item); renderMessages(); }
+}
+
+/**
+ * Send one queued message and wait for the server to confirm it.
+ *
+ * Resolves true only on a confirmed store. A timeout resolves false, which is
+ * the case that matters: on a phone with no bundle left the socket often still
+ * looks connected and the send simply vanishes.
+ */
+function sendQueued(item) {
+  return new Promise(resolve => {
+    let settled = false;
+    const done = ok => {
+      if (settled) return;
+      settled = true;
+      if (inflight === done) inflight = null;
+      resolve(ok);
+    };
+    inflight = done;
+    const bail = setTimeout(() => done(false), SEND_TIMEOUT_MS);
+    try {
       socket.emit('message:send', {
         chatId: item.chatId,
         text: item.text,
@@ -1169,19 +1231,88 @@ async function flushOutbox() {
         type: item.type,
         replyTo: item.replyTo,
         tempId: item.tempId,
-      }, res => { clearTimeout(bail); done(!res || !res.error); });
-    });
+        clientId: item.clientId,
+      }, res => {
+        clearTimeout(bail);
+        // A rejection is permanent — retrying cannot fix a deleted chat.
+        if (res && res.error) { toast(res.error); done('drop'); return; }
+        done(true);
+      });
+    } catch {
+      clearTimeout(bail);
+      done(false);
+    }
+  });
+}
 
-    if (!sent) break;            // still queued, try again on the next connect
-    outbox.shift();
+/** Try again later, backing off as attempts pile up. */
+function scheduleRetry() {
+  if (retryTimer || !outbox.length) return;
+  const tries = outbox[0].tries || 1;
+  const wait = RETRY_BACKOFF_MS[Math.min(tries - 1, RETRY_BACKOFF_MS.length - 1)];
+  retryTimer = setTimeout(() => { retryTimer = null; flushOutbox(); }, wait);
+}
+
+/**
+ * Send everything, oldest first. Each send waits for its acknowledgement so
+ * the server stores them in the order they were written rather than the order
+ * they happen to land. Nothing leaves the queue unconfirmed.
+ */
+async function flushOutbox() {
+  if (!online() || !outbox.length || flushing) return;
+  clearTimeout(retryTimer); retryTimer = null;
+  flushing = true;
+  updateOfflineBar();
+
+  while (outbox.length && online()) {
+    const item = outbox[0];
+    item.tries = (item.tries || 0) + 1;
     saveOutbox();
-    // Drop the placeholder; the real message arrives over message:new.
-    const at = messages.findIndex(m => m.id === item.tempId);
-    if (at !== -1) { messages.splice(at, 1); renderMessages(); }
+    if (item.failed) refreshQueued(item);
+
+    const result = await sendQueued(item);
+
+    if (result === false) {          // no answer — the connection died mid-send
+      item.failed = true;
+      saveOutbox();
+      refreshQueued(item);
+      break;
+    }
+    outbox.shift();
+    // Something got through, so whatever failed before is no longer true.
+    for (const i of outbox) i.failed = false;
+    saveOutbox();
+    // On success the real message arrives over message:new; on a permanent
+    // rejection there is nothing to replace it with. Either way it goes.
+    settleQueued(item.tempId);
   }
 
   flushing = false;
   updateOfflineBar();
+
+  if (flushAgain) { flushAgain = false; return flushOutbox(); }
+  if (outbox.length) scheduleRetry();
+}
+
+/** Throw away something that was never sent. */
+function discardQueued(tempId) {
+  const at = outbox.findIndex(i => i.tempId === tempId);
+  if (at === -1) return;
+  outbox.splice(at, 1);
+  saveOutbox();
+  settleQueued(tempId);
+  updateOfflineBar();
+}
+
+/** Send it now, without waiting out the backoff. */
+function retryOutboxNow() {
+  clearTimeout(retryTimer); retryTimer = null;
+  if (!outbox.length) return;
+  if (!online()) { toast('Still no connection — it will send itself when there is one'); return; }
+  // If a send is sitting there timing out, do not make the user wait it out:
+  // abandon that attempt and start a fresh one straight away.
+  if (flushing && inflight) { flushAgain = true; inflight(false); return; }
+  flushOutbox();
 }
 
 /** The banner that tells you the app is holding your messages. */
@@ -1190,10 +1321,31 @@ function updateOfflineBar() {
   if (!bar) return;
   const waiting = outbox.length;
   const off = !online();
-  bar.classList.toggle('show', off || waiting > 0);
-  bar.textContent = off
-    ? (waiting ? `Offline — ${waiting} message${waiting > 1 ? 's' : ''} waiting to send` : 'Offline — messages will send when you reconnect')
-    : (flushing ? `Sending ${waiting} queued message${waiting > 1 ? 's' : ''}…` : '');
+  const stuck = waiting > 0 && !!outbox[0].failed;
+  // A single message on its way out is not news — saying nothing is the
+  // correct report of a connection that is working.
+  const backlog = flushing && waiting > 1;
+  bar.classList.toggle('show', off || stuck || backlog);
+  bar.classList.toggle('stuck', !off && stuck);
+
+  let text = '';
+  if (off) {
+    text = waiting
+      ? `Offline — ${waiting} message${waiting > 1 ? 's' : ''} waiting to send`
+      : 'Offline — messages will send when you reconnect';
+  } else if (stuck) {
+    text = `Can't reach the server — ${waiting} message${waiting > 1 ? 's' : ''} waiting`;
+  } else if (backlog) {
+    text = `Sending ${waiting} queued messages…`;
+  }
+  bar.textContent = text;
+
+  // Somewhere to press when waiting is not the answer.
+  if (!off && stuck) {
+    const again = el('button', 'bar-retry', 'Try now');
+    again.onclick = () => retryOutboxNow();
+    bar.appendChild(again);
+  }
 }
 
 // ── Lite mode ──────────────────────────────────────────────────────────
@@ -1484,8 +1636,8 @@ async function finishRecording() {
       type: 'voice',
       replyTo,
     };
-    if (online()) socket.emit('message:send', payload);
-    else queueMessage(payload);
+    queueMessage(payload);
+    flushOutbox();
     replyTo = null; setReplyBar(null);
   } catch (err) {
     toast('Could not send voice note: ' + err.message);
