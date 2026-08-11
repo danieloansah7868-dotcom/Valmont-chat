@@ -104,16 +104,23 @@
 
     <!-- Step 3 — profile (new numbers only) -->
     <section class="auth-step" id="step-profile" hidden>
-      <h2>Profile info</h2>
-      <p class="sub">Please provide your name and an optional profile photo.</p>
+      <h2>Create your account</h2>
+      <p class="sub">Pick a name and a unique username. Friends find you with @username — not your phone number.</p>
 
-      <label class="field-label" for="name-input">Your name</label>
+      <label class="field-label" for="name-input">Display name</label>
       <input id="name-input" type="text" placeholder="e.g. Daniel" autocomplete="name" maxlength="24" />
+
+      <label class="field-label" for="handle-input">Username</label>
+      <div class="handle-row">
+        <span class="handle-at">@</span>
+        <input id="handle-input" type="text" placeholder="daniel" autocomplete="username" maxlength="20" spellcheck="false" />
+      </div>
+      <p class="login-hint" style="margin-top:0;margin-bottom:18px">3–20 characters. Letters, numbers and underscore. This is how people search for you.</p>
 
       <label class="field-label">Choose an avatar</label>
       <div class="avatar-picker" id="avatar-picker"></div>
 
-      <button class="btn-primary" id="login-btn">Start chatting</button>
+      <button class="btn-primary" id="login-btn">Create account</button>
       <div class="login-err" id="profile-err"></div>
     </section>
   </div>
@@ -251,7 +258,7 @@
   <div class="modal">
     <div class="modal-head">New chat</div>
     <div class="modal-body">
-      <input type="text" id="newchat-search" placeholder="Search people" autocomplete="off" />
+      <input type="text" id="newchat-search" placeholder="Search @username" autocomplete="off" />
       <div id="newchat-list" style="margin-top:12px"></div>
     </div>
     <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
@@ -305,12 +312,18 @@
       <div class="avatar sz-140" id="profile-avatar" style="margin:8px auto 20px"></div>
       <div class="avatar-picker" id="profile-avatar-picker" style="justify-content:center"></div>
       <div style="text-align:left;margin-top:10px">
-        <label class="field-label">Your name</label>
+        <label class="field-label">Display name</label>
         <input type="text" id="profile-name" maxlength="24" />
+        <label class="field-label" style="margin-top:20px">Username</label>
+        <div class="handle-row">
+          <span class="handle-at">@</span>
+          <input type="text" id="profile-handle" maxlength="20" spellcheck="false" autocomplete="username" />
+        </div>
         <label class="field-label" style="margin-top:20px">About</label>
         <input type="text" id="profile-about" maxlength="80" />
         <label class="field-label" style="margin-top:20px">Phone number</label>
         <div class="profile-phone" id="profile-phone"></div>
+        <p class="login-hint" style="margin-top:8px">Only you see your number. Friends search for @username.</p>
       </div>
     </div>
     <div class="modal-foot">

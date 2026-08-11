@@ -262,7 +262,19 @@ function initLogin() {
   initCodeBoxes();
 
   $('login-btn').onclick = submitProfile;
-  $('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitProfile(); });
+  $('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('handle-input').focus(); });
+  $('handle-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitProfile(); });
+  $('handle-input').addEventListener('input', () => {
+    $('handle-input').value = $('handle-input').value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20);
+    $('profile-err').textContent = '';
+  });
+  $('name-input').addEventListener('input', () => {
+    const h = $('handle-input');
+    if (h.dataset.touched) return;
+    const fromName = $('name-input').value.toLowerCase().replace(/[^a-z0-9_]+/g, '').replace(/^[^a-z]+/, '').slice(0, 20);
+    h.value = fromName;
+  });
+  $('handle-input').addEventListener('focus', () => { $('handle-input').dataset.touched = '1'; });
 
   $('phone-input').focus();
   restoreSession();
@@ -410,19 +422,21 @@ async function submitCode() {
 // ── Step 3: name + avatar for first-time numbers ───────────────────────
 async function submitProfile() {
   const username = $('name-input').value.trim();
-  if (username.length < 2) { $('profile-err').textContent = 'Please enter at least 2 characters'; return; }
+  const handle = $('handle-input').value.trim();
+  if (username.length < 2) { $('profile-err').textContent = 'Please enter at least 2 characters for your name'; return; }
+  if (!/^[a-z][a-z0-9_]{2,19}$/.test(handle)) {
+    $('profile-err').textContent = 'Username must be 3–20 characters, start with a letter, and use only letters, numbers or _';
+    return;
+  }
   $('profile-err').textContent = '';
   $('login-btn').disabled = true;
 
-  // The code was consumed by the previous call, so ask for a fresh one and
-  // verify in a single step is not possible — instead the server accepts the
-  // profile with the still-valid pending registration.
   const { ok, data } = await api('/api/auth/register', {
-    phone: authPhone, username, avatar: pickedAvatar,
+    phone: authPhone, username, handle, avatar: pickedAvatar,
   });
   $('login-btn').disabled = false;
 
-  if (!ok) { $('profile-err').textContent = data.error || 'Could not create your profile'; return; }
+  if (!ok) { $('profile-err').textContent = data.error || 'Could not create your account'; return; }
   finishAuth(data);
 }
 
@@ -617,12 +631,20 @@ function openProfile() {
     node.style.background = 'var(--panel-alt)';
   });
   $('profile-name').value = me.username;
+  const handleBox = $('profile-handle');
+  if (handleBox) {
+    handleBox.value = me.handle || '';
+    handleBox.oninput = () => {
+      handleBox.value = handleBox.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20);
+    };
+  }
   $('profile-about').value = me.about || '';
   const phoneRow = $('profile-phone');
   if (phoneRow) phoneRow.textContent = me.phone || 'Not linked';
   $('profile-save').onclick = () => {
     socket.emit('profile:update', {
       username: $('profile-name').value.trim(),
+      handle: handleBox ? handleBox.value.trim() : me.handle,
       avatar: picked,
       about: $('profile-about').value.trim(),
     }, res => {
@@ -630,6 +652,7 @@ function openProfile() {
       if (!res?.user) return toast('Could not update profile');
       me = res.user;
       localStorage.setItem('vchat.name', me.username);
+      localStorage.setItem('vchat.handle', me.handle || '');
       localStorage.setItem('vchat.avatar', me.avatar || '');
       renderMe();
       closeModal('modal-profile');
@@ -663,7 +686,8 @@ function renderChatList() {
   // "Start a chat with" suggestions when searching
   if (searchQuery) {
     const q = searchQuery.toLowerCase();
-    const matches = users.filter(u => u.id !== me.id && u.username.toLowerCase().includes(q) &&
+    const matches = users.filter(u => u.id !== me.id &&
+      ((u.handle && u.handle.includes(q)) || u.username.toLowerCase().includes(q)) &&
       !chats.some(c => c.type === 'dm' && c.peer?.id === u.id));
     if (matches.length) {
       box.appendChild(el('div', 'list-section-title', 'Contacts'));
@@ -688,7 +712,7 @@ function contactRow(u) {
     ${avatarHTML(u, 49, true)}
     <div class="body">
       <div class="row-top"><div class="row-name">${esc(u.username)}</div></div>
-      <div class="row-bottom"><div class="row-preview">${esc(u.about || 'Hey there! I am using VChat.')}</div></div>
+      <div class="row-bottom"><div class="row-preview">${u.handle ? '@' + esc(u.handle) : esc(u.about || 'Hey there! I am using VChat.')}</div></div>
     </div>`;
   row.onclick = () => {
     socket.emit('chat:startDM', { targetUserId: u.id }, res => {
@@ -844,7 +868,8 @@ function updateHeaderForActive() {
     setPeerStatus(c.type === 'group' ? `${names.join(', ')} ${names.length > 1 ? 'are' : 'is'} typing…` : 'typing…', true);
   } else if (c.type === 'dm') {
     const peer = users.find(u => u.id === c.peer?.id) || c.peer;
-    setPeerStatus(lastSeenText(peer));
+    const seen = lastSeenText(peer);
+    setPeerStatus(peer?.handle ? `@${peer.handle}${seen ? ' · ' + seen : ''}` : seen);
   } else {
     const names = c.members.map(id => (id === me.id ? 'You' : users.find(u => u.id === id)?.username)).filter(Boolean);
     setPeerStatus(names.join(', '));
@@ -1749,10 +1774,10 @@ function openDrawer() {
     body.appendChild(el('div', 'drawer-block left', `
       <div class="drawer-label">About</div>
       <div class="drawer-value">${esc(entity?.about || 'Hey there! I am using VChat.')}</div>`));
-    if (entity?.phone) {
+    if (entity?.handle) {
       body.appendChild(el('div', 'drawer-block left', `
-        <div class="drawer-label">Phone number</div>
-        <div class="drawer-value">${esc(entity.phone)}</div>`));
+        <div class="drawer-label">Username</div>
+        <div class="drawer-value">@${esc(entity.handle)}</div>`));
     }
   } else {
     const members = el('div', 'drawer-block left');
@@ -1806,20 +1831,33 @@ document.querySelectorAll('.overlay').forEach(o => {
 });
 
 function openNewChat() {
-  const render = (q = '') => {
+  const render = (list, q = '') => {
     const box = $('newchat-list');
     box.innerHTML = '';
-    const list = users.filter(u => u.id !== me.id && u.username.toLowerCase().includes(q.toLowerCase()));
-    if (!list.length) { box.innerHTML = '<div class="empty-list">No other people online yet.<br>Open a second browser window with another name.</div>'; return; }
+    if (!q.trim()) {
+      box.innerHTML = '<div class="empty-list">Search by username to find friends.<br>They do not need to share a phone number.</div>';
+      return;
+    }
+    if (!list.length) {
+      box.innerHTML = `<div class="empty-list">No one named <b>@${esc(q.replace(/^@/, ''))}</b>.<br>Check the spelling — usernames are unique.</div>`;
+      return;
+    }
     list.forEach(u => {
-      const row = el('div', 'pick-row', `${avatarHTML(u, 40, true)}<div class="pk-name">${esc(u.username)}<div style="font-size:12.5px;color:var(--text-secondary)">${esc(u.about || '')}</div></div>`);
+      const row = el('div', 'pick-row', `${avatarHTML(u, 40, true)}<div class="pk-name">${esc(u.username)}<div class="user-handle">${u.handle ? '@' + esc(u.handle) : ''}</div></div>`);
       row.onclick = () => socket.emit('chat:startDM', { targetUserId: u.id }, res => { closeModal('modal-newchat'); if (res?.chat) openChat(res.chat.id); });
       box.appendChild(row);
     });
   };
   $('newchat-search').value = '';
-  $('newchat-search').oninput = e => render(e.target.value);
-  render();
+  $('newchat-search').placeholder = 'Search @username';
+  let t = null;
+  $('newchat-search').oninput = e => {
+    const q = e.target.value.trim();
+    clearTimeout(t);
+    if (q.length < 2) { render([], q); return; }
+    t = setTimeout(() => socket.emit('users:lookup', { query: q }, list => render(list || [], q)), 160);
+  };
+  render([], '');
   openModal('modal-newchat');
 }
 

@@ -638,6 +638,23 @@ body.dark .search-result mark { background: #6b5a24; }
   border-bottom: 2px solid var(--border); letter-spacing: .4px;
 }
 
+.handle-row {
+  display: flex; align-items: center; gap: 4px;
+  border-bottom: 2px solid var(--brand-gold);
+  margin-bottom: 10px;
+}
+.login-card .handle-row { border-bottom-color: var(--brand-gold); }
+.modal .handle-row { border-bottom-color: var(--wa-green); margin-bottom: 0; }
+.handle-at { font-size: 18px; font-weight: 600; color: var(--brand-gold); padding: 8px 0; }
+.modal .handle-at { color: var(--wa-green); }
+.handle-row input {
+  flex: 1; min-width: 0; border: none !important; border-bottom: none !important;
+  margin-bottom: 0 !important; padding: 10px 4px; font-size: 17px;
+  background: transparent; color: inherit; outline: none;
+}
+.user-handle { font-size: 13px; color: var(--text-secondary); }
+.user-handle b { color: var(--brand-gold); font-weight: 600; }
+
 /* ── Voice notes ──────────────────────────────────────────────────────── */
 
 /* Mic and send trade places: mic when the composer is empty, send once
