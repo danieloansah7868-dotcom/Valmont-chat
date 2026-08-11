@@ -74,6 +74,18 @@ limited to one every 30 seconds and 5 per number per hour.
 - Drag-and-drop onto the window, paste from clipboard, or use the attach menu
 - Inline photo bubbles with a full-screen lightbox and download link
 
+**Calls**
+- One-to-one voice and video calls, straight from the conversation header
+- The phone and camera buttons only appear in DMs, on browsers that support WebRTC
+- Incoming calls slide in as a banner you can accept or decline without leaving
+  the chat you're in; a ringtone plays until someone answers
+- In-call controls for mute and camera, a picture-in-picture self view, and a
+  live call timer
+- Every call is written into the conversation afterwards — outgoing, incoming,
+  missed, declined, with its duration, exactly like WhatsApp does
+- Unanswered calls stop ringing after 45 seconds, and closing your last tab
+  mid-call hangs up for the other side
+
 **Interface**
 - WhatsApp-style two-pane layout that collapses to a single pane on mobile
 - Light and dark themes, remembered between visits
@@ -116,11 +128,33 @@ conversations. Delete that file to start from a clean slate.
 **Client → server:** `user:join`, `profile:update`, `message:send`, `message:edit`,
 `message:delete`, `message:react`, `messages:read`, `typing:start`, `typing:stop`,
 `chat:createGroup`, `chat:startDM`, `chat:open`, `chat:flag`, `chat:clear`, `chat:leave`,
-`chat:addMembers`, `search:messages`
+`chat:addMembers`, `search:messages`, `call:start`, `call:accept`, `call:decline`,
+`call:cancel`, `call:end`, `call:signal`
 
 **Server → client:** `chats:list`, `chats:refresh`, `chat:new`, `chat:removed`,
 `chat:cleared`, `message:new`, `message:updated`, `message:removed`, `messages:delivered`,
-`messages:read`, `typing:start`, `typing:stop`, `users:list`, `presence:update`
+`messages:read`, `typing:start`, `typing:stop`, `users:list`, `presence:update`,
+`call:incoming`, `call:accepted`, `call:ended`, `call:signal`
+
+## How calls work
+
+Calls are peer to peer. The server only passes SDP offers, answers, and ICE
+candidates between the two people on the call — audio and video never touch it,
+so a call costs the server almost nothing and nobody in the middle can listen in.
+
+Two consequences worth knowing:
+
+- **Calls need HTTPS.** Browsers only hand out the microphone and camera in a
+  secure context, so calling works on `localhost` and on any HTTPS deployment,
+  but not over plain `http://` to another machine.
+- **Only public STUN is configured.** Google's STUN servers are enough for most
+  home and office networks. Behind a symmetric NAT or a strict corporate
+  firewall, the two browsers may never find a path to each other, and you'd need
+  to add a TURN relay to `ICE_SERVERS` in `public/app.js`.
+
+Group calls are deliberately not supported — mixing more than two streams needs
+a media server (an SFU), which is a different piece of software than this one.
+Calls are also in-memory only: restarting the server drops any call in progress.
 
 ## Notes
 
