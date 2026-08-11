@@ -81,7 +81,7 @@ function initials(name) {
   return String(name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
 }
 function colorFor(id) {
-  const palette = ['#469f86','#53bdeb','#7f66ff','#f2a33c','#e542a3','#c19052','#ff6b6b','#0088cc','#b06bff','#f15c6d'];
+  const palette = ['#0b1f3a','#16325c','#d9772a','#f0b56a','#a85a18','#4a5870','#d3396d','#5157ae','#bf59cf','#e542a3'];
   let h = 0;
   for (const ch of String(id || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return palette[h % palette.length];
