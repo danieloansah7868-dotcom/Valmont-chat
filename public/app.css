@@ -294,6 +294,53 @@ body.dark .chip.on { background: #243656; color: #f0b56a; }
 }
 body.dark .chat-bg-pattern { opacity: .06; }
 
+/* Wallpaper presets — applied with data-wp on the chat panel */
+.chat-panel[data-wp="navy"] { background: #071428; }
+.chat-panel[data-wp="navy"] .chat-bg-pattern { opacity: 0; }
+.chat-panel[data-wp="dusk"] {
+  background: linear-gradient(165deg, #071428 0%, #0b1f3a 48%, #7a3d12 100%);
+}
+.chat-panel[data-wp="dusk"] .chat-bg-pattern { opacity: 0; }
+.chat-panel[data-wp="ember"] { background: #080e18; }
+.chat-panel[data-wp="ember"] .chat-bg-pattern {
+  opacity: 1;
+  background-image:
+    radial-gradient(900px 420px at 85% 110%, rgba(217,119,42,.38), transparent 60%),
+    radial-gradient(700px 360px at 0% 0%, rgba(240,181,106,.12), transparent 55%);
+}
+.chat-panel[data-wp="kente"] { background: #071428; }
+.chat-panel[data-wp="kente"] .chat-bg-pattern {
+  opacity: .55;
+  background-image:
+    repeating-linear-gradient(90deg, #0b1f3a 0 18px, #16325c 18px 22px, #0b1f3a 22px 40px, #d9772a 40px 44px),
+    repeating-linear-gradient(0deg, transparent 0 28px, rgba(240,181,106,.18) 28px 30px);
+  background-size: auto;
+}
+.chat-panel[data-wp="mist"] { background: #d9dee8; }
+.chat-panel[data-wp="mist"] .chat-bg-pattern { opacity: .22; }
+body.dark .chat-panel[data-wp="mist"] { background: #1a2433; }
+.chat-panel[data-wp="grid"] { background: #0a1628; }
+.chat-panel[data-wp="grid"] .chat-bg-pattern {
+  opacity: .35;
+  background-image:
+    linear-gradient(rgba(240,181,106,.18) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(240,181,106,.18) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+.chat-panel[data-wp="plain"] .chat-bg-pattern { opacity: 0; }
+.chat-panel[data-wp="custom"] { background: #070d16; }
+.chat-panel[data-wp="custom"] .chat-bg-pattern {
+  opacity: 1;
+  background-image: var(--wp-photo);
+  background-size: cover;
+  background-position: center;
+}
+.chat-panel[data-wp="custom"] .chat-bg-pattern::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: rgba(7, 13, 22, var(--wp-dim, .4));
+}
+
 .chat-header {
   height: 59px; flex-shrink: 0; background: var(--panel-header); display: flex; align-items: center;
   gap: 15px; padding: 0 16px; position: relative; z-index: 2; border-left: 1px solid var(--border);

@@ -53,6 +53,7 @@
   <symbol id="i-copy" viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></symbol>
   <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 17.3 6.2 3.7-1.6-7 5.4-4.7-7.1-.6L12 2 9.1 8.7l-7.1.6 5.4 4.7-1.6 7z"/></symbol>
   <symbol id="i-camera" viewBox="0 0 24 24"><path d="M20 5h-3.2L15 3H9L7.2 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm-8 13a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></symbol>
+  <symbol id="i-wallpaper" viewBox="0 0 24 24"><path d="M21 3H3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H3V5h18v14zM8.5 11.5 5 16h14l-4.5-6-3.5 4.5-2.5-3z"/></symbol>
 </svg>
 
 <!-- ═══ LOGIN ════════════════════════════════════════════════ -->
@@ -327,6 +328,22 @@
       <button class="btn-text" data-close>Cancel</button>
       <button class="btn-primary" id="addmembers-save">Add</button>
     </div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-wallpaper">
+  <div class="modal wallpaper-modal">
+    <div class="modal-head">Chat wallpaper</div>
+    <div class="modal-body">
+      <p class="wp-intro">Applies to every conversation on this device. Pick a colour, or use your own photo.</p>
+      <div class="wp-grid" id="wp-grid"></div>
+      <label class="wp-dim" id="wp-dim-row" hidden>
+        <span>Dim photo so messages stay readable</span>
+        <input type="range" id="wp-dim" min="15" max="75" value="40" />
+      </label>
+      <input type="file" id="wp-file" accept="image/*" hidden />
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Done</button></div>
   </div>
 </div>
 

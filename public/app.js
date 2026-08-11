@@ -1909,11 +1909,133 @@ function runGlobalSearch(q) {
   });
 }
 
+// ── Chat wallpaper ─────────────────────────────────────────────────────
+const WP_KEY = 'vchat.wallpaper';
+const WALLPAPERS = [
+  { id: 'default', name: 'Doodle' },
+  { id: 'navy', name: 'Navy' },
+  { id: 'dusk', name: 'Dusk' },
+  { id: 'ember', name: 'Ember' },
+  { id: 'kente', name: 'Kente' },
+  { id: 'grid', name: 'Grid' },
+  { id: 'mist', name: 'Mist' },
+  { id: 'plain', name: 'Plain' },
+];
+
+function loadWallpaper() {
+  try { return JSON.parse(localStorage.getItem(WP_KEY) || '{}'); }
+  catch { return {}; }
+}
+
+function saveWallpaper(state) {
+  try { localStorage.setItem(WP_KEY, JSON.stringify(state)); }
+  catch { toast('Could not save wallpaper — storage is full'); }
+}
+
+function applyWallpaper() {
+  const state = loadWallpaper();
+  const id = WALLPAPERS.some(w => w.id === state.id) || state.id === 'custom' ? state.id : 'default';
+  const panel = $('chat-panel');
+  if (!panel) return;
+  panel.dataset.wp = id;
+  if (id === 'custom' && state.photo) {
+    panel.style.setProperty('--wp-photo', `url("${state.photo}")`);
+    panel.style.setProperty('--wp-dim', String((state.dim ?? 40) / 100));
+  } else {
+    panel.style.removeProperty('--wp-photo');
+    panel.style.removeProperty('--wp-dim');
+  }
+}
+
+function setWallpaper(id, extra = {}) {
+  const prev = loadWallpaper();
+  const next = { ...prev, id, ...extra };
+  if (id !== 'custom') delete next.photo;
+  saveWallpaper(next);
+  applyWallpaper();
+  renderWallpaperGrid();
+}
+
+function renderWallpaperGrid() {
+  const box = $('wp-grid');
+  if (!box) return;
+  const state = loadWallpaper();
+  const current = state.id || 'default';
+  box.innerHTML = '';
+
+  WALLPAPERS.forEach(w => {
+    const b = el('button', 'wp-tile' + (current === w.id ? ' on' : ''));
+    b.type = 'button';
+    b.innerHTML = `<span class="wp-swatch ${w.id}"></span><span class="wp-name">${esc(w.name)}</span>`;
+    b.onclick = () => { setWallpaper(w.id); toast(`${w.name} wallpaper`); };
+    box.appendChild(b);
+  });
+
+  const upload = el('button', 'wp-tile upload' + (current === 'custom' ? ' on' : ''));
+  upload.type = 'button';
+  upload.innerHTML = `${icon('camera')}<span class="wp-name">${current === 'custom' ? 'Change photo' : 'Your photo'}</span>`;
+  upload.onclick = () => $('wp-file').click();
+  if (current === 'custom' && state.photo) {
+    upload.style.backgroundImage = `url("${state.photo}")`;
+    upload.style.backgroundSize = 'cover';
+    upload.style.backgroundPosition = 'center';
+    upload.style.color = '#fff';
+  }
+  box.appendChild(upload);
+
+  const dimRow = $('wp-dim-row');
+  const dim = $('wp-dim');
+  const showDim = current === 'custom' && !!state.photo;
+  dimRow.hidden = !showDim;
+  if (showDim) dim.value = String(state.dim ?? 40);
+}
+
+async function onWallpaperFile(file) {
+  if (!file || !file.type.startsWith('image/')) return toast('Pick a photo');
+  toast('Preparing wallpaper…');
+  try {
+    const dataUrl = await wallpaperToDataUrl(file);
+    setWallpaper('custom', { photo: dataUrl, dim: Number($('wp-dim').value) || 40 });
+    toast('Wallpaper updated');
+  } catch (err) {
+    toast(err.message || 'Could not use that photo');
+  }
+}
+
+/** Shrink a photo so it fits in localStorage — no server, no build. */
+function wallpaperToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const max = 1400;
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const data = canvas.toDataURL('image/jpeg', 0.72);
+      if (data.length > 1.6 * 1024 * 1024) return reject(new Error('That photo is still too large'));
+      resolve(data);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read that photo')); };
+    img.src = url;
+  });
+}
+
+function openWallpaper() {
+  renderWallpaperGrid();
+  openModal('modal-wallpaper');
+}
+
 // ── Main menu ──────────────────────────────────────────────────────────
 function mainMenu(e) {
   showCtxMenu(e, [
     { label: 'New group', fn: openNewGroup },
     { label: 'Profile', fn: openProfile },
+    { label: 'Chat wallpaper', fn: openWallpaper },
     { label: 'Archived', fn: () => setFilter('archived') },
     { label: 'Call quality', fn: openCallQuality },
     { label: lite ? 'Lite mode: on' : 'Lite mode: off', fn: openLiteMode },
@@ -1934,6 +2056,7 @@ function chatMenu(e) {
   if (!c) return;
   showCtxMenu(e, [
     { label: c.type === 'group' ? 'Group info' : 'Contact info', fn: openDrawer },
+    { label: 'Wallpaper', fn: openWallpaper },
     { label: c.muted ? 'Unmute notifications' : 'Mute notifications', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'muted', value: !c.muted }) },
     { label: c.archived ? 'Unarchive chat' : 'Archive chat', fn: () => { socket.emit('chat:flag', { chatId: c.id, flag: 'archived', value: !c.archived }); closeChat(); } },
     { sep: true },
@@ -2528,6 +2651,14 @@ function wire() {
     };
   });
   $('file-input').onchange = e => { const f = e.target.files[0]; if (f) uploadFile(f); };
+  $('wp-file').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) onWallpaperFile(f); };
+  $('wp-dim').oninput = e => {
+    const dim = Number(e.target.value) || 40;
+    const prev = loadWallpaper();
+    if (prev.id !== 'custom') return;
+    saveWallpaper({ ...prev, dim });
+    applyWallpaper();
+  };
 
   $('messages').addEventListener('scroll', () => {
     if (nearBottom()) { $('jump-btn').classList.remove('show'); $('jump-n').style.display = 'none'; $('jump-n').textContent = ''; }
@@ -2553,6 +2684,7 @@ function wire() {
 // ── Boot ───────────────────────────────────────────────────────────────
 loadOutbox();
 document.body.classList.toggle('lite', lite);
+applyWallpaper();
 // The browser tells us before the socket does.
 window.addEventListener('online', () => flushOutbox());
 window.addEventListener('offline', () => updateOfflineBar());
