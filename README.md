@@ -25,8 +25,9 @@ Sign-in is by phone number, WhatsApp-style:
 
 1. Pick your country and enter your number — it is normalised to E.164 (`+233241112233`).
 2. Enter the 6-digit code sent to that number.
-3. First time on a number, choose a display name and avatar. After that the number
-   signs you straight back into the same account.
+3. First time on a number, create an account: display name, unique `@username`, and
+   avatar. Friends find you by that username, not your phone number. After that the
+   number signs you straight back into the same account.
 
 The session token is kept in `localStorage`, so you stay signed in across reloads
 until you log out.
@@ -118,7 +119,8 @@ conversations. Delete that file to start from a clean slate.
 | `POST` | `/api/auth/session` | `{token}` → `{user}`, for resuming a session |
 | `POST` | `/api/auth/logout` | `{token}` → `{ok: true}` |
 | `POST` | `/api/messenger/upload` | Multipart upload (field `file`) → `{url, name, size, mimeType}` |
-| `GET` | `/api/messenger/users` | All known users |
+| `GET` | `/api/messenger/users` | All known users (no phone numbers) |
+| `GET` | `/api/messenger/users/search?q=` | Look up people by `@username` |
 | `GET` | `/api/messenger/chats?userId=` | Chats visible to a user |
 | `GET` | `/api/messenger/messages/:chatId?userId=&limit=` | Message history |
 | `GET` | `/api/health` | Health check |
@@ -128,7 +130,7 @@ conversations. Delete that file to start from a clean slate.
 **Client → server:** `user:join`, `profile:update`, `message:send`, `message:edit`,
 `message:delete`, `message:react`, `messages:read`, `typing:start`, `typing:stop`,
 `chat:createGroup`, `chat:startDM`, `chat:open`, `chat:flag`, `chat:clear`, `chat:leave`,
-`chat:addMembers`, `search:messages`, `call:start`, `call:accept`, `call:decline`,
+`chat:addMembers`, `search:messages`, `users:lookup`, `call:start`, `call:accept`, `call:decline`,
 `call:cancel`, `call:end`, `call:signal`
 
 **Server → client:** `chats:list`, `chats:refresh`, `chat:new`, `chat:removed`,
