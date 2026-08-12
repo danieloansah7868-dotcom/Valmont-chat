@@ -6,6 +6,8 @@
 <meta name="theme-color" content="#0b1f3a" />
 <title>VChat</title>
 <link rel="icon" href="/favicon.svg" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" href="/icons/icon-192.png" />
 <link rel="stylesheet" href="/app.css" />
 <script src="/socket.io/socket.io.js"></script>
 </head>
@@ -142,6 +144,7 @@
       <div class="side-filters">
         <button class="chip on" data-filter="all">All</button>
         <button class="chip" data-filter="unread">Unread</button>
+        <button class="chip" data-filter="favorites">Favorites</button>
         <button class="chip" data-filter="groups">Groups</button>
         <button class="chip" data-filter="archived">Archived</button>
       </div>
@@ -161,7 +164,7 @@
       </svg>
       <h2>VChat for Desktop</h2>
       <p>Send and receive messages, share files and start group chats in real time. Select a conversation on the left to begin.</p>
-      <div class="lock"><svg class="icon-sm"><use href="#i-lock"/></svg> Your messages stay on your own server</div>
+      <div class="lock"><svg class="icon-sm"><use href="#i-lock"/></svg> Secure transport active · end-to-end encryption rollout in progress</div>
     </section>
 
     <!-- ── Chat panel ── -->
@@ -297,15 +300,44 @@
   </div>
 </div>
 
+<div class="overlay" id="modal-notifications">
+  <div class="modal settings-modal">
+    <div class="modal-head">Notifications &amp; media</div>
+    <div class="modal-body">
+      <div class="settings-section-title">Messages</div>
+      <label class="lite-row"><span><span class="lite-title">Desktop notifications</span><span class="lite-note" id="notification-permission-status">Browser alerts while Vchat is open</span></span><input type="checkbox" id="notify-desktop" class="switch"></label>
+      <label class="lite-row"><span><span class="lite-title">Show message previews</span><span class="lite-note">Show sender and message text in notifications</span></span><input type="checkbox" id="notify-preview" class="switch"></label>
+      <label class="lite-row"><span><span class="lite-title">Message sounds</span><span class="lite-note">Play a sound for new messages</span></span><input type="checkbox" id="notify-sounds" class="switch"></label>
+      <label class="setting-field">Message tone <select id="notify-tone"><option value="chime">Chime</option><option value="soft">Soft</option><option value="bright">Bright</option></select></label>
+      <button class="btn-text settings-test-button" id="notify-test" type="button">Test message sound</button>
+
+      <div class="settings-section-title">Calls</div>
+      <label class="lite-row"><span><span class="lite-title">Call sounds &amp; ringing</span><span class="lite-note">Ring for incoming calls and play the outgoing call tone</span></span><input type="checkbox" id="notify-call-sounds" class="switch"></label>
+      <label class="setting-field">Ringtone <select id="notify-ringtone"><option value="classic">Classic</option><option value="gentle">Gentle</option><option value="pulse">Pulse</option></select></label>
+      <button class="btn-text settings-test-button" id="ringtone-test" type="button">Test ringtone</button>
+
+      <div class="settings-section-title">Media visibility</div>
+      <label class="setting-field">Photo previews <select id="media-visibility"><option value="show">Show automatically</option><option value="tap">Tap to view</option></select></label>
+      <p class="setting-explainer">Vchat keeps received media inside protected chats. When you choose Save, your browser places the file in its Downloads folder. Web apps cannot add files to your phone gallery automatically.</p>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Cancel</button><button class="btn-primary" id="notifications-save">Save</button></div>
+  </div>
+</div>
+
 <div class="overlay" id="modal-profile">
   <div class="modal">
     <div class="modal-head">Profile</div>
     <div class="modal-body" style="text-align:center">
-      <div class="avatar sz-140" id="profile-avatar" style="margin:8px auto 20px"></div>
+      <div class="profile-photo-wrap">
+        <div class="avatar sz-140" id="profile-avatar"></div>
+        <button class="profile-photo-button" id="profile-photo-choose" type="button">Change photo</button>
+      </div>
+      <input type="file" id="profile-photo-input" accept="image/jpeg,image/png,image/webp" hidden />
+      <button class="btn-text danger profile-photo-remove" id="profile-photo-remove" type="button">Remove photo</button>
       <div class="avatar-picker" id="profile-avatar-picker" style="justify-content:center"></div>
       <div style="text-align:left;margin-top:10px">
-        <label class="field-label">Your name</label>
-        <input type="text" id="profile-name" maxlength="24" />
+        <label class="field-label">Your name <span class="field-hint">Emoji welcome</span></label>
+        <div class="profile-name-row"><input type="text" id="profile-name" maxlength="40" /><button class="emoji-name-button" id="profile-name-emoji" type="button" title="Add emoji">😊</button></div>
         <label class="field-label" style="margin-top:20px">About</label>
         <input type="text" id="profile-about" maxlength="80" />
         <label class="field-label" style="margin-top:20px">Phone number</label>
@@ -316,6 +348,59 @@
       <button class="btn-text" data-close>Cancel</button>
       <button class="btn-primary" id="profile-save">Save</button>
     </div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-privacy">
+  <div class="modal settings-modal">
+    <div class="modal-head">Privacy &amp; security</div>
+    <div class="modal-body">
+      <div class="security-phase">
+        <svg class="icon"><use href="#i-lock"/></svg>
+        <div><strong>Security foundation active</strong><span>Protected sessions and media are on. End-to-end message encryption is the next rollout stage.</span></div>
+      </div>
+      <label class="setting-field">Last seen <select id="privacy-last-seen"><option value="everyone">Everyone</option><option value="contacts">My contacts</option><option value="nobody">Nobody</option></select></label>
+      <label class="setting-field">Online status <select id="privacy-online"><option value="everyone">Everyone</option><option value="same-as-last-seen">Same as last seen</option></select></label>
+      <label class="setting-field">Profile photo <select id="privacy-photo"><option value="everyone">Everyone</option><option value="contacts">My contacts</option><option value="nobody">Nobody</option></select></label>
+      <label class="setting-field">About <select id="privacy-about"><option value="everyone">Everyone</option><option value="contacts">My contacts</option><option value="nobody">Nobody</option></select></label>
+      <label class="setting-field">Default disappearing messages <select id="privacy-timer"><option value="0">Off</option><option value="86400">24 hours</option><option value="604800">7 days</option><option value="7776000">90 days</option></select></label>
+      <label class="lite-row"><span><span class="lite-title">Read receipts</span><span class="lite-note">Group-chat receipts are always sent</span></span><input type="checkbox" id="privacy-receipts" class="switch" /></label>
+      <label class="lite-row"><span><span class="lite-title">Advanced privacy for new chats</span><span class="lite-note">Limit forwarding and attachment downloads by default</span></span><input type="checkbox" id="privacy-advanced" class="switch" /></label>
+      <label class="lite-row"><span><span class="lite-title">Silence unknown callers</span><span class="lite-note">Unknown calls will not ring</span></span><input type="checkbox" id="privacy-silence" class="switch" /></label>
+      <div class="settings-section-title">Two-step verification</div>
+      <div class="setting-action"><span id="two-step-status">Add a PIN for extra account protection</span><span class="setting-buttons"><button class="btn-text" id="two-step-set">Set PIN</button><button class="btn-text danger" id="two-step-disable" hidden>Disable</button></span></div>
+      <div class="settings-section-title">Linked devices</div>
+      <div id="device-list" class="device-list"><div class="empty-list">Loading…</div></div>
+      <button class="drawer-action danger" id="devices-revoke-all">Log out all other devices</button>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Cancel</button><button class="btn-primary" id="privacy-save">Save</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-forward">
+  <div class="modal">
+    <div class="modal-head">Forward message</div>
+    <div class="modal-body"><div id="forward-list"></div><div class="lite-note" style="margin-top:12px">Choose up to 5 chats.</div></div>
+    <div class="modal-foot"><button class="btn-text" data-close>Cancel</button><button class="btn-primary" id="forward-send">Forward</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-group-settings">
+  <div class="modal">
+    <div class="modal-head">Group permissions</div>
+    <div class="modal-body group-settings-body">
+      <p class="setting-help">Choose what participants can do in this group.</p>
+      <label class="setting-field">Edit group info
+        <select id="group-permission-info"><option value="admins">Only admins</option><option value="members">All participants</option></select>
+      </label>
+      <label class="setting-field">Send messages
+        <select id="group-permission-send"><option value="members">All participants</option><option value="admins">Only admins</option></select>
+      </label>
+      <label class="setting-field">Add participants
+        <select id="group-permission-add"><option value="admins">Only admins</option><option value="members">All participants</option></select>
+      </label>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Cancel</button><button class="btn-primary" id="group-settings-save">Save</button></div>
   </div>
 </div>
 

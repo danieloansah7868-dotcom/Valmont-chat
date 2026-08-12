@@ -20,6 +20,20 @@ const typingTimers = {};
 let unseen = 0;
 
 const AVATARS = ['😀','😎','🦊','🐼','🐯','🦁','🐸','🐵','🦄','🐙','🌟','🚀','🔥','🍀','🎧','⚽','🎸','🌺','🍕','🐨'];
+const NOTIFICATION_DEFAULTS = {
+  desktop: false,
+  previews: true,
+  messageSounds: true,
+  messageTone: 'chime',
+  callSounds: true,
+  ringtone: 'classic',
+  mediaVisibility: 'show',
+};
+let notificationPrefs = { ...NOTIFICATION_DEFAULTS };
+try {
+  notificationPrefs = { ...NOTIFICATION_DEFAULTS, ...JSON.parse(localStorage.getItem('vchat.notifications') || '{}') };
+} catch { /* corrupted local settings fall back safely */ }
+
 const EMOJI_GROUPS = {
   'Smileys': ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩','😘','😗','😚','😙','😋','😛','😜','🤪','😝','🤗','🤭','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','😮','😯','😴','🥱','😌','😔','😪','🤤','😷','🤒','🤕','🤧','🥳','🥸','😎','🤓','🧐','😕','😟','🙁','😮‍💨','😢','😭','😤','😠','😡','🤬','😱','😨','😰','😥'],
   'Gestures': ['👍','👎','👌','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','👇','☝️','✋','🤚','🖐️','🖖','👋','🤝','🙏','💪','🦾','👏','🙌','👐','🤲','✍️','💅'],
@@ -88,8 +102,29 @@ function colorFor(id) {
 }
 const isEmojiOnly = t => t && /^[\p{Emoji_Presentation}\p{Extended_Pictographic}\u200d\ufe0f\s]+$/u.test(t) && [...t.replace(/\s/g, '')].length <= 6;
 
-function linkify(text) {
-  return esc(text).replace(/(https?:\/\/[^\s<]+)/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
+function formatMessage(text) {
+  const blocks = [];
+  let source = String(text || '').replace(/```([\s\S]*?)```/g, (_match, code) => {
+    blocks.push(`<pre class="msg-code">${esc(code.trim())}</pre>`);
+    return `\u0000BLOCK${blocks.length - 1}\u0000`;
+  });
+  source = source.replace(/`([^`\n]+)`/g, (_match, code) => {
+    blocks.push(`<code>${esc(code)}</code>`);
+    return `\u0000BLOCK${blocks.length - 1}\u0000`;
+  });
+  let html = esc(source);
+  html = html
+    .replace(/(^|\s)\*([^*\n]+)\*(?=\s|[.,!?;:]|$)/g, '$1<strong>$2</strong>')
+    .replace(/(^|\s)_([^_\n]+)_(?=\s|[.,!?;:]|$)/g, '$1<em>$2</em>')
+    .replace(/(^|\s)~([^~\n]+)~(?=\s|[.,!?;:]|$)/g, '$1<del>$2</del>')
+    .replace(/(https?:\/\/[^\s<]+)/g, url => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`)
+    .replace(/(^|\s)(@[\p{L}\p{N}_.-]{2,40})/gu, '$1<span class="mention">$2</span>');
+  html = html.split('\n').map(line => {
+    if (/^&gt;\s/.test(line)) return `<blockquote>${line.replace(/^&gt;\s?/, '')}</blockquote>`;
+    if (/^[-•]\s/.test(line)) return `<div class="msg-list-item">• ${line.replace(/^[-•]\s?/, '')}</div>`;
+    return line;
+  }).join('<br>');
+  return html.replace(/\u0000BLOCK(\d+)\u0000/g, (_match, index) => blocks[Number(index)] || '');
 }
 
 /** Replace the node with `id` by a freshly rendered avatar, keeping id + extra classes. */
@@ -108,10 +143,13 @@ function avatarHTML(entity, size = 40, showPresence = false) {
   const isUser = entity && 'username' in entity;
   const name = isUser ? entity.username : (entity?.name || '?');
   const emoji = entity?.avatar;
+  const photoUrl = entity?.photoUrl;
   const bg = entity?.color || colorFor(entity?.id || name);
-  const inner = emoji ? esc(emoji) : (entity?.type === 'group' ? icon('group', 'icon') : esc(initials(name)));
+  const inner = photoUrl
+    ? `<img class="avatar-photo" src="${esc(photoUrl)}" alt="" loading="lazy">`
+    : (emoji ? esc(emoji) : (entity?.type === 'group' ? icon('group', 'icon') : esc(initials(name))));
   const dot = showPresence ? `<span class="presence ${entity?.status === 'online' ? 'on' : ''}"></span>` : '';
-  return `<div class="avatar sz-${size}" style="background:${emoji ? 'var(--panel-alt)' : bg}">${inner}${dot}</div>`;
+  return `<div class="avatar sz-${size}" style="background:${photoUrl || emoji ? 'var(--panel-alt)' : bg}">${inner}${dot}</div>`;
 }
 
 function tickHTML(status) {
@@ -213,15 +251,17 @@ function showStep(id) {
   ['step-phone', 'step-code', 'step-profile'].forEach(s => { $(s).hidden = s !== id; });
 }
 
-async function api(path, body) {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+async function api(path, body, options = {}) {
+  const method = options.method || (body === undefined ? 'GET' : 'POST');
+  const init = { method, credentials: 'same-origin', headers: {} };
+  if (body !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, init);
   let data = {};
   try { data = await res.json(); } catch { /* empty body */ }
-  return { ok: res.ok, data };
+  return { ok: res.ok, status: res.status, data };
 }
 
 function initLogin() {
@@ -268,13 +308,12 @@ function initLogin() {
   restoreSession();
 }
 
-/** Silently resume an existing session so you are not asked to verify twice. */
+/** Silently resume the server-held HttpOnly session cookie. */
 async function restoreSession() {
-  const token = localStorage.getItem('vchat.token');
-  if (!token) return;
-  const { ok, data } = await api('/api/auth/session', { token });
-  if (ok && data.user) connect(token);
-  else localStorage.removeItem('vchat.token');
+  // Remove pre-security-release bearer tokens; they are intentionally invalid.
+  localStorage.removeItem('vchat.token');
+  const { ok, data } = await api('/api/auth/session');
+  if (ok && data.user) connect();
 }
 
 // ── Step 1: request a code ─────────────────────────────────────────────
@@ -403,6 +442,17 @@ async function submitCode() {
     $('name-input').focus();
     return;
   }
+  if (data.needsTwoStep) {
+    const pin = prompt('Enter your 6-digit two-step verification PIN');
+    if (!pin) return;
+    const result = await api('/api/auth/two-step', { phone: authPhone, pin });
+    if (!result.ok) {
+      $('code-err').textContent = result.data.error || 'Incorrect PIN';
+      return;
+    }
+    finishAuth(result.data);
+    return;
+  }
 
   finishAuth(data);
 }
@@ -426,29 +476,21 @@ async function submitProfile() {
   finishAuth(data);
 }
 
-function finishAuth({ token, user }) {
-  localStorage.setItem('vchat.token', token);
+function finishAuth({ user }) {
   localStorage.setItem('vchat.name', user.username);
   localStorage.setItem('vchat.avatar', user.avatar || '');
-  connect(token);
+  connect();
 }
 
 // ── Socket ─────────────────────────────────────────────────────────────
-function connect(token) {
+function connect() {
   if (socket) socket.close();
-  socket = io({ transports: ['websocket', 'polling'], auth: { token } });
+  socket = io({ transports: ['websocket', 'polling'], withCredentials: true });
 
   socket.on('connect', () => {
-    socket.emit('user:join', { token }, (res) => {
+    socket.emit('user:join', {}, (res) => {
       $('login-btn').disabled = false;
       if (!res || res.error) {
-        if (res?.signedOut) {           // token no longer valid → back to step 1
-          localStorage.removeItem('vchat.token');
-          socket.close();
-          showStep('step-phone');
-          $('login-err').textContent = 'Your session expired. Please sign in again.';
-          return;
-        }
         $('code-err').textContent = res?.error || 'Could not join';
         return;
       }
@@ -467,7 +509,36 @@ function connect(token) {
       }
       updateOfflineBar();
       flushOutbox();
+      refreshIceServers();
+      const invite = new URLSearchParams(location.search).get('invite');
+      if (invite) {
+        socket.emit('chat:joinInvite', { code: invite }, result => {
+          if (result?.chat) {
+            history.replaceState({}, '', location.pathname);
+            openChat(result.chat.id);
+            toast(`Joined ${result.chat.name}`);
+          } else toast(result?.error || 'Invite link is invalid');
+        });
+      }
     });
+  });
+
+  socket.on('session:revoked', () => {
+    socket.close();
+    $('login').style.display = '';
+    document.body.classList.remove('ready');
+    showStep('step-phone');
+    $('login-err').textContent = 'This device was signed out from your account.';
+  });
+
+  socket.on('connect_error', error => {
+    if (/Authentication required/i.test(error?.message || '')) {
+      socket.close();
+      $('login').style.display = '';
+      document.body.classList.remove('ready');
+      showStep('step-phone');
+      $('login-err').textContent = 'Your session expired. Please sign in again.';
+    }
   });
 
   socket.on('disconnect', () => {
@@ -531,7 +602,14 @@ function connect(token) {
       const c = chats.find(x => x.id === m.chatId);
       if (!c?.muted) ping();
     }
-    if (m.senderId !== me.id && document.hidden) notifyTitle();
+    if (m.senderId !== me.id && document.hidden) {
+      const c = chats.find(x => x.id === m.chatId);
+      if (!c?.muted) {
+        if (m.chatId === activeId) ping();
+        showMessageNotification(m, c);
+      }
+      notifyTitle();
+    }
   });
 
   socket.on('message:updated', m => {
@@ -580,18 +658,59 @@ function connect(token) {
 
 // ── Notification helpers ───────────────────────────────────────────────
 let audioCtx = null;
-function ping() {
+let activeCallNotification = null;
+function ping(force = false) {
+  if (!force && !notificationPrefs.messageSounds) return;
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.connect(g); g.connect(audioCtx.destination);
-    o.frequency.value = 880; o.type = 'sine';
-    g.gain.setValueAtTime(0.0001, audioCtx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.06, audioCtx.currentTime + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.25);
-    o.start(); o.stop(audioCtx.currentTime + 0.26);
+    audioCtx.resume?.();
+    const tones = {
+      chime: [880, 1175],
+      soft: [520, 660],
+      bright: [990, 1320],
+    };
+    const notes = tones[notificationPrefs.messageTone] || tones.chime;
+    notes.forEach((frequency, index) => {
+      const start = audioCtx.currentTime + index * 0.13;
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.connect(g); g.connect(audioCtx.destination);
+      o.frequency.value = frequency; o.type = notificationPrefs.messageTone === 'soft' ? 'sine' : 'triangle';
+      g.gain.setValueAtTime(0.0001, start);
+      g.gain.exponentialRampToValueAtTime(0.045, start + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.2);
+      o.start(start); o.stop(start + 0.21);
+    });
   } catch (_) {}
 }
+
+function showMessageNotification(message, chat) {
+  if (!notificationPrefs.desktop || !document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
+  const privatePreview = chat?.advancedPrivacy || !notificationPrefs.previews;
+  const sender = message.sender?.username || chat?.name || 'Vchat';
+  const title = privatePreview ? 'New Vchat message' : (chat?.type === 'group' ? `${sender} · ${chat.name}` : sender);
+  const body = privatePreview ? 'Open Vchat to read it' : previewOf(message);
+  try {
+    const notice = new Notification(title, { body, icon: '/icons/icon-192.png', tag: `chat-${message.chatId}` });
+    notice.onclick = () => { window.focus(); openChat(message.chatId); notice.close(); };
+  } catch { /* browser or OS declined the notification */ }
+}
+
+function showCallNotification(from, media) {
+  if (!notificationPrefs.desktop || !document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    activeCallNotification?.close();
+    activeCallNotification = new Notification(`Incoming ${media === 'video' ? 'video' : 'voice'} call`, {
+      body: notificationPrefs.previews ? (from?.username || 'Vchat contact') : 'Open Vchat to answer',
+      icon: '/icons/icon-192.png', tag: 'vchat-incoming-call', requireInteraction: true,
+    });
+    activeCallNotification.onclick = () => { window.focus(); activeCallNotification?.close(); };
+  } catch { /* unsupported notification options */ }
+}
+function closeCallNotification() {
+  activeCallNotification?.close();
+  activeCallNotification = null;
+}
+
 function notifyTitle() {
   unseen++;
   document.title = `(${unseen}) VChat`;
@@ -606,35 +725,139 @@ function renderMe() {
   if (node) { node.title = 'Profile'; node.onclick = openProfile; }
 }
 
+let profileModalCleanup = null;
 function openProfile() {
-  const pv = setAvatar('profile-avatar', me, 140);
-  if (pv) pv.style.margin = '8px auto 20px';
+  profileModalCleanup?.();
+  setAvatar('profile-avatar', me, 140);
   let picked = me.avatar;
+  let photoFile = null;
+  let photoAction = 'keep';
+  let previewUrl = null;
+
+  const clearPreview = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = null;
+  };
+  const cleanup = () => {
+    clearPreview();
+    photoFile = null;
+    if ($('profile-photo-input')) $('profile-photo-input').value = '';
+    if (profileModalCleanup === cleanup) profileModalCleanup = null;
+  };
+  profileModalCleanup = cleanup;
+
+  const showPhotoPreview = url => {
+    const node = $('profile-avatar');
+    node.innerHTML = `<img class="avatar-photo" src="${esc(url)}" alt="Profile photo preview">`;
+    node.style.background = 'var(--panel-alt)';
+  };
+
   buildAvatarPicker($('profile-avatar-picker'), me.avatar, a => {
     picked = a;
+    clearPreview();
+    photoFile = null;
+    photoAction = me.photoUrl ? 'remove' : 'keep';
     const node = $('profile-avatar');
     node.textContent = a;
     node.style.background = 'var(--panel-alt)';
+    $('profile-photo-remove').hidden = true;
   });
+
   $('profile-name').value = me.username;
   $('profile-about').value = me.about || '';
-  const phoneRow = $('profile-phone');
-  if (phoneRow) phoneRow.textContent = me.phone || 'Not linked';
-  $('profile-save').onclick = () => {
-    socket.emit('profile:update', {
-      username: $('profile-name').value.trim(),
-      avatar: picked,
-      about: $('profile-about').value.trim(),
-    }, res => {
-      if (res?.error) return toast(res.error);
-      if (!res?.user) return toast('Could not update profile');
-      me = res.user;
+  $('profile-photo-input').value = '';
+  $('profile-photo-remove').hidden = !me.photoUrl;
+  $('profile-phone').textContent = me.phone || 'Not linked';
+
+  $('profile-photo-choose').onclick = () => $('profile-photo-input').click();
+  $('profile-photo-input').onchange = () => {
+    const file = $('profile-photo-input').files?.[0];
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/i.test(file.type) || file.size > 5 * 1024 * 1024) {
+      $('profile-photo-input').value = '';
+      return toast('Choose a JPEG, PNG, or WebP image up to 5 MB');
+    }
+    clearPreview();
+    previewUrl = URL.createObjectURL(file);
+    photoFile = file;
+    photoAction = 'upload';
+    showPhotoPreview(previewUrl);
+    $('profile-photo-remove').hidden = false;
+  };
+  $('profile-photo-remove').onclick = () => {
+    clearPreview();
+    photoFile = null;
+    photoAction = 'remove';
+    const node = $('profile-avatar');
+    node.textContent = picked || initials(me.username);
+    node.style.background = 'var(--panel-alt)';
+    $('profile-photo-remove').hidden = true;
+  };
+  $('profile-name-emoji').onclick = event => {
+    const input = $('profile-name');
+    const emojis = ['😊','❤️','✨','🔥','👑','🌟','🎵','🌺','🦋','🚀','⚽','🎮'];
+    showCtxMenu(event, emojis.map(emoji => ({ label: emoji, fn: () => {
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? start;
+      input.setRangeText(emoji, start, end, 'end');
+      input.focus();
+    } })));
+  };
+
+  $('profile-save').onclick = async () => {
+    const name = $('profile-name').value.trim();
+    if (name.length < 2) return toast('Your name must be at least 2 characters');
+    const button = $('profile-save');
+    button.disabled = true;
+    const profileResult = await new Promise(resolve => {
+      const timer = setTimeout(() => resolve({ error: 'Profile update timed out. Check your connection.' }), 10000);
+      socket.emit('profile:update', {
+        username: name,
+        avatar: picked,
+        about: $('profile-about').value.trim(),
+      }, result => {
+        clearTimeout(timer);
+        resolve(result);
+      });
+    });
+    if (profileResult?.error || !profileResult?.user) {
+      button.disabled = false;
+      return toast(profileResult?.error || 'Could not update profile');
+    }
+
+    const applyLocalProfile = user => {
+      me = user;
       localStorage.setItem('vchat.name', me.username);
       localStorage.setItem('vchat.avatar', me.avatar || '');
       renderMe();
-      closeModal('modal-profile');
-      toast('Profile updated');
-    });
+    };
+    // Text/avatar details have committed even if the independent media request
+    // below fails. Reflect that partial success instead of leaving stale UI.
+    applyLocalProfile(profileResult.user);
+
+    try {
+      if (photoAction === 'upload' && photoFile) {
+        const form = new FormData();
+        form.append('photo', photoFile, photoFile.name);
+        const response = await fetch('/api/account/profile-photo', {
+          method: 'PUT', credentials: 'same-origin', body: form,
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'the photo could not be uploaded');
+        applyLocalProfile(data.user);
+      } else if (photoAction === 'remove') {
+        const result = await api('/api/account/profile-photo', {}, { method: 'DELETE' });
+        if (!result.ok) throw new Error(result.data.error || 'the photo could not be removed');
+        applyLocalProfile(result.data.user);
+      }
+    } catch (error) {
+      button.disabled = false;
+      return toast(`Profile details saved, but ${error.message}`);
+    }
+
+    button.disabled = false;
+    closeModal('modal-profile');
+    toast('Profile updated');
   };
   openModal('modal-profile');
 }
@@ -643,6 +866,7 @@ function openProfile() {
 function visibleChats() {
   let list = chats.slice();
   if (filter === 'unread') list = list.filter(c => c.unread > 0);
+  else if (filter === 'favorites') list = list.filter(c => c.favorite && !c.archived);
   else if (filter === 'groups') list = list.filter(c => c.type === 'group');
   else if (filter === 'archived') list = list.filter(c => c.archived);
   else list = list.filter(c => !c.archived);
@@ -728,6 +952,7 @@ function chatRow(c) {
       <div class="row-bottom">
         <div class="row-preview">${typingActive ? '' : prefix} ${previewText}</div>
         <div class="row-badges">
+          ${c.favorite ? `<span class="row-icon favorite">${icon('star', 'icon-sm')}</span>` : ''}
           ${c.pinned ? `<span class="row-icon">${icon('pin', 'icon-sm')}</span>` : ''}
           ${c.muted ? `<span class="row-icon">${icon('mute', 'icon-sm')}</span>` : ''}
           ${c.unread ? `<span class="unread-badge">${c.unread}</span>` : ''}
@@ -747,6 +972,10 @@ function chatContextMenu(e, c) {
     { label: c.archived ? 'Unarchive chat' : 'Archive chat', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'archived', value: !c.archived }) },
     { label: c.muted ? 'Unmute notifications' : 'Mute notifications', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'muted', value: !c.muted }) },
     { label: c.pinned ? 'Unpin chat' : 'Pin chat', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'pinned', value: !c.pinned }) },
+    { label: c.favorite ? 'Remove from Favorites' : 'Add to Favorites', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'favorite', value: !c.favorite }) },
+    { label: c.unread ? 'Mark as read' : 'Mark as unread', fn: () => c.unread
+      ? socket.emit('messages:read', { chatId: c.id })
+      : socket.emit('chat:flag', { chatId: c.id, flag: 'manualUnread', value: true }) },
     { sep: true },
     { label: 'Clear messages', fn: () => { if (confirm(`Clear all messages in "${c.name}"?`)) socket.emit('chat:clear', { chatId: c.id }); } },
   ];
@@ -791,6 +1020,22 @@ window.addEventListener('resize', hideCtx);
 
 // ── Open / close chat ──────────────────────────────────────────────────
 function activeChat() { return chats.find(c => c.id === activeId) || null; }
+function canSendTo(chat) {
+  if (!chat || chat.type !== 'group' || chat.permissions?.sendMessages !== 'admins') return true;
+  return (chat.admins || []).includes(me.id);
+}
+function updateComposerPermissions(chat) {
+  const allowed = canSendTo(chat);
+  $('composer').classList.toggle('read-only', !allowed);
+  $('msg-input').disabled = !allowed;
+  $('msg-input').placeholder = allowed ? 'Type a message' : 'Only group admins can send messages';
+  for (const id of ['btn-emoji', 'btn-attach', 'btn-send', 'btn-mic']) $(id).disabled = !allowed;
+  if (!allowed) {
+    $('attach-menu').classList.remove('show');
+    $('emoji-panel').classList.remove('show');
+    clearPendingFile();
+  }
+}
 
 function openChat(chatId) {
   activeId = chatId;
@@ -834,6 +1079,7 @@ function setPeerStatus(text, typing) {
 function updateHeaderForActive() {
   const c = activeChat();
   if (!c) return;
+  updateComposerPermissions(c);
   const entity = c.type === 'dm' ? (c.peer || { username: c.name }) : { name: c.name, type: 'group' };
   setAvatar('peer-avatar', entity, 40, c.type === 'dm');
   $('peer-name').textContent = c.name;
@@ -930,10 +1176,13 @@ function messageRow(m, grouped) {
         </div></div>`;
     }
     if (m.file) {
-      const t = m.file.mimeType || '';
+      const t = m.file.mimeType || m.file.type || '';
+      const protectedControls = c?.advancedPrivacy
+        ? ' controlslist="nodownload noremoteplayback" disableremoteplayback'
+        : '';
       if (t.startsWith('image/')) {
         // In lite mode a photo costs nothing until it is actually wanted.
-        inner += (lite && !shownPhotos.has(m.file.url))
+        inner += ((lite || notificationPrefs.mediaVisibility === 'tap') && !shownPhotos.has(m.file.url))
           ? `<button class="photo-hold" data-load="${esc(m.file.url)}">
                <span class="ph-icon">${icon('photo', 'icon-sm')}</span>
                <span class="ph-label">Tap to load photo</span>
@@ -942,24 +1191,26 @@ function messageRow(m, grouped) {
           : `<img class="photo" src="${esc(m.file.url)}" alt="${esc(m.file.name)}" data-photo="${esc(m.file.url)}" data-name="${esc(m.file.name)}" />`;
       } else if (t.startsWith('video/')) {
         // preload="none" in lite mode: metadata alone can be hundreds of KB.
-        inner += `<video class="clip" src="${esc(m.file.url)}" controls preload="${lite ? 'none' : 'metadata'}"></video>`;
+        inner += `<video class="clip" src="${esc(m.file.url)}" controls${protectedControls}${c?.advancedPrivacy ? ' disablepictureinpicture' : ''} preload="${lite ? 'none' : 'metadata'}"></video>`;
       } else if (m.file.voice) {
         inner += voiceHTML(m.file);
       } else if (t.startsWith('audio/')) {
-        inner += `<audio src="${esc(m.file.url)}" controls preload="metadata"></audio>`;
+        inner += `<audio src="${esc(m.file.url)}" controls${protectedControls} preload="metadata"></audio>`;
       } else {
-        inner += `<a class="file-card" href="${esc(m.file.url)}" target="_blank" rel="noopener" download>
+        inner += `<a class="file-card" href="${esc(m.file.url)}" target="_blank" rel="noopener"${c?.advancedPrivacy ? '' : ' download'}>
           <span class="fc-icon">${icon('doc', 'icon-sm')}</span>
-          <span><span class="fc-name">${esc(m.file.name)}</span><br><span class="fc-meta">${fileSize(m.file.size)} · ${esc((m.file.name.split('.').pop() || 'file'))}</span></span>
+          <span><span class="fc-name">${esc(m.file.name)}</span><br><span class="fc-meta">${fileSize(m.file.size)} · ${esc((m.file.name.split('.').pop() || 'file'))}${c?.advancedPrivacy ? ' · protected chat' : ''}</span></span>
         </a>`;
       }
     }
-    if (m.text) inner += `<div class="txt">${linkify(m.text)}</div>`;
+    if (m.forwarded) inner += '<div class="forwarded">↪ Forwarded</div>';
+    if (m.pinnedUntil && m.pinnedUntil > Date.now()) inner += '<div class="pinned-label">📌 Pinned</div>';
+    if (m.text) inner += `<div class="txt">${formatMessage(m.text)}</div>`;
   }
 
   const emojiOnly = !m.file && !m.deleted && isEmojiOnly(m.text);
   if (m.stuck) inner += `<div class="stuck-note">${icon('clock', 'icon-sm')} Waiting for a connection</div>`;
-  inner += `<span class="meta-line">${m.editedAt ? 'edited ' : ''}${timeOf(m.timestamp)} ${out ? tickHTML(m.status || 'sent') : ''}</span>`;
+  inner += `<span class="meta-line">${m.starred ? '★ ' : ''}${m.expiresAt ? '◷ ' : ''}${m.editedAt ? 'edited ' : ''}${timeOf(m.timestamp)} ${out ? tickHTML(m.status || 'sent') : ''}</span>`;
 
   const reactions = Object.entries(m.reactions || {});
   const reactHTML = reactions.length
@@ -1024,14 +1275,41 @@ function messageMenu(e, m) {
   }
 
   const out = m.senderId === me.id;
+  const protectedChat = !!activeChat()?.advancedPrivacy;
   const items = [{ label: 'Reply', fn: () => startReply(m) }];
+  if (!m.deleted) items.push({ label: m.starred ? 'Unstar' : 'Star', fn: () => socket.emit('message:star', { chatId: activeId, messageId: m.id }) });
+  if (!m.deleted && !protectedChat) items.push({ label: 'Forward', fn: () => openForward(m) });
+  if (!m.deleted) items.push({
+    label: m.pinnedUntil && m.pinnedUntil > Date.now() ? 'Unpin message' : 'Pin for 24 hours',
+    fn: () => socket.emit('message:pin', {
+      chatId: activeId, messageId: m.id,
+      durationSeconds: m.pinnedUntil && m.pinnedUntil > Date.now() ? 0 : 86400,
+    }, result => result?.error && toast(result.error)),
+  });
   if (m.text && !m.deleted) items.push({ label: 'Copy text', fn: () => { navigator.clipboard?.writeText(m.text); toast('Copied'); } });
   if (out && m.text && !m.deleted) items.push({ label: 'Edit message', fn: () => editMessage(m) });
-  if (m.file && !m.deleted) items.push({ label: 'Download', fn: () => { const a = document.createElement('a'); a.href = m.file.url; a.download = m.file.name; a.click(); } });
+  if (m.file && !m.deleted && !protectedChat) items.push({ label: 'Download', fn: () => downloadAttachment(m.file) });
   items.push({ sep: true });
   items.push({ label: 'Delete for me', danger: true, fn: () => socket.emit('message:delete', { chatId: activeId, messageId: m.id, forEveryone: false }) });
   if (out && !m.deleted) items.push({ label: 'Delete for everyone', danger: true, fn: () => socket.emit('message:delete', { chatId: activeId, messageId: m.id, forEveryone: true }) });
   showCtxMenu(e, items, ['👍','❤️','😂','😮','😢','🙏'].map(emoji => ({ emoji, fn: () => socket.emit('message:react', { chatId: activeId, messageId: m.id, emoji }) })));
+}
+
+async function downloadAttachment(file) {
+  try {
+    const response = await fetch(file.url, { credentials: 'same-origin' });
+    if (!response.ok) throw new Error(response.status === 404 ? 'Attachment is unavailable' : 'Download failed');
+    const href = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = file.name || 'attachment';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 1000);
+  } catch (error) {
+    toast(error.message || 'Download failed');
+  }
 }
 
 function editMessage(m) {
@@ -1039,6 +1317,36 @@ function editMessage(m) {
   if (text != null && text.trim() && text.trim() !== m.text) {
     socket.emit('message:edit', { chatId: activeId, messageId: m.id, text: text.trim() });
   }
+}
+
+function openForward(message) {
+  const picked = new Set();
+  const list = $('forward-list');
+  list.innerHTML = '';
+  chats.filter(chat => !chat.archived).forEach(chat => {
+    const row = el('label', 'pick-row', `${avatarHTML(chat.type === 'dm' ? (chat.peer || { username: chat.name }) : { name: chat.name, type: 'group', id: chat.id }, 40)}<div class="pk-name">${esc(chat.name)}</div><input type="checkbox" />`);
+    row.querySelector('input').onchange = event => {
+      if (event.target.checked && picked.size >= 5) {
+        event.target.checked = false;
+        return toast('You can forward to up to 5 chats at once');
+      }
+      if (event.target.checked) picked.add(chat.id); else picked.delete(chat.id);
+    };
+    list.appendChild(row);
+  });
+  $('forward-send').onclick = () => {
+    if (!picked.size) return toast('Choose at least one chat');
+    socket.emit('message:forward', {
+      chatId: message.chatId,
+      messageId: message.id,
+      targetChatIds: [...picked],
+    }, result => {
+      if (result?.error) return toast(result.error);
+      closeModal('modal-forward');
+      toast(`Forwarded to ${result?.count || 0} chat${result?.count === 1 ? '' : 's'}`);
+    });
+  };
+  openModal('modal-forward');
 }
 
 // ── Reply bar ──────────────────────────────────────────────────────────
@@ -1073,6 +1381,7 @@ function sendMessage() {
   const input = $('msg-input');
   const text = input.value.trim();
   if ((!text && !pendingFile) || !activeId) return;
+  if (!canSendTo(activeChat())) return toast('Only group admins can send messages');
 
   const payload = {
     chatId: activeId,
@@ -1470,6 +1779,7 @@ async function uploadFile(file) {
 
   const fd = new FormData();
   fd.append('file', file);
+  fd.append('chatId', activeId || '');
   const saved = original - file.size;
   addSaved(saved);
   toast(saved > 50 * 1024 ? `Uploading… (saved ${fileSize(saved)})` : 'Uploading…');
@@ -1625,6 +1935,7 @@ async function finishRecording() {
   // Voice notes send immediately — no preview step, like WhatsApp.
   const fd = new FormData();
   fd.append('file', file);
+  fd.append('chatId', activeId || '');
   try {
     const res = await fetch('/api/messenger/upload', { method: 'POST', body: fd });
     const data = await res.json();
@@ -1733,6 +2044,9 @@ function openDrawer() {
   if (!c) return;
   const body = $('drawer-body');
   body.innerHTML = '';
+  const isGroupAdmin = c.type === 'group' && (c.admins || []).includes(me.id);
+  const canEditGroupInfo = c.type === 'group' && (c.permissions?.editInfo !== 'admins' || isGroupAdmin);
+  const canAddGroupMembers = c.type === 'group' && (c.permissions?.addMembers !== 'admins' || isGroupAdmin);
   $('drawer-title').textContent = c.type === 'group' ? 'Group info' : 'Contact info';
 
   const entity = c.type === 'dm' ? (users.find(u => u.id === c.peer?.id) || c.peer) : { name: c.name, type: 'group', id: c.id };
@@ -1744,6 +2058,18 @@ function openDrawer() {
       : esc(lastSeenText(entity))}</div>`);
   head.querySelector('.avatar').style.margin = '0 auto';
   body.appendChild(head);
+
+  if (c.type === 'group' && (c.about || canEditGroupInfo)) {
+    const info = el('div', 'drawer-block left', `<div class="drawer-label">Group description</div><div class="drawer-value">${esc(c.about || 'Add a group description')}</div>`);
+    if (canEditGroupInfo) {
+      info.style.cursor = 'pointer';
+      info.onclick = () => {
+        const about = prompt('Group description', c.about || '');
+        if (about != null) socket.emit('group:update', { chatId: c.id, about }, result => result?.error && toast(result.error));
+      };
+    }
+    body.appendChild(info);
+  }
 
   if (c.type === 'dm') {
     body.appendChild(el('div', 'drawer-block left', `
@@ -1764,13 +2090,40 @@ function openDrawer() {
       const row = el('div', 'member-row', `
         ${avatarHTML(u, 40, true)}
         <div class="mr-name">${esc(u.id === me.id ? 'You' : u.username)}<div style="font-size:12.5px;color:var(--text-secondary)">${esc(u.about || '')}</div></div>
-        ${c.createdBy === u.id ? '<span class="mr-tag">Admin</span>' : ''}`);
-      if (u.id !== me.id) row.onclick = () => socket.emit('chat:startDM', { targetUserId: u.id }, r => r?.chat && openChat(r.chat.id));
+        ${(c.admins || []).includes(u.id) ? '<span class="mr-tag">Admin</span>' : ''}`);
+      if (u.id !== me.id) {
+        row.onclick = () => socket.emit('chat:startDM', { targetUserId: u.id }, r => r?.chat && openChat(r.chat.id));
+        if (isGroupAdmin) {
+          row.oncontextmenu = event => {
+            event.preventDefault();
+            const admin = (c.admins || []).includes(u.id);
+            showCtxMenu(event, [
+              { label: admin ? 'Dismiss as admin' : 'Make group admin', fn: () => socket.emit('group:setAdmin', { chatId: c.id, memberId: u.id, makeAdmin: !admin }, result => result?.error && toast(result.error)) },
+              { label: 'Remove from group', danger: true, fn: () => socket.emit('group:removeMember', { chatId: c.id, memberId: u.id }, result => result?.error && toast(result.error)) },
+            ]);
+          };
+        }
+      }
       members.appendChild(row);
     });
-    const add = el('button', 'drawer-action', `<span style="color:var(--wa-green)">${icon('group')}</span> Add participants`);
-    add.onclick = () => openAddMembers(c);
-    members.appendChild(add);
+    if (canAddGroupMembers) {
+      const add = el('button', 'drawer-action', `<span style="color:var(--wa-green)">${icon('group')}</span> Add participants`);
+      add.onclick = () => openAddMembers(c);
+      members.appendChild(add);
+    }
+    if (isGroupAdmin) {
+      const settings = el('button', 'drawer-action', `<span style="color:var(--wa-green)">${icon('info')}</span> Group permissions`);
+      settings.onclick = () => openGroupSettings(c);
+      members.appendChild(settings);
+      const invite = el('button', 'drawer-action', `<span style="color:var(--wa-green)">${icon('copy')}</span> Copy new invite link`);
+      invite.onclick = () => socket.emit('chat:createInvite', { chatId: c.id }, result => {
+        if (result?.error) return toast(result.error);
+        const url = new URL(result.path, location.origin).href;
+        navigator.clipboard?.writeText(url);
+        toast('Invite link copied');
+      });
+      members.appendChild(invite);
+    }
     body.appendChild(members);
   }
 
@@ -1781,7 +2134,29 @@ function openDrawer() {
   pin.onclick = () => { socket.emit('chat:flag', { chatId: c.id, flag: 'pinned', value: !c.pinned }); setTimeout(openDrawer, 150); };
   const clear = el('button', 'drawer-action danger', `${icon('trash')} Clear messages`);
   clear.onclick = () => { if (confirm('Clear all messages in this chat?')) socket.emit('chat:clear', { chatId: c.id }); };
-  actions.append(mute, pin, clear);
+  actions.append(mute, pin);
+  if (c.type === 'dm' && entity?.id) {
+    const isBlocked = (me.blocked || []).includes(entity.id);
+    const block = el('button', 'drawer-action danger', `${icon('close')} ${isBlocked ? 'Unblock' : 'Block'} ${esc(entity.username || 'contact')}`);
+    block.onclick = async () => {
+      const { ok, data } = await api(`/api/account/block/${encodeURIComponent(entity.id)}`, { blocked: !isBlocked });
+      if (!ok) return toast(data.error || 'Could not update block list');
+      const set = new Set(me.blocked || []);
+      if (isBlocked) set.delete(entity.id); else set.add(entity.id);
+      me.blocked = [...set];
+      toast(isBlocked ? 'Contact unblocked' : 'Contact blocked');
+      openDrawer();
+    };
+    const report = el('button', 'drawer-action danger', `${icon('info')} Report contact`);
+    report.onclick = async () => {
+      const reason = prompt('Why are you reporting this contact?', 'Spam');
+      if (!reason) return;
+      const { ok, data } = await api(`/api/account/report/${encodeURIComponent(entity.id)}`, { chatId: c.id, reason });
+      toast(ok ? 'Report submitted' : (data.error || 'Could not submit report'));
+    };
+    actions.append(block, report);
+  }
+  actions.append(clear);
   if (c.id !== 'general') {
     const leave = el('button', 'drawer-action danger', `${icon('logout')} ${c.type === 'group' ? 'Exit group' : 'Delete chat'}`);
     leave.onclick = () => { if (confirm('Are you sure?')) { socket.emit('chat:leave', { chatId: c.id }); $('drawer').classList.remove('open'); } };
@@ -1795,14 +2170,16 @@ function refreshDrawerIfOpen() { if ($('drawer').classList.contains('open')) ope
 
 // ── Modals ─────────────────────────────────────────────────────────────
 function openModal(id) { $(id).classList.add('show'); }
-function closeModal(id) { $(id).classList.remove('show'); }
+function closeModal(id) {
+  $(id).classList.remove('show');
+  if (id === 'modal-profile') profileModalCleanup?.();
+  if (id === 'modal-rate') rating = null;
+}
 document.querySelectorAll('.overlay').forEach(o => {
   o.addEventListener('click', e => {
-    if (e.target !== o) return;
-    o.classList.remove('show');
-    if (o.id === 'modal-rate') rating = null;
+    if (e.target === o) closeModal(o.id);
   });
-  o.querySelectorAll('[data-close]').forEach(b => b.onclick = () => o.classList.remove('show'));
+  o.querySelectorAll('[data-close]').forEach(b => b.onclick = () => closeModal(o.id));
 });
 
 function openNewChat() {
@@ -1863,6 +2240,28 @@ function openNewGroup() {
   openModal('modal-group');
 }
 
+function openGroupSettings(c) {
+  if (!c || !(c.admins || []).includes(me.id)) return;
+  $('group-permission-info').value = c.permissions?.editInfo || 'admins';
+  $('group-permission-send').value = c.permissions?.sendMessages || 'members';
+  $('group-permission-add').value = c.permissions?.addMembers || 'admins';
+  $('group-settings-save').onclick = () => {
+    socket.emit('group:update', {
+      chatId: c.id,
+      permissions: {
+        editInfo: $('group-permission-info').value,
+        sendMessages: $('group-permission-send').value,
+        addMembers: $('group-permission-add').value,
+      },
+    }, result => {
+      if (result?.error) return toast(result.error);
+      closeModal('modal-group-settings');
+      toast('Group permissions updated');
+    });
+  };
+  openModal('modal-group-settings');
+}
+
 function openAddMembers(c) {
   const picked = new Set();
   const box = $('addmembers-list');
@@ -1875,8 +2274,11 @@ function openAddMembers(c) {
     box.appendChild(row);
   });
   $('addmembers-save').onclick = () => {
-    if (picked.size) socket.emit('chat:addMembers', { chatId: c.id, members: [...picked] });
-    closeModal('modal-addmembers');
+    if (!picked.size) return closeModal('modal-addmembers');
+    socket.emit('chat:addMembers', { chatId: c.id, members: [...picked] }, result => {
+      if (result?.error) return toast(result.error);
+      closeModal('modal-addmembers');
+    });
   };
   openModal('modal-addmembers');
 }
@@ -1887,6 +2289,7 @@ function openLightbox(url, name) {
   $('lb-name').textContent = name || '';
   $('lb-download').href = url;
   $('lb-download').download = name || 'image';
+  $('lb-download').hidden = !!activeChat()?.advancedPrivacy;
   $('lightbox').classList.add('show');
 }
 $('lb-close').onclick = () => $('lightbox').classList.remove('show');
@@ -1909,21 +2312,196 @@ function runGlobalSearch(q) {
   });
 }
 
+// ── Privacy, account security and linked devices ─────────────────────
+async function openPrivacy() {
+  const privacy = me.privacy || {};
+  $('privacy-last-seen').value = privacy.lastSeen || 'contacts';
+  $('privacy-online').value = privacy.online || 'same-as-last-seen';
+  $('privacy-photo').value = privacy.profilePhoto || 'everyone';
+  $('privacy-about').value = privacy.about || 'everyone';
+  $('privacy-timer').value = String(privacy.defaultDisappearingSeconds || 0);
+  $('privacy-receipts').checked = privacy.readReceipts !== false;
+  $('privacy-advanced').checked = !!privacy.advancedChatPrivacy;
+  $('privacy-silence').checked = privacy.silenceUnknownCallers !== false;
+  $('two-step-status').textContent = me.twoStepEnabled ? 'PIN is enabled' : 'Add a PIN for extra account protection';
+  $('two-step-set').textContent = me.twoStepEnabled ? 'Change PIN' : 'Set PIN';
+  $('two-step-disable').hidden = !me.twoStepEnabled;
+  openModal('modal-privacy');
+  await loadDevices();
+}
+
+async function loadDevices() {
+  const list = $('device-list');
+  list.innerHTML = '<div class="empty-list">Loading…</div>';
+  const { ok, data } = await api('/api/account/devices');
+  if (!ok || !Array.isArray(data)) {
+    list.innerHTML = '<div class="empty-list">Could not load linked devices.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  data.forEach(device => {
+    const name = /Mobile|Android|iPhone/i.test(device.userAgent || '') ? 'Mobile browser' : 'Desktop browser';
+    const row = el('div', 'device-row', `<div>${icon('newchat')}<span><strong>${esc(name)}${device.current ? ' · This device' : ''}</strong><small>Last active ${esc(new Date(device.lastUsedAt).toLocaleString())}</small></span></div>`);
+    if (!device.current) {
+      const remove = el('button', 'btn-text', 'Log out');
+      remove.onclick = async () => {
+        const result = await api(`/api/account/devices/${encodeURIComponent(device.id)}`, undefined, { method: 'DELETE' });
+        if (!result.ok) return toast(result.data.error || 'Could not log out device');
+        loadDevices();
+      };
+      row.appendChild(remove);
+    }
+    list.appendChild(row);
+  });
+}
+
+$('privacy-save').onclick = async () => {
+  const patch = {
+    lastSeen: $('privacy-last-seen').value,
+    online: $('privacy-online').value,
+    profilePhoto: $('privacy-photo').value,
+    about: $('privacy-about').value,
+    defaultDisappearingSeconds: Number($('privacy-timer').value),
+    readReceipts: $('privacy-receipts').checked,
+    advancedChatPrivacy: $('privacy-advanced').checked,
+    silenceUnknownCallers: $('privacy-silence').checked,
+  };
+  const { ok, data } = await api('/api/account/privacy', patch, { method: 'PATCH' });
+  if (!ok) return toast(data.error || 'Could not save privacy settings');
+  me.privacy = data.privacy;
+  closeModal('modal-privacy');
+  toast('Privacy settings saved');
+};
+
+$('two-step-set').onclick = async () => {
+  const currentPin = me.twoStepEnabled ? prompt('Enter your current 6-digit PIN') : null;
+  if (me.twoStepEnabled && currentPin == null) return;
+  const pin = prompt(me.twoStepEnabled ? 'Choose a new 6-digit PIN' : 'Choose a 6-digit two-step verification PIN');
+  if (pin == null) return;
+  const { ok, data } = await api('/api/account/two-step', { pin, currentPin }, { method: 'PUT' });
+  if (!ok) return toast(data.error || 'Could not set PIN');
+  me.twoStepEnabled = true;
+  $('two-step-status').textContent = 'PIN is enabled';
+  $('two-step-set').textContent = 'Change PIN';
+  $('two-step-disable').hidden = false;
+  toast('Two-step verification enabled');
+};
+
+$('two-step-disable').onclick = async () => {
+  const pin = prompt('Enter your current PIN to disable two-step verification');
+  if (pin == null) return;
+  const { ok, data } = await api('/api/account/two-step', { pin }, { method: 'DELETE' });
+  if (!ok) return toast(data.error || 'Could not disable two-step verification');
+  me.twoStepEnabled = false;
+  $('two-step-status').textContent = 'Add a PIN for extra account protection';
+  $('two-step-set').textContent = 'Set PIN';
+  $('two-step-disable').hidden = true;
+  toast('Two-step verification disabled');
+};
+
+$('devices-revoke-all').onclick = async () => {
+  if (!confirm('Log out every other linked device?')) return;
+  const { ok, data } = await api('/api/account/devices', undefined, { method: 'DELETE' });
+  if (!ok) return toast(data.error || 'Could not log out devices');
+  toast(`${data.revoked || 0} device${data.revoked === 1 ? '' : 's'} logged out`);
+  loadDevices();
+};
+
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  installPrompt = event;
+});
+async function installApp() {
+  if (!installPrompt) return toast('Use your browser menu to install VChat');
+  installPrompt.prompt();
+  await installPrompt.userChoice;
+  installPrompt = null;
+}
+
+// ── Notification, ringtone and media preferences (per linked device) ──
+function notificationPermissionText() {
+  if (!('Notification' in window)) return 'Desktop notifications are not supported by this browser';
+  if (Notification.permission === 'granted') return 'Enabled while Vchat is open on this device';
+  if (Notification.permission === 'denied') return 'Blocked in browser settings';
+  return 'Allow browser alerts while Vchat is open';
+}
+
+function readNotificationDraft() {
+  return {
+    desktop: $('notify-desktop').checked,
+    previews: $('notify-preview').checked,
+    messageSounds: $('notify-sounds').checked,
+    messageTone: $('notify-tone').value,
+    callSounds: $('notify-call-sounds').checked,
+    ringtone: $('notify-ringtone').value,
+    mediaVisibility: $('media-visibility').value,
+  };
+}
+
+function openNotifications() {
+  $('notify-desktop').checked = notificationPrefs.desktop;
+  $('notify-preview').checked = notificationPrefs.previews;
+  $('notify-sounds').checked = notificationPrefs.messageSounds;
+  $('notify-tone').value = notificationPrefs.messageTone;
+  $('notify-call-sounds').checked = notificationPrefs.callSounds;
+  $('notify-ringtone').value = notificationPrefs.ringtone;
+  $('media-visibility').value = notificationPrefs.mediaVisibility;
+  $('notification-permission-status').textContent = notificationPermissionText();
+  $('notify-desktop').disabled = !('Notification' in window) || Notification.permission === 'denied';
+
+  $('notify-desktop').onchange = async () => {
+    if (!$('notify-desktop').checked || !('Notification' in window)) return;
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') $('notify-desktop').checked = false;
+    } catch {
+      $('notify-desktop').checked = false;
+    }
+    $('notification-permission-status').textContent = notificationPermissionText();
+  };
+  $('notify-test').onclick = () => {
+    const previous = notificationPrefs.messageTone;
+    notificationPrefs.messageTone = $('notify-tone').value;
+    ping(true);
+    notificationPrefs.messageTone = previous;
+  };
+  $('ringtone-test').onclick = () => {
+    if (ringTone) return callToneStop();
+    const previous = notificationPrefs.ringtone;
+    notificationPrefs.ringtone = $('notify-ringtone').value;
+    callTone('ring', true);
+    notificationPrefs.ringtone = previous;
+    setTimeout(callToneStop, 4200);
+  };
+  $('notifications-save').onclick = () => {
+    notificationPrefs = { ...NOTIFICATION_DEFAULTS, ...readNotificationDraft() };
+    localStorage.setItem('vchat.notifications', JSON.stringify(notificationPrefs));
+    callToneStop();
+    if (activeId) renderMessages();
+    closeModal('modal-notifications');
+    toast('Notification and media settings saved');
+  };
+  openModal('modal-notifications');
+}
+
 // ── Main menu ──────────────────────────────────────────────────────────
 function mainMenu(e) {
   showCtxMenu(e, [
     { label: 'New group', fn: openNewGroup },
     { label: 'Profile', fn: openProfile },
+    { label: 'Privacy & security', fn: openPrivacy },
+    { label: 'Notifications & media', fn: openNotifications },
     { label: 'Archived', fn: () => setFilter('archived') },
     { label: 'Call quality', fn: openCallQuality },
+    { label: 'Install app', fn: installApp },
     { label: lite ? 'Lite mode: on' : 'Lite mode: off', fn: openLiteMode },
     { sep: true },
     { label: document.body.classList.contains('dark') ? 'Light mode' : 'Dark mode', fn: toggleTheme },
     { sep: true },
     { label: 'Log out', danger: true, fn: async () => {
-      const token = localStorage.getItem('vchat.token');
       localStorage.removeItem('vchat.token');
-      try { await api('/api/auth/logout', { token }); } catch { /* offline */ }
+      try { await api('/api/auth/logout', {}); } catch { /* offline */ }
       location.reload();
     } },
   ]);
@@ -1932,14 +2510,38 @@ function mainMenu(e) {
 function chatMenu(e) {
   const c = activeChat();
   if (!c) return;
+  const canManagePrivacy = c.type !== 'group' || (c.admins || []).includes(me.id);
   showCtxMenu(e, [
     { label: c.type === 'group' ? 'Group info' : 'Contact info', fn: openDrawer },
     { label: c.muted ? 'Unmute notifications' : 'Mute notifications', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'muted', value: !c.muted }) },
+    { label: c.favorite ? 'Remove from Favorites' : 'Add to Favorites', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'favorite', value: !c.favorite }) },
     { label: c.archived ? 'Unarchive chat' : 'Archive chat', fn: () => { socket.emit('chat:flag', { chatId: c.id, flag: 'archived', value: !c.archived }); closeChat(); } },
+    ...(canManagePrivacy ? [{ label: 'Disappearing messages', fn: () => chooseDisappearing(c) }] : []),
+    ...(canManagePrivacy ? [{
+      label: c.advancedPrivacy ? 'Turn off advanced chat privacy' : 'Turn on advanced chat privacy',
+      fn: () => {
+        const enabled = !c.advancedPrivacy;
+        const detail = enabled
+          ? 'This limits forwarding and attachment downloads from this chat. Turn it on?'
+          : 'Allow forwarding and attachment downloads from this chat again?';
+        if (!confirm(detail)) return;
+        socket.emit('chat:setAdvancedPrivacy', { chatId: c.id, enabled }, result => result?.error && toast(result.error));
+      },
+    }] : []),
     { sep: true },
     { label: 'Clear messages', danger: true, fn: () => { if (confirm('Clear all messages?')) socket.emit('chat:clear', { chatId: c.id }); } },
     ...(c.id !== 'general' ? [{ label: c.type === 'group' ? 'Exit group' : 'Delete chat', danger: true, fn: () => { if (confirm('Are you sure?')) socket.emit('chat:leave', { chatId: c.id }); } }] : []),
   ]);
+}
+
+function chooseDisappearing(chat) {
+  const answer = prompt('Disappearing messages: enter 0 (off), 1 (day), 7 (days), or 90 (days)', String((chat.disappearingSeconds || 0) / 86400));
+  if (answer == null) return;
+  const days = Number(answer);
+  if (![0, 1, 7, 90].includes(days)) return toast('Choose 0, 1, 7, or 90 days');
+  socket.emit('chat:setDisappearing', { chatId: chat.id, seconds: days * 86400 }, result => {
+    if (result?.error) toast(result.error);
+  });
 }
 
 function setFilter(f) {
@@ -1954,9 +2556,15 @@ function toggleTheme() {
 }
 
 // ── Calls (WebRTC) ─────────────────────────────────────────────────────
-const ICE_SERVERS = [
-  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+let ICE_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302'] },
 ];
+async function refreshIceServers() {
+  try {
+    const { ok, data } = await api('/api/calls/ice');
+    if (ok && Array.isArray(data.iceServers) && data.iceServers.length) ICE_SERVERS = data.iceServers;
+  } catch { /* STUN fallback remains available */ }
+}
 
 let call = null;        // { id, chatId, peer, media, role, state }
 let pc = null;          // RTCPeerConnection
@@ -1970,24 +2578,27 @@ function callSupported() {
   return !!(window.RTCPeerConnection && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 }
 
-function callTone(kind) {
+function callTone(kind, force = false) {
   callToneStop();
+  if (!force && !notificationPrefs.callSounds) return;
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx.resume?.();
     const ctx = audioCtx;
     const gain = ctx.createGain();
     gain.gain.value = kind === 'ring' ? 0.05 : 0.035;
     gain.connect(ctx.destination);
+    const ringtone = notificationPrefs.ringtone;
     const beat = () => {
       const o = ctx.createOscillator();
       const g = ctx.createGain();
-      o.type = 'sine';
-      o.frequency.value = kind === 'ring' ? 520 : 440;
+      o.type = ringtone === 'pulse' ? 'square' : 'sine';
+      o.frequency.value = kind !== 'ring' ? 440 : ({ classic: 520, gentle: 392, pulse: 660 }[ringtone] || 520);
       o.connect(g); g.connect(gain);
       g.gain.setValueAtTime(0.0001, ctx.currentTime);
       g.gain.exponentialRampToValueAtTime(1, ctx.currentTime + 0.05);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.9);
-      o.start(); o.stop(ctx.currentTime + 0.95);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + (ringtone === 'gentle' ? 1.15 : 0.9));
+      o.start(); o.stop(ctx.currentTime + 1.2);
     };
     beat();
     ringTone = { gain, timer: setInterval(beat, kind === 'ring' ? 2400 : 3000) };
@@ -2138,6 +2749,7 @@ function onCallIncoming({ callId, chatId, media, from }) {
   if (call) return;  // server guards this, belt & braces
   call = { id: callId, chatId, peer: from, media, role: 'callee', state: 'ringing' };
   ringShow(from, media);
+  showCallNotification(from, media);
   callTone('ring');
 }
 
@@ -2155,6 +2767,7 @@ async function acceptCall() {
   attachLocal(stream);
   callShow(call.peer, call.media, 'Connecting…');
   callToneStop();
+  closeCallNotification();
 
   pc = makePeer(call.id);
   stream.getTracks().forEach(t => pc.addTrack(t, stream));
@@ -2245,6 +2858,7 @@ function hangUp() {
 
 function teardown() {
   callToneStop();
+  closeCallNotification();
   ringHide();
   callHide();
   if (pc) { try { pc.close(); } catch (_) {} pc = null; }
@@ -2556,6 +3170,9 @@ document.body.classList.toggle('lite', lite);
 // The browser tells us before the socket does.
 window.addEventListener('online', () => flushOutbox());
 window.addEventListener('offline', () => updateOfflineBar());
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}
 initLogin();
 wire();
 

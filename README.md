@@ -1,164 +1,183 @@
-# VChat
+# Vchat
 
-A real-time chat app with a WhatsApp-style interface. Node + Express + Socket.IO on the
-back end, vanilla JS on the front end — no build step, no framework.
+Vchat is a responsive, installable web messenger built with Node.js, Express,
+Socket.IO, WebRTC, and a framework-free browser client.
 
-## Quick start
+> **Security status:** the current phase protects authentication cookies, API and
+> Socket.IO authorization, account privacy settings, and chat-bound media access.
+> Message text and media are still readable by the server. End-to-end encryption
+> (E2EE), encrypted backups, and safety-number verification are **not complete**.
+> Do not describe this release as end-to-end encrypted.
+
+Meta AI and WhatsApp Business/commerce features are intentionally out of scope.
+The device target is an installable responsive PWA rather than separate native apps.
+
+## Run locally
+
+Vchat requires Node.js 20 or newer.
 
 ```bash
 npm install
 npm start
 ```
 
-Open <http://localhost:3000> and sign in with your phone number. Without an SMS
-provider configured the app runs in **dev mode**: the verification code is printed to
-the server console and shown on the code screen, so you can sign in offline.
+Open <http://localhost:3000>. In local development, when Twilio is not configured,
+the six-digit verification code is logged by the server and returned to the local
+sign-in screen. Never expose that development transport publicly.
 
-To try a conversation, open a second browser (or a private window) and sign in with a
-different number.
-
-Set a different port with `PORT=8080 npm start`.
-
-## Signing in
-
-Sign-in is by phone number, WhatsApp-style:
-
-1. Pick your country and enter your number — it is normalised to E.164 (`+233241112233`).
-2. Enter the 6-digit code sent to that number.
-3. First time on a number, choose a display name and avatar. After that the number
-   signs you straight back into the same account.
-
-The session token is kept in `localStorage`, so you stay signed in across reloads
-until you log out.
-
-### Real SMS
-
-Set these environment variables to send codes through Twilio:
+Useful commands:
 
 ```bash
-TWILIO_ACCOUNT_SID=ACxxxxxxxx
-TWILIO_AUTH_TOKEN=xxxxxxxx
-TWILIO_FROM=+15551234567
+npm run check            # parse all server and browser JavaScript
+npm test                 # security and integration tests
+npm audit --omit=dev     # production dependency audit
 ```
 
-With none of them set, codes go to the console instead. Codes are 6 digits, stored
-only as a salted SHA-256 hash, expire after 5 minutes, allow 5 attempts, and are rate
-limited to one every 30 seconds and 5 per number per hour.
+## Implemented foundation
 
-## Features
+### Accounts and privacy
 
-**Messaging**
-- Instant delivery over WebSockets, with optimistic send and a pending clock icon
-- Delivery receipts: clock → single tick → double tick → blue double tick when read
-- Reply to any message with a quoted preview that jumps to the original on tap
-- Emoji reactions, edit your own messages, delete for me / delete for everyone
-- "X is typing…" indicators in both the conversation header and the chat list
-- Messages grouped by sender and split by day dividers ("Today", "Yesterday", dates)
-- Large emoji rendering when a message is only emoji, and automatic link detection
+- Phone-number registration and six-digit verification codes with expiry, resend
+  limits, and attempt limits
+- Opaque 256-bit session tokens stored server-side only as SHA-256 digests
+- Strict `HttpOnly`, `SameSite=Strict` session cookies; secure `__Host-` cookies in
+  production
+- Linked-device/session listing, individual revocation, and logout of all other
+  sessions
+- Six-digit two-step PIN setup, authenticated changes, and authenticated removal;
+  PINs use salted `scrypt`
+- Names with emoji, fallback emoji avatars, and protected JPEG/PNG/WebP profile
+  photos whose delivery honors profile-photo privacy
+- Last-seen, online, profile-photo, about, read-receipt, unknown-caller, default
+  disappearing-message, and advanced-privacy preferences
+- Contact blocking and abuse reporting
+- Privacy-aware public user projections that never expose phone numbers
 
-**Chats**
-- One-to-one DMs and group chats with participant management
-- Pin, mute, archive, clear history, and leave, from a right-click or the ⌄ menu
-- Filter the list by All / Unread / Groups / Archived
-- Search chats by name, search contacts to start a new DM, or search every message
-  you can see with matches highlighted in place
-- Unread badges per chat plus an unread counter in the browser tab title
+### Messaging and groups
 
-**Media**
-- Voice notes: hold the mic to record, with a live waveform and running timer,
-  then send or discard. Playback bubbles have their own play/pause and seek bar.
-- Photos are compressed in the browser before upload — resized to fit 1600px and
-  re-encoded, so a 5 MB phone photo becomes a few hundred KB. Transparent PNGs
-  stay PNG, GIFs keep their animation, and the original is sent if anything fails.
-- Send images, video, audio, and documents up to 25 MB
-- Drag-and-drop onto the window, paste from clipboard, or use the attach menu
-- Inline photo bubbles with a full-screen lightbox and download link
+- Authorized direct chats and groups over Socket.IO
+- Optimistic sending with a persistent browser outbox and idempotent client IDs
+- Delivery/read receipts, replies, reactions, editing, delete-for-me/everyone,
+  starring, forwarding to at most five chats, and temporary message pins
+- Lightweight escaped rich text, code spans/blocks, links, forwarded labels, and
+  disappearing-message indicators
+- Favorites, pin, mute, archive, manual unread, chat search, and message search
+- Group admin roles, participant add/remove, invite-link reset and join,
+  admin/member permissions, descriptions, and disappearing-message controls
+- Advanced chat privacy that disables Vchat forwarding/download actions for that
+  chat (this is a product control, not DRM)
 
-**Calls**
-- One-to-one voice and video calls, straight from the conversation header
-- The phone and camera buttons only appear in DMs, on browsers that support WebRTC
-- Incoming calls slide in as a banner you can accept or decline without leaving
-  the chat you're in; a ringtone plays until someone answers
-- In-call controls for mute and camera, a picture-in-picture self view, and a
-  live call timer
-- Every call is written into the conversation afterwards — outgoing, incoming,
-  missed, declined, with its duration, exactly like WhatsApp does
-- Unanswered calls stop ringing after 45 seconds, and closing your last tab
-  mid-call hangs up for the other side
+### Protected media and calls
 
-**Interface**
-- WhatsApp-style two-pane layout that collapses to a single pane on mobile
-- Light and dark themes, remembered between visits
-- Contact and group info drawer, profile editor, notification sound
-- Presence: online indicators and "last seen" timestamps
+- Chat-bound attachment IDs and authorization checks on every media request
+- Media stored outside the public web root; legacy `/uploads` access is explicitly
+  denied
+- One-use upload claims and safe attachment metadata cloning when a message is
+  forwarded to another authorized chat
+- Image compression, inline image/video/audio, documents, voice recording and
+  playback, and authenticated downloads
+- One-to-one WebRTC voice/video calls with dynamic STUN/TURN configuration, call
+  controls, logs, timeouts, and quality feedback
+
+### Web app
+
+- Responsive two-pane/mobile interface, light/dark themes, and Lite mode
+- Per-device message notification, preview, message-tone, ringtone, call-sound,
+  and media-preview controls; browser alerts work while Vchat is open
+- Received media remains in protected chats; explicit saves use the browser's
+  Downloads location because a web PWA cannot write to the device gallery
+- Installable manifest, maskable icons, deferred install prompt, and an app-shell
+  service worker
+- The worker deliberately never caches account, message, Socket.IO, or protected
+  media responses
+- Hardened CSP and Helmet headers, same-origin mutation checks, Socket.IO origin
+  checks, request-size limits, and API/auth rate limiting
+
+## PWA behavior
+
+The service worker caches only the static shell. It can reopen the sign-in/chat
+shell while offline, but messages still require the server and are not copied into
+Cache Storage. Messages composed while disconnected remain in the existing local
+outbox and retry when the socket reconnects.
+
+Install from the Vchat menu where supported, or use the browser's **Install app** /
+**Add to Home Screen** command.
+
+## Configuration
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `PORT` | HTTP port | `3000` |
+| `NODE_ENV` | Enables production cookie/HSTS behavior when `production` | unset |
+| `COOKIE_SECURE` | Explicit secure-cookie override | production-dependent |
+| `SESSION_COOKIE_NAME` | Session cookie name | `__Host-vchat_session` in secure mode |
+| `SESSION_TTL_DAYS` | Session lifetime | `30` |
+| `ALLOWED_ORIGINS` | Comma-separated additional browser origins | same host only |
+| `TRUST_PROXY` | Explicit Express proxy hop count or trusted subnet | disabled |
+| `API_RATE_LIMIT` | API requests per minute per client | `240` |
+| `AUTH_RATE_LIMIT` | Authentication requests per 15 minutes | `20` |
+| `VCHAT_DATA_DIR` | Transitional database and media root | `./data` |
+| `VCHAT_MEDIA_DIR` | Protected media storage override | `$VCHAT_DATA_DIR/media` |
+| `MAX_UPLOAD_MB` | Maximum attachment size | `100` |
+| `TWILIO_ACCOUNT_SID` | Twilio account SID | development transport |
+| `TWILIO_AUTH_TOKEN` | Twilio API secret | development transport |
+| `TWILIO_FROM` | Twilio sender number | development transport |
+| `TURN_URLS` | Comma-separated TURN URLs | STUN only |
+| `TURN_SECRET` | HMAC secret for temporary TURN credentials | unset |
+
+For internet deployment, terminate TLS at a trusted reverse proxy, set
+`NODE_ENV=production`, set `TRUST_PROXY` to the exact proxy hop count or subnet,
+configure Twilio and TURN, use an explicit origin allowlist, and keep `data/` on
+encrypted persistent storage until the database/object-storage phase replaces it.
+
+## Storage and security model
+
+`lib/messenger-store.js` is a transitional schema-v2 adapter. It keeps live state in
+one process and writes a mode-`0600` snapshot to `data/db.v2.json`. It intentionally
+never imports the legacy schema-v1 `data/db.json`; the approved migration policy is
+a secure reset. Protected files live under `data/media`.
+
+This adapter is suitable for deterministic local development and phased feature
+work, not horizontal production scale. It has no multi-process consistency,
+transactional database, object-storage durability, Redis fan-out, or disaster
+recovery.
 
 ## Project layout
 
+```text
+server.js                  Express/Helmet bootstrap and HTTP server
+lib/http-auth.js           Cookie parsing and session authentication
+lib/messenger.js           Authenticated REST, media, Socket.IO, and call signaling
+lib/messenger-store.js     Transitional schema-v2 data/service adapter
+lib/sms.js                 Twilio or local-only verification transport
+index.html                 Application markup and SVG icon sprite
+public/app.js              Browser client
+public/app.css             Responsive themes and component styles
+public/manifest.webmanifest
+public/sw.js               Static-shell-only service worker
+public/icons/              PWA icons
+test/                      Security and HTTP integration tests
 ```
-server.js               Express app, static assets, HTTP server bootstrap
-lib/messenger.js        Socket.IO event handlers, upload + REST endpoints
-lib/messenger-store.js  In-memory store for users, chats, and messages
-index.html              Client markup and the inline SVG icon sprite
-public/app.js           All client logic (single IIFE, no dependencies)
-public/app.css          Styling and theme variables
-public/uploads/         Uploaded files (gitignored)
-data/db.json            Persisted state, written debounced on change (gitignored)
-```
 
-State lives in memory and is mirrored to `data/db.json`, so a restart keeps your
-conversations. Delete that file to start from a clean slate.
+## Delivery roadmap
 
-## HTTP endpoints
+The requested WhatsApp-class scope is being delivered in production-oriented phases
+rather than as nonfunctional demo screens:
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/auth/request-code` | `{dialCode, number}` → sends a code, `{phone, registered, username, delivered, devCode}` |
-| `POST` | `/api/auth/verify` | `{phone, code}` → `{token, user}`, or `{needsProfile: true}` for a new number |
-| `POST` | `/api/auth/register` | `{phone, username, avatar}` → `{token, user}` (needs a recent verification) |
-| `POST` | `/api/auth/session` | `{token}` → `{user}`, for resuming a session |
-| `POST` | `/api/auth/logout` | `{token}` → `{ok: true}` |
-| `POST` | `/api/messenger/upload` | Multipart upload (field `file`) → `{url, name, size, mimeType}` |
-| `GET` | `/api/messenger/users` | All known users |
-| `GET` | `/api/messenger/chats?userId=` | Chats visible to a user |
-| `GET` | `/api/messenger/messages/:chatId?userId=&limit=` | Message history |
-| `GET` | `/api/health` | Health check |
+1. **Security and messaging foundation (completed for the transitional single-node
+   stage):** cookie sessions, media authorization, privacy controls, linked devices,
+   advanced groups, profile/notification/media controls, PWA shell, and integration
+   tests.
+2. **Cryptographic phase:** audited multi-device E2EE protocol integration,
+   pre-key service, encrypted media keys, device verification, key-change alerts,
+   encrypted backup/restore, and secure history synchronization.
+3. **Conversation surfaces:** Status, Channels, Communities, broadcasts/custom
+   lists, events and polls, richer media/view-once behavior, personalization, and
+   accessibility hardening.
+4. **Production infrastructure and calling:** PostgreSQL, Redis, object storage,
+   jobs/notifications, observability, abuse operations, backup recovery, and an
+   SFU/TURN architecture for scalable group calls, screen sharing, and waiting
+   rooms.
 
-## Socket events
-
-**Client → server:** `user:join`, `profile:update`, `message:send`, `message:edit`,
-`message:delete`, `message:react`, `messages:read`, `typing:start`, `typing:stop`,
-`chat:createGroup`, `chat:startDM`, `chat:open`, `chat:flag`, `chat:clear`, `chat:leave`,
-`chat:addMembers`, `search:messages`, `call:start`, `call:accept`, `call:decline`,
-`call:cancel`, `call:end`, `call:signal`
-
-**Server → client:** `chats:list`, `chats:refresh`, `chat:new`, `chat:removed`,
-`chat:cleared`, `message:new`, `message:updated`, `message:removed`, `messages:delivered`,
-`messages:read`, `typing:start`, `typing:stop`, `users:list`, `presence:update`,
-`call:incoming`, `call:accepted`, `call:ended`, `call:signal`
-
-## How calls work
-
-Calls are peer to peer. The server only passes SDP offers, answers, and ICE
-candidates between the two people on the call — audio and video never touch it,
-so a call costs the server almost nothing and nobody in the middle can listen in.
-
-Two consequences worth knowing:
-
-- **Calls need HTTPS.** Browsers only hand out the microphone and camera in a
-  secure context, so calling works on `localhost` and on any HTTPS deployment,
-  but not over plain `http://` to another machine.
-- **Only public STUN is configured.** Google's STUN servers are enough for most
-  home and office networks. Behind a symmetric NAT or a strict corporate
-  firewall, the two browsers may never find a path to each other, and you'd need
-  to add a TURN relay to `ICE_SERVERS` in `public/app.js`.
-
-Group calls are deliberately not supported — mixing more than two streams needs
-a media server (an SFU), which is a different piece of software than this one.
-Calls are also in-memory only: restarting the server drops any call in progress.
-
-## Notes
-
-Accounts are tied to a phone number and there are no passwords — whoever receives the
-code owns the account. In dev mode the code is handed straight to the caller, so
-configure Twilio before exposing the server to anyone you don't trust.
-It's built for a trusted network (a team, a classroom, a LAN), not the open internet.
+Until phases 2–4 land and receive independent review, Vchat should be treated as a
+securely staged development system—not a finished WhatsApp replacement.
