@@ -1,4 +1,4 @@
-const CACHE = 'vchat-shell-v2';
+const CACHE = 'vchat-shell-v3';
 const SHELL = [
   '/',
   '/app.css',

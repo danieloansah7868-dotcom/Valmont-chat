@@ -114,6 +114,106 @@ test('attachments are one-use, chat-bound, and safely cloned when forwarded', ()
   assert.deepEqual(store.forwardMessage(source.id, message.id, alice.id, [target.id]), []);
 });
 
+test('business identity, chat locks, View Once, and Status saving enforce their privacy boundaries', () => {
+  const alice = store.findUserByPhone('+233240000001');
+  const bob = store.findUserByPhone('+233240000002');
+  const eve = store.findUserByPhone('+233240000003');
+  const business = store.upsertUserByPhone('+233240000004', {
+    username: 'Accra Studio',
+    accountType: 'business',
+    businessProfile: {
+      name: 'Accra Studio', category: 'professional_services',
+      description: 'Photography and design', website: 'https://studio.example',
+      email: 'HELLO@STUDIO.EXAMPLE',
+    },
+  });
+  assert.equal(store.accountView(business).accountType, 'business');
+  assert.equal(store.businessProfileView(business.id, alice.id).profile.email, 'hello@studio.example');
+  assert.equal(store.businessProfileView(business.id, alice.id).canEdit, false);
+  store.upsertUserByPhone('+233240000004', { username: 'Accra Studio 2', accountType: 'personal' });
+  assert.equal(store.accountView(business).accountType, 'business', 'account type is immutable after registration');
+  store.blockUser(alice.id, business.id, true);
+  assert.equal(store.businessProfileView(business.id, alice.id), null, 'blocks hide public business pages');
+  store.blockUser(alice.id, business.id, false);
+
+  const lockedChat = store.findOrCreateDM(alice.id, eve.id);
+  store.addMessage({ chatId: lockedChat.id, senderId: eve.id, text: 'Hidden preview', type: 'text' });
+  assert.equal(store.setChatLocked(alice.id, lockedChat.id, true), null, 'a separate lock PIN is required first');
+  assert.deepEqual(store.setChatLockPin(alice.id, '246810'), { ok: true });
+  assert.equal(store.verifyChatLockPin(alice, '246810'), true);
+  assert.equal(store.setTwoStepPin(alice.id, '135790'), true);
+  assert.equal(store.verifyTwoStepPin(alice, '246810'), false, 'the chat-lock PIN cannot satisfy two-step verification');
+  assert.equal(store.verifyChatLockPin(alice, '135790'), false, 'the two-step PIN cannot unlock hidden chats');
+
+  for (let index = 0; index < store.MAX_CHAT_LOCK_CREDENTIALS; index += 1) {
+    const saved = store.addChatLockCredential(alice.id, {
+      id: `credential-${index}`, publicKey: `public-key-${index}`, name: `Passkey ${index}`,
+    });
+    assert.equal(saved.id, `credential-${index}`);
+  }
+  const overflow = store.addChatLockCredential(alice.id, {
+    id: 'credential-overflow', publicKey: 'overflow-public-key', name: 'Passkey overflow',
+  });
+  assert.match(overflow.error, /up to 10 chat-lock passkeys/i);
+  assert.equal(store.listChatLockCredentials(alice.id).length, store.MAX_CHAT_LOCK_CREDENTIALS);
+  assert.equal(store.getChatLockCredential(alice.id, 'credential-overflow'), null,
+    'a rejected passkey is never persisted or reported as registered');
+  const replacement = store.addChatLockCredential(alice.id, {
+    id: 'credential-9', publicKey: 'replacement-public-key', name: 'Replacement passkey',
+  });
+  assert.equal(replacement.id, 'credential-9', 'same-ID credential replacement remains possible at the cap');
+  assert.equal(store.getChatLockCredential(alice.id, 'credential-9').publicKey, 'replacement-public-key');
+  assert.equal(store.listChatLockCredentials(alice.id).length, store.MAX_CHAT_LOCK_CREDENTIALS);
+
+  assert.ok(store.setChatLocked(alice.id, lockedChat.id, true));
+  assert.equal(store.getUserChats(alice.id).some(chat => chat.id === lockedChat.id), false,
+    'locked rows and their previews are absent from the normal projection');
+  assert.equal(store.getUserChats(alice.id, true).find(chat => chat.id === lockedChat.id).lastMessage.text, 'Hidden preview');
+
+  const firstSession = store.createSession(alice.id, { label: 'Unlocked lock test' });
+  const secondSession = store.createSession(alice.id, { label: 'Still locked test' });
+  store.unlockChatLockSession(firstSession);
+  assert.equal(store.accountView(alice, firstSession).chatLockUnlockedUntil > Date.now(), true);
+  assert.equal(store.accountView(alice, secondSession).chatLockUnlockedUntil, null,
+    'unlock grants are bounded to one authenticated device session');
+  store.lockChatLockSession(firstSession);
+  assert.equal(store.isChatLockSessionUnlocked(firstSession), false);
+
+  const group = store.createChat({
+    name: 'View Once recipients', type: 'group', members: [alice.id, bob.id, eve.id], createdBy: alice.id,
+  });
+  const upload = store.registerAttachment({
+    ownerId: alice.id, chatId: group.id, storageName: 'view-once.png',
+    name: 'private.png', mime: 'image/png', size: 99,
+  });
+  const file = store.validateAttachment(upload.id, alice.id, group.id);
+  const once = store.addMessage({
+    chatId: group.id, senderId: alice.id, file, type: 'image', viewOnce: true,
+  });
+  const beforeOpen = store.outMessage(once, bob.id);
+  assert.equal(beforeOpen.viewOnce, true);
+  assert.equal(beforeOpen.file.url, null, 'normal media URLs are not exposed to a View Once recipient');
+  assert.equal(store.getAttachment(upload.id, bob.id), null, 'normal attachment retrieval is disabled');
+  assert.deepEqual(store.forwardMessage(group.id, once.id, bob.id, [lockedChat.id]), [],
+    'View Once media cannot be forwarded');
+  assert.equal(store.openViewOnceMessage(group.id, once.id, bob.id).attachment.id, upload.id);
+  assert.equal(store.openViewOnceMessage(group.id, once.id, bob.id), null, 'each recipient can consume only once');
+  assert.equal(store.outMessage(once, bob.id).file, null, 'consumed media disappears from message projections');
+  assert.equal(store.openViewOnceMessage(group.id, once.id, eve.id).attachment.id, upload.id,
+    'another recipient retains an independent one-time opening');
+  assert.equal(store.outMessage(once, alice.id).viewOnceOpenedCount, 2);
+
+  const noSave = store.createStory(alice.id, { type: 'text', text: 'Do not save', background: 'jade' });
+  const savable = store.createStory(alice.id, {
+    type: 'text', text: 'Owner-approved save', background: 'ocean', allowSave: true,
+  });
+  const bobStories = store.listStories(bob.id).flatMap(item => item.items);
+  assert.equal(bobStories.find(item => item.id === noSave.id).canSave, false);
+  assert.equal(bobStories.find(item => item.id === noSave.id).saveUrl, null);
+  assert.equal(bobStories.find(item => item.id === savable.id).canSave, true);
+  assert.match(bobStories.find(item => item.id === savable.id).saveUrl, /\/save$/);
+});
+
 test('reels persist likes and enforce stable pagination, blocks, and ownership', async () => {
   const alice = store.findUserByPhone('+233240000001');
   const bob = store.findUserByPhone('+233240000002');
@@ -228,6 +328,9 @@ test('stories enforce mutual-contact privacy and campaigns require review plus e
   assert.equal(eligible.checkoutUrl, undefined, 'billing checkout is visible only to the advertiser/admin');
   assert.equal(store.listEligibleStoryAds(alice.id).some(item => item.id === campaign.id), false,
     'advertisers do not receive their own campaign');
+  assert.equal(store.listStories(outsider.id).flatMap(group => group.items).some(item => item.id === story.id), false);
+  assert.equal(store.listEligibleStoryAds(outsider.id).some(item => item.id === campaign.id), true,
+    'broad campaigns remain discoverable to an eligible user with no friend Status');
   assert.equal(store.recordCampaignEvent(campaign.id, outsider.id, 'impression')?.id, campaign.id);
   assert.equal(store.recordCampaignEvent(campaign.id, outsider.id, 'impression')?.id, campaign.id);
   assert.equal(store.recordCampaignEvent(campaign.id, outsider.id, 'click')?.id, campaign.id);

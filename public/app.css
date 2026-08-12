@@ -1538,3 +1538,37 @@ body.reels-open #btn-reels-chat { color: var(--wa-green); background: rgba(18,14
   .story-compose-preview { min-height: 210px; }
   .story-form-grid { grid-template-columns: 1fr; gap: 9px; }
 }
+
+/* Business accounts, chat lock, View Once, and per-Status save privacy */
+.account-type-picker { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:7px 0 14px; }
+.account-type-card { display:flex; flex-direction:column; gap:3px; padding:12px; border:1px solid var(--border); border-radius:11px; cursor:pointer; background:var(--panel-alt); }
+.account-type-card.selected { border-color:var(--wa-green); box-shadow:0 0 0 2px color-mix(in srgb,var(--wa-green) 16%,transparent); }
+.account-type-card input { position:absolute; opacity:0; pointer-events:none; }
+.account-type-card strong { font-size:14px; }.account-type-card span { color:var(--text-muted); font-size:11px; line-height:1.35; }
+.business-register-fields { margin:0 0 12px; padding:12px; border-radius:11px; background:var(--panel-alt); }
+.business-register-fields input,.business-register-fields textarea { width:100%; }
+.registration-photo-row { display:flex; align-items:center; gap:12px; margin:7px 0 14px; }
+.registration-photo-preview { width:64px; height:64px; flex:0 0 auto; display:grid; place-items:center; overflow:hidden; border:1px dashed var(--border); border-radius:50%; color:var(--text-muted); background:var(--panel-alt); }
+.registration-photo-preview img { width:100%; height:100%; object-fit:cover; }.registration-photo-row small { display:block; color:var(--text-muted); font-size:11px; }
+.view-once-choice { display:inline-flex; align-items:center; gap:4px; margin-top:5px; color:var(--wa-green); font-size:11.5px; font-weight:650; cursor:pointer; }
+.view-once-choice input { accent-color:var(--wa-green); }
+.view-once-card { min-width:210px; min-height:76px; display:flex; align-items:center; gap:11px; padding:12px; border:1px solid color-mix(in srgb,var(--wa-green) 42%,var(--border)); border-radius:11px; text-align:left; background:color-mix(in srgb,var(--wa-green) 8%,var(--panel)); }
+.view-once-card .once-mark { width:36px; height:36px; display:grid; place-items:center; flex:0 0 auto; border:1px solid currentColor; border-radius:50%; color:var(--wa-green); font-weight:750; }
+.view-once-card strong,.view-once-card small { display:block; }.view-once-card small { margin-top:3px; color:var(--text-muted); }
+.view-once-card[disabled] { cursor:default; opacity:.7; }
+.view-once-viewer { position:fixed; z-index:3000; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:70px 20px 24px; background:#020508; color:#fff; }
+.view-once-viewer[hidden] { display:none !important; }.view-once-head { position:absolute; top:0; left:0; right:0; min-height:60px; display:flex; align-items:center; justify-content:space-between; padding:10px 18px; background:rgba(0,0,0,.72); }
+.view-once-head button { width:42px; height:42px; display:grid; place-items:center; border-radius:50%; color:#fff; }.view-once-stage { width:100%; flex:1; min-height:0; display:grid; place-items:center; }
+.view-once-stage img,.view-once-stage video { max-width:100%; max-height:100%; object-fit:contain; }.view-once-viewer>p { max-width:720px; margin:14px 0 0; color:rgba(255,255,255,.68); font-size:12px; text-align:center; }
+.story-save-privacy { margin:0 0 8px; border:1px solid var(--border); border-radius:11px; }.capture-disclosure { margin:0 0 15px; color:var(--text-muted); font-size:11px; line-height:1.45; }
+a.story-icon-button { display:grid; place-items:center; color:#fff; text-decoration:none; }
+.chat-lock-setting>span:first-child,.setting-action>span:first-child { min-width:0; }.chat-lock-setting small,.setting-action strong+small { display:block; margin-top:3px; color:var(--text-muted); font-size:11px; font-weight:400; line-height:1.4; }
+.locked-filter { white-space:nowrap; }.locked-chat-row { box-shadow:inset 3px 0 var(--wa-green); }.locked-chat-row .row-name::after { content:' 🔒'; font-size:11px; }
+.business-page-head { margin:-2px 0 15px; padding:18px; border-radius:14px; color:#fff; background:linear-gradient(135deg,#073f3b,#0a8f78 58%,#d9772a); }
+.business-page-head h2 { margin:0 0 5px; }.business-page-head p { margin:0; color:rgba(255,255,255,.78); font-size:12px; }.business-modal input,.business-modal textarea { width:100%; }
+.business-dashboard-actions { display:flex; justify-content:flex-end; gap:9px; margin-top:18px; }.business-public-card { padding:14px; border:1px solid var(--border); border-radius:11px; background:var(--panel-alt); line-height:1.6; }
+.emoji-panel { overflow:hidden; padding:0 !important; }.emoji-tools { position:sticky; z-index:2; top:0; display:flex; gap:6px; padding:8px; border-bottom:1px solid var(--divider); background:var(--panel); }
+.emoji-search { min-width:0; flex:1; padding:7px 10px; border:1px solid var(--border); border-radius:8px; color:var(--text); background:var(--panel-alt); }.emoji-categories { display:flex; gap:2px; padding:5px 7px; overflow-x:auto; border-bottom:1px solid var(--divider); }.emoji-categories button { font-size:18px; }.emoji-results { max-height:270px; overflow-y:auto; padding:4px 8px 10px; }
+.sponsored-discovery { margin-top:18px; padding-top:16px; border-top:1px solid var(--divider); }.sponsored-discovery-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin:0 2px 10px; }.sponsored-discovery-head h3 { margin:0; }.sponsored-discovery-head p { margin:3px 0 0; color:var(--text-muted); font-size:11px; }.sponsored-discovery-head>span { padding:3px 6px; border:1px solid var(--border); border-radius:5px; color:var(--text-muted); font-size:9px; text-transform:uppercase; letter-spacing:.05em; }
+.sponsored-tray-card { position:relative; border-color:color-mix(in srgb,var(--brand-gold) 70%,var(--border)); }.sponsored-tray-card::before { content:'Sponsored'; position:absolute; z-index:3; top:9px; right:9px; padding:3px 6px; border-radius:5px; background:rgba(0,0,0,.62); color:#fff; font-size:9px; text-transform:uppercase; letter-spacing:.05em; }
+@media(max-width:520px){.account-type-picker{grid-template-columns:1fr}.business-dashboard-actions{align-items:stretch;flex-direction:column}.emoji-panel .grid{grid-template-columns:repeat(7,1fr)}}

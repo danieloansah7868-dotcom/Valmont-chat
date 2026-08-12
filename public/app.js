@@ -46,6 +46,10 @@ let storyPublishing = false;
 let storyUploadRequest = null;
 let storyPaymentConfigured = false;
 let storyAdAdmin = false;
+let registrationPhotoFile = null;
+let registrationPhotoPreviewUrl = null;
+let viewOnceObjectUrl = null;
+let chatLockCredentials = [];
 
 const AVATARS = ['😀','😎','🦊','🐼','🐯','🦁','🐸','🐵','🦄','🐙','🌟','🚀','🔥','🍀','🎧','⚽','🎸','🌺','🍕','🐨'];
 const NOTIFICATION_DEFAULTS = {
@@ -63,10 +67,22 @@ try {
 } catch { /* corrupted local settings fall back safely */ }
 
 const EMOJI_GROUPS = {
-  'Smileys': ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩','😘','😗','😚','😙','😋','😛','😜','🤪','😝','🤗','🤭','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','😮','😯','😴','🥱','😌','😔','😪','🤤','😷','🤒','🤕','🤧','🥳','🥸','😎','🤓','🧐','😕','😟','🙁','😮‍💨','😢','😭','😤','😠','😡','🤬','😱','😨','😰','😥'],
-  'Gestures': ['👍','👎','👌','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','👇','☝️','✋','🤚','🖐️','🖖','👋','🤝','🙏','💪','🦾','👏','🙌','👐','🤲','✍️','💅'],
-  'Hearts': ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💯','💥','💫','⭐','🌟','✨','🔥','🎉','🎊','🎁'],
-  'Objects': ['📱','💻','⌨️','🖥️','🖨️','📷','🎥','📺','⏰','⏱️','📅','📌','📎','📁','📊','📈','💰','💳','🔑','🔒','📚','✏️','🖊️','📝','☕','🍵','🍕','🍔','🍟','🌮','🍎','🍌','⚽','🏀','🎮','🎧','🎸','🚗','✈️','🏠'],
+  'Smileys & emotion': ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','🫠','😉','😊','😇','🥰','😍','🤩','😘','😗','☺️','😚','😙','🥲','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🫢','🫣','🤫','🤔','🫡','🤐','🤨','😐','😑','😶','🫥','😏','😒','🙄','😬','😮‍💨','🤥','🫨','🙂‍↔️','🙂‍↕️','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🤧','🥵','🥶','🥴','😵','🤯','🤠','🥳','🥸','😎','🤓','🧐','😕','🫤','😟','🙁','☹️','😮','😯','😲','😳','🥺','🥹','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣','😞','😓','😩','😫','🥱','😤','😡','😠','🤬','😈','👿','💀','☠️','💩','🤡','👹','👺','👻','👽','🤖','😺','😸','😹','😻','😼','😽','🙀','😿','😾','❤️','🧡','💛','💚','💙','🩵','💜','🖤','🩶','🤍','🤎','💔','❤️‍🔥','❤️‍🩹','❣️','💕','💞','💓','💗','💖','💘','💝'],
+  'People & gestures': ['👋','🤚','🖐️','✋','🖖','🫱','🫲','🫳','🫴','🫷','🫸','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','🫵','👍','👎','✊','👊','🤛','🤜','👏','🙌','🫶','👐','🤲','🤝','🙏','✍️','💅','🤳','💪','🦾','🦿','🦵','🦶','👂','👃','🧠','🫀','🫁','🦷','👀','👁️','👅','👄','🫦','👶','🧒','👦','👧','🧑','👱','👨','🧔','👩','🧓','👴','👵','🙍','🙎','🙅','🙆','💁','🙋','🧏','🙇','🤦','🤷','👮','👷','💂','🕵️','👩‍⚕️','👩‍🌾','👩‍🍳','👩‍🎓','👩‍🎤','👩‍🏫','👩‍🏭','👩‍💻','👩‍💼','👩‍🔧','👩‍🔬','👩‍🎨','👩‍🚒','👩‍✈️','👩‍🚀','👩‍⚖️','🦸','🦹','🥷','🧙','🧚','🧛','🧜','🧝','🧞','🧟','💆','💇','🚶','🧍','🧎','🏃','💃','🕺','🕴️','👯','🧖','🧗','🤺','🏇','⛷️','🏂','🏌️','🏄','🚣','🏊','⛹️','🏋️','🚴','🤸','🤼','🤽','🤾','🤹','🧘','🛀','🛌','👭','👫','👬','💏','💑','👪'],
+  'Animals & nature': ['🐵','🐒','🦍','🦧','🐶','🐕','🦮','🐩','🐺','🦊','🦝','🐱','🐈','🦁','🐯','🐅','🐆','🐴','🫎','🫏','🐎','🦄','🦓','🦌','🦬','🐮','🐂','🐃','🐄','🐷','🐖','🐗','🐽','🐏','🐑','🐐','🐪','🐫','🦙','🦒','🐘','🦣','🦏','🦛','🐭','🐁','🐀','🐹','🐰','🐇','🐿️','🦫','🦔','🦇','🐻','🐨','🐼','🦥','🦦','🦨','🦘','🦡','🐾','🦃','🐔','🐓','🐣','🐤','🐥','🐦','🐧','🕊️','🦅','🦆','🦢','🦉','🦤','🪶','🦩','🦚','🦜','🪽','🐦‍⬛','🪿','🐦‍🔥','🐸','🐊','🐢','🦎','🐍','🐲','🐉','🦕','🦖','🐳','🐋','🐬','🦭','🐟','🐠','🐡','🦈','🐙','🐚','🪸','🪼','🐌','🦋','🐛','🐜','🐝','🪲','🐞','🦗','🪳','🕷️','🦂','🦟','🪰','🪱','🦠','💐','🌸','💮','🪷','🌹','🥀','🌺','🌻','🌼','🌷','🪻','🌱','🪴','🌲','🌳','🌴','🌵','🌾','🌿','☘️','🍀','🍁','🍂','🍃','🍄','🪨','🌍','🌎','🌏','🌙','☀️','⭐','🌟','✨','⚡','🔥','🌈','☁️','❄️','☔','💧','🌊'],
+  'Food & drink': ['🍏','🍎','🍐','🍊','🍋','🍋‍🟩','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🫛','🥬','🥒','🌶️','🫑','🌽','🥕','🫒','🧄','🧅','🥔','🍠','🫘','🌰','🥜','🍞','🥐','🥖','🫓','🥨','🥯','🥞','🧇','🧀','🍖','🍗','🥩','🥓','🍔','🍟','🍕','🌭','🥪','🌮','🌯','🫔','🥙','🧆','🥚','🍳','🥘','🍲','🫕','🥣','🥗','🍿','🧈','🧂','🥫','🍱','🍘','🍙','🍚','🍛','🍜','🍝','🍢','🍣','🍤','🍥','🥮','🍡','🥟','🥠','🥡','🦀','🦞','🦐','🦑','🦪','🍦','🍧','🍨','🍩','🍪','🎂','🍰','🧁','🥧','🍫','🍬','🍭','🍮','🍯','🍼','🥛','☕','🫖','🍵','🧃','🥤','🧋','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧉','🍾','🧊','🥄','🍴','🥢','🥡'],
+  'Activities': ['⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🥏','🎱','🪀','🏓','🏸','🏒','🏑','🥍','🏏','🪃','🥅','⛳','🪁','🏹','🎣','🤿','🥊','🥋','🎽','🛹','🛼','🛷','⛸️','🥌','🎿','⛷️','🏂','🪂','🏋️','🤼','🤸','⛹️','🤺','🤾','🏌️','🏇','🧘','🏄','🏊','🤽','🚣','🧗','🚵','🚴','🏆','🥇','🥈','🥉','🏅','🎖️','🏵️','🎗️','🎫','🎟️','🎪','🤹','🎭','🩰','🎨','🎬','🎤','🎧','🎼','🎹','🥁','🪘','🎷','🎺','🪗','🎸','🪕','🎻','🪈','🎲','♟️','🎯','🎳','🎮','🎰','🧩'],
+  'Travel & places': ['🚗','🚕','🚙','🚌','🚎','🏎️','🚓','🚑','🚒','🚐','🛻','🚚','🚛','🚜','🦯','🦽','🛴','🚲','🛵','🏍️','🛺','🚨','🚔','🚍','🚘','🚖','🚡','🚠','🚟','🚃','🚋','🚞','🚝','🚄','🚅','🚈','🚂','🚆','🚇','🚊','🚉','✈️','🛫','🛬','🛩️','💺','🛰️','🚀','🛸','🚁','🛶','⛵','🚤','🛥️','🛳️','⛴️','🚢','⚓','🛟','⛽','🚧','🚦','🗺️','🗿','🗽','🗼','🏰','🏯','🏟️','🎡','🎢','🎠','⛲','⛱️','🏖️','🏝️','🏜️','🌋','⛰️','🏕️','⛺','🛖','🏠','🏡','🏢','🏥','🏦','🏨','🏫','🏛️','⛪','🕌','🛕','🕍','🌅','🌄','🌠','🎇','🌇','🌆','🏙️','🌃'],
+  'Objects': ['⌚','📱','📲','💻','⌨️','🖥️','🖨️','🖱️','🕹️','💽','💾','💿','📀','🧮','🎥','🎞️','📽️','🎬','📺','📷','📸','📹','📼','🔍','🔎','🕯️','💡','🔦','🏮','🪔','📔','📕','📖','📗','📘','📙','📚','📓','📒','📃','📜','📄','📰','🗞️','📑','🔖','🏷️','💰','🪙','💴','💵','💶','💷','💸','💳','🧾','💹','✉️','📧','📨','📩','📤','📥','📦','📫','📮','📝','💼','📁','📅','📆','📇','📈','📉','📊','📋','📌','📍','📎','🖇️','📏','📐','✂️','🗃️','🗄️','🗑️','🔒','🔓','🔏','🔐','🔑','🗝️','🔨','🪓','⛏️','⚒️','🛠️','🗡️','⚔️','🔧','🪛','🔩','⚙️','🧱','⛓️','🧲','🔬','🔭','📡','💉','🩸','💊','🩹','🩺','🚪','🪑','🚽','🚿','🛁','🧹','🧺','🧻','🪣','🧼','🫧','🪥','🧽','🛒','🎁','🎈'],
+  'Symbols': ['❤️','💯','💢','💥','💫','💦','💨','🕳️','💬','👁️‍🗨️','🗨️','🗯️','💭','💤','✅','❌','❓','❗','‼️','⁉️','⭕','🚫','⛔','📛','🔞','📵','⚠️','🚸','🔱','⚜️','🔰','♻️','✳️','❇️','©️','®️','™️','🆕','🆓','🆙','🆒','🆗','🆘','🅰️','🅱️','🆎','🅾️','🧿','♾️','♀️','♂️','⚧️','✖️','➕','➖','➗','🟰','〰️','➰','✔️','☑️','🔘','🔴','🟠','🟡','🟢','🔵','🟣','🟤','⚫','⚪','🟥','🟧','🟨','🟩','🟦','🟪','🟫','⬛','⬜','◼️','◻️','🔈','🔉','🔊','🔇','📣','📢','🔔','🔕','🎵','🎶','💲','💱','➿','🔚','🔙','🔛','🔝','🔜'],
+  'Flags': ['🏁','🚩','🎌','🏴','🏳️','🏳️‍🌈','🏳️‍⚧️','🇬🇭','🇳🇬','🇨🇮','🇹🇬','🇧🇯','🇧🇫','🇸🇳','🇬🇲','🇸🇱','🇱🇷','🇬🇳','🇲🇱','🇳🇪','🇨🇲','🇰🇪','🇺🇬','🇹🇿','🇿🇦','🇪🇬','🇲🇦','🇪🇹','🇷🇼','🇿🇼','🇬🇧','🇺🇸','🇨🇦','🇲🇽','🇧🇷','🇦🇷','🇫🇷','🇩🇪','🇮🇹','🇪🇸','🇵🇹','🇳🇱','🇧🇪','🇨🇭','🇸🇪','🇳🇴','🇩🇰','🇫🇮','🇵🇱','🇺🇦','🇹🇷','🇸🇦','🇦🇪','🇮🇱','🇮🇳','🇵🇰','🇧🇩','🇱🇰','🇨🇳','🇯🇵','🇰🇷','🇸🇬','🇲🇾','🇮🇩','🇵🇭','🇹🇭','🇻🇳','🇦🇺','🇳🇿','🇺🇳'],
+};
+const EMOJI_CATEGORY_ICONS = ['😊','👋','🐻','🍕','⚽','✈️','💡','✅','🏳️'];
+const EMOJI_SEARCH_TERMS = {
+  love: ['❤️','🧡','💛','💚','💙','💜','💕','😍','🥰'], happy: ['😀','😃','😄','😁','😊','🥳'], sad: ['😢','😭','😞','💔'], laugh: ['😂','🤣','😹'],
+  yes: ['✅','👍','👌','🙌'], no: ['❌','👎','🚫','⛔'], thanks: ['🙏','❤️','🫶'], celebration: ['🎉','🎊','🥳','🎂','🥂'], fire: ['🔥','❤️‍🔥'], music: ['🎵','🎶','🎧','🎤','🎸'],
+  work: ['💼','💻','📊','🛠️'], money: ['💰','💵','💳','🪙'], phone: ['📱','☎️'], photo: ['📷','📸'], video: ['🎥','📹'], food: ['🍕','🍔','🍲','🍎'],
+  animal: ['🐶','🐱','🦁','🐼','🐻'], travel: ['✈️','🚗','🚆','🚀'], sport: ['⚽','🏀','🏈','🎾'], ghana: ['🇬🇭'], flag: ['🏁','🚩','🇬🇭','🇳🇬','🇬🇧','🇺🇸'], lock: ['🔒','🔐','🔑'], star: ['⭐','🌟','✨'],
 };
 
 // ── Tiny DOM helpers ───────────────────────────────────────────────────
@@ -313,6 +329,43 @@ function initLogin() {
   const savedName = localStorage.getItem('vchat.name');
   if (savedName) $('name-input').value = savedName;
 
+  const accountTypeInputs = [...document.querySelectorAll('input[name="register-account-type"]')];
+  const updateAccountType = () => {
+    const business = accountTypeInputs.find(input => input.checked)?.value === 'business';
+    $('business-register-fields').hidden = !business;
+    accountTypeInputs.forEach(input => input.closest('.account-type-card')?.classList.toggle('selected', input.checked));
+  };
+  accountTypeInputs.forEach(input => input.onchange = updateAccountType);
+  updateAccountType();
+
+  const resetRegistrationPhoto = () => {
+    if (registrationPhotoPreviewUrl) URL.revokeObjectURL(registrationPhotoPreviewUrl);
+    registrationPhotoPreviewUrl = null;
+    registrationPhotoFile = null;
+    $('registration-photo-input').value = '';
+    $('registration-photo-preview').innerHTML = icon('photo');
+    $('registration-photo-name').textContent = 'You can replace or remove it later.';
+    $('registration-photo-remove').hidden = true;
+  };
+  const chooseRegistrationPhoto = () => $('registration-photo-input').click();
+  $('registration-photo-choose').onclick = chooseRegistrationPhoto;
+  $('registration-photo-button').onclick = chooseRegistrationPhoto;
+  $('registration-photo-remove').onclick = resetRegistrationPhoto;
+  $('registration-photo-input').onchange = event => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/i.test(file.type) || file.size > 5 * 1024 * 1024) {
+      resetRegistrationPhoto();
+      return toast('Choose a JPEG, PNG, or WebP image up to 5 MB');
+    }
+    if (registrationPhotoPreviewUrl) URL.revokeObjectURL(registrationPhotoPreviewUrl);
+    registrationPhotoFile = file;
+    registrationPhotoPreviewUrl = URL.createObjectURL(file);
+    $('registration-photo-preview').innerHTML = `<img src="${esc(registrationPhotoPreviewUrl)}" alt="Selected profile photo">`;
+    $('registration-photo-name').textContent = `${file.name} · ${fileSize(file.size)}`;
+    $('registration-photo-remove').hidden = false;
+  };
+
   const savedPhone = localStorage.getItem('vchat.phone');
   if (savedPhone) {
     const match = DIAL_CODES.filter(d => savedPhone.startsWith('+' + d[1]))
@@ -487,19 +540,56 @@ async function submitCode() {
 // ── Step 3: name + avatar for first-time numbers ───────────────────────
 async function submitProfile() {
   const username = $('name-input').value.trim();
+  const accountType = document.querySelector('input[name="register-account-type"]:checked')?.value === 'business'
+    ? 'business' : 'personal';
+  const businessName = $('business-name-input').value.trim();
   if (username.length < 2) { $('profile-err').textContent = 'Please enter at least 2 characters'; return; }
+  if (accountType === 'business' && businessName.length < 2) {
+    $('profile-err').textContent = 'Please enter a public business name';
+    $('business-name-input').focus();
+    return;
+  }
   $('profile-err').textContent = '';
   $('login-btn').disabled = true;
 
-  // The code was consumed by the previous call, so ask for a fresh one and
-  // verify in a single step is not possible — instead the server accepts the
-  // profile with the still-valid pending registration.
+  // Registration creates the HttpOnly session first. Only then can the
+  // optional profile image use the authenticated protected-media route.
   const { ok, data } = await api('/api/auth/register', {
-    phone: authPhone, username, avatar: pickedAvatar,
+    phone: authPhone,
+    username,
+    avatar: pickedAvatar,
+    accountType,
+    businessProfile: accountType === 'business' ? {
+      name: businessName,
+      category: $('business-category-input').value,
+      description: $('business-description-input').value.trim(),
+    } : undefined,
   });
-  $('login-btn').disabled = false;
 
-  if (!ok) { $('profile-err').textContent = data.error || 'Could not create your profile'; return; }
+  if (!ok) {
+    $('login-btn').disabled = false;
+    $('profile-err').textContent = data.error || 'Could not create your profile';
+    return;
+  }
+
+  if (registrationPhotoFile) {
+    try {
+      const form = new FormData();
+      form.append('photo', registrationPhotoFile, registrationPhotoFile.name);
+      const response = await fetch('/api/account/profile-photo', {
+        method: 'PUT', credentials: 'same-origin', body: form,
+      });
+      const photoData = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(photoData.error || 'Profile photo upload failed');
+      data.user = photoData.user || data.user;
+    } catch (error) {
+      toast(`${error.message}. Your account was created and you can add it later.`);
+    }
+  }
+  $('login-btn').disabled = false;
+  if (registrationPhotoPreviewUrl) URL.revokeObjectURL(registrationPhotoPreviewUrl);
+  registrationPhotoPreviewUrl = null;
+  registrationPhotoFile = null;
   finishAuth(data);
 }
 
@@ -529,6 +619,7 @@ function connect() {
       $('login').style.display = 'none';
       document.body.classList.add('ready');
       renderMe();
+      renderChatLockState();
       renderChatList();
       if (!activeId && window.innerWidth > 900) {
         const first = chats[0];
@@ -583,9 +674,23 @@ function connect() {
   });
 
   socket.on('chats:list', list => {
-    chats = list;
-    if (activeId && chats.some(c => c.id === activeId)) updateHeaderForActive();
-    else renderChatList();
+    const previousActive = activeChat();
+    chats = Array.isArray(list) ? list : [];
+    if (activeId && chats.some(c => c.id === activeId)) {
+      updateHeaderForActive();
+      renderChatList();
+    } else if (activeId && previousActive?.locked) {
+      // Automatic relocking must remove already-rendered content as well as
+      // hiding the row; leaving a stale thread in the DOM would leak it.
+      closeChat();
+      toast('Locked chats were hidden');
+    } else renderChatList();
+  });
+  socket.on('chat-lock:state', user => {
+    if (!user || user.id !== me?.id) return;
+    me = { ...me, ...user };
+    renderChatLockState();
+    if (!chatLockIsUnlocked() && activeChat()?.locked) closeChat();
   });
   socket.on('chats:refresh', () => {});
   socket.on('users:list', list => {
@@ -733,7 +838,7 @@ function ping(force = false) {
 
 function showMessageNotification(message, chat) {
   if (!notificationPrefs.desktop || !document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
-  const privatePreview = chat?.advancedPrivacy || !notificationPrefs.previews;
+  const privatePreview = chat?.advancedPrivacy || chat?.locked || !notificationPrefs.previews;
   const sender = message.sender?.username || chat?.name || 'Vchat';
   const title = privatePreview ? 'New Vchat message' : (chat?.type === 'group' ? `${sender} · ${chat.name}` : sender);
   const body = privatePreview ? 'Open Vchat to read it' : previewOf(message);
@@ -764,7 +869,10 @@ function notifyTitle() {
   document.title = `(${unseen}) VChat`;
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) pauseReelVideos();
+  if (document.hidden) {
+    pauseReelVideos();
+    if (!$('view-once-viewer').hidden) closeViewOnce();
+  }
   else {
     unseen = 0;
     document.title = 'VChat';
@@ -882,7 +990,9 @@ function openProfile() {
     }
 
     const applyLocalProfile = user => {
-      me = user;
+      // Profile responses are merged defensively so unrelated session-scoped
+      // state (notably a temporary chat-lock unlock) cannot be discarded.
+      me = { ...me, ...(user || {}) };
       localStorage.setItem('vchat.name', me.username);
       localStorage.setItem('vchat.avatar', me.avatar || '');
       renderMe();
@@ -920,12 +1030,14 @@ function openProfile() {
 
 // ── Chat list ──────────────────────────────────────────────────────────
 function visibleChats() {
-  let list = chats.slice();
-  if (filter === 'unread') list = list.filter(c => c.unread > 0);
+  // Even during an unlocked session, locked chats live only behind the
+  // dedicated filter so names and previews never bleed into normal lists.
+  let list = filter === 'locked' ? chats.filter(c => c.locked) : chats.filter(c => !c.locked);
+  if (filter === 'unread') list = list.filter(c => c.unread > 0 && !c.archived);
   else if (filter === 'favorites') list = list.filter(c => c.favorite && !c.archived);
-  else if (filter === 'groups') list = list.filter(c => c.type === 'group');
+  else if (filter === 'groups') list = list.filter(c => c.type === 'group' && !c.archived);
   else if (filter === 'archived') list = list.filter(c => c.archived);
-  else list = list.filter(c => !c.archived);
+  else if (filter !== 'locked') list = list.filter(c => !c.archived);
 
   if (searchQuery) {
     const q = searchQuery.toLowerCase();
@@ -955,7 +1067,7 @@ function renderChatList() {
   if (!list.length && !box.children.length) {
     box.appendChild(el('div', 'empty-list',
       searchQuery ? 'No chats found.<br>Try a different search.'
-                  : 'No conversations yet.<br>Tap the new-chat icon to start one.'));
+                  : (filter === 'locked' ? 'No locked chats on this account.' : 'No conversations yet.<br>Tap the new-chat icon to start one.')));
     return;
   }
 
@@ -979,7 +1091,7 @@ function contactRow(u) {
 }
 
 function chatRow(c) {
-  const row = el('div', 'chat-row' + (c.id === activeId ? ' sel' : '') + (c.unread ? ' unread' : ''));
+  const row = el('div', 'chat-row' + (c.id === activeId ? ' sel' : '') + (c.unread ? ' unread' : '') + (c.locked ? ' locked-chat-row' : ''));
   const last = c.lastMessage;
   const isGroup = c.type === 'group';
   const entity = c.type === 'dm'
@@ -1032,6 +1144,7 @@ function chatContextMenu(e, c) {
     { label: c.unread ? 'Mark as read' : 'Mark as unread', fn: () => c.unread
       ? socket.emit('messages:read', { chatId: c.id })
       : socket.emit('chat:flag', { chatId: c.id, flag: 'manualUnread', value: true }) },
+    { label: c.locked ? 'Remove chat lock' : 'Lock and hide chat', fn: () => toggleChatLock(c) },
     { sep: true },
     { label: 'Clear messages', fn: () => { if (confirm(`Clear all messages in "${c.name}"?`)) socket.emit('chat:clear', { chatId: c.id }); } },
   ];
@@ -1118,6 +1231,9 @@ function openChat(chatId) {
 }
 
 function closeChat() {
+  // Relocking or leaving a thread must also destroy any already-fetched
+  // View Once object URL so protected media cannot remain over the hidden chat.
+  if (!$('view-once-viewer').hidden) closeViewOnce();
   activeId = null;
   messages = [];
   $('chat-panel').style.display = 'none';
@@ -1231,7 +1347,17 @@ function messageRow(m, grouped) {
           <div class="rq-text">${esc(m.replyTo.text || m.replyTo.preview || 'Attachment')}</div>
         </div></div>`;
     }
-    if (m.file) {
+    if (m.viewOnce) {
+      const mediaKind = /video/i.test(m.file?.mimeType || m.type || '') ? 'video' : 'photo';
+      const openedCount = Number(m.viewOnceOpenedCount) || 0;
+      const state = out
+        ? (openedCount ? `${openedCount} recipient${openedCount === 1 ? '' : 's'} opened` : (m.pending ? 'Sending…' : 'Sent'))
+        : (m.viewOnceOpened ? 'Opened' : `Tap to view ${mediaKind}`);
+      const canOpen = !out && !m.pending && !m.viewOnceOpened;
+      inner += `<button class="view-once-card" type="button"${canOpen ? ` data-view-once="${esc(m.id)}"` : ' disabled'}>
+        <span class="once-mark">1</span><span><strong>View once ${mediaKind}</strong><small>${esc(state)}</small></span>
+      </button>`;
+    } else if (m.file) {
       const t = m.file.mimeType || m.file.type || '';
       const protectedControls = c?.advancedPrivacy
         ? ' controlslist="nodownload noremoteplayback" disableremoteplayback'
@@ -1290,6 +1416,7 @@ function messageRow(m, grouped) {
   row.oncontextmenu = e => { e.preventDefault(); messageMenu(e, m); };
 
   bubble.querySelectorAll('[data-voice]').forEach(wireVoice);
+  bubble.querySelector('[data-view-once]')?.addEventListener('click', () => openViewOnce(m));
   bubble.querySelector('[data-photo]')?.addEventListener('click', ev => {
     openLightbox(ev.target.dataset.photo, ev.target.dataset.name);
   });
@@ -1334,7 +1461,7 @@ function messageMenu(e, m) {
   const protectedChat = !!activeChat()?.advancedPrivacy;
   const items = [{ label: 'Reply', fn: () => startReply(m) }];
   if (!m.deleted) items.push({ label: m.starred ? 'Unstar' : 'Star', fn: () => socket.emit('message:star', { chatId: activeId, messageId: m.id }) });
-  if (!m.deleted && !protectedChat) items.push({ label: 'Forward', fn: () => openForward(m) });
+  if (!m.deleted && !protectedChat && !m.viewOnce) items.push({ label: 'Forward', fn: () => openForward(m) });
   if (!m.deleted) items.push({
     label: m.pinnedUntil && m.pinnedUntil > Date.now() ? 'Unpin message' : 'Pin for 24 hours',
     fn: () => socket.emit('message:pin', {
@@ -1344,7 +1471,7 @@ function messageMenu(e, m) {
   });
   if (m.text && !m.deleted) items.push({ label: 'Copy text', fn: () => { navigator.clipboard?.writeText(m.text); toast('Copied'); } });
   if (out && m.text && !m.deleted) items.push({ label: 'Edit message', fn: () => editMessage(m) });
-  if (m.file && !m.deleted && !protectedChat) items.push({ label: 'Download', fn: () => downloadAttachment(m.file) });
+  if (m.file && !m.deleted && !protectedChat && !m.viewOnce) items.push({ label: 'Download', fn: () => downloadAttachment(m.file) });
   items.push({ sep: true });
   items.push({ label: 'Delete for me', danger: true, fn: () => socket.emit('message:delete', { chatId: activeId, messageId: m.id, forEveryone: false }) });
   if (out && !m.deleted) items.push({ label: 'Delete for everyone', danger: true, fn: () => socket.emit('message:delete', { chatId: activeId, messageId: m.id, forEveryone: true }) });
@@ -1365,6 +1492,54 @@ async function downloadAttachment(file) {
     setTimeout(() => URL.revokeObjectURL(href), 1000);
   } catch (error) {
     toast(error.message || 'Download failed');
+  }
+}
+
+function closeViewOnce() {
+  const viewer = $('view-once-viewer');
+  viewer.hidden = true;
+  viewer.setAttribute('aria-hidden', 'true');
+  viewer.querySelectorAll('video,audio').forEach(media => media.pause());
+  $('view-once-stage').innerHTML = '';
+  if (viewOnceObjectUrl) URL.revokeObjectURL(viewOnceObjectUrl);
+  viewOnceObjectUrl = null;
+}
+
+async function openViewOnce(message) {
+  if (!message || message.senderId === me.id || message.viewOnceOpened || !activeId) return;
+  const chatId = activeId;
+  const viewer = $('view-once-viewer');
+  viewer.hidden = false;
+  viewer.setAttribute('aria-hidden', 'false');
+  $('view-once-stage').innerHTML = '<span class="spinner"></span>';
+  try {
+    const opened = await api(`/api/messenger/messages/${encodeURIComponent(chatId)}/${encodeURIComponent(message.id)}/view-once`, {});
+    if (!opened.ok) throw new Error(opened.data.error || 'This View Once media is unavailable');
+    const response = await fetch(opened.data.mediaUrl, { credentials: 'same-origin', cache: 'no-store' });
+    if (!response.ok) throw new Error('This View Once media could not be loaded');
+    const blob = await response.blob();
+    if (!viewer.hidden && activeId === chatId) {
+      viewOnceObjectUrl = URL.createObjectURL(blob);
+      const isVideo = /^video\//i.test(opened.data.mimeType || blob.type);
+      const media = document.createElement(isVideo ? 'video' : 'img');
+      media.src = viewOnceObjectUrl;
+      media.alt = isVideo ? '' : (opened.data.name || 'View Once photo');
+      media.draggable = false;
+      media.oncontextmenu = event => event.preventDefault();
+      if (isVideo) {
+        media.controls = true;
+        media.autoplay = true;
+        media.playsInline = true;
+        media.disablePictureInPicture = true;
+        media.setAttribute('controlslist', 'nodownload noremoteplayback noplaybackrate');
+        media.setAttribute('disableremoteplayback', '');
+        media.play().catch(() => {});
+      }
+      $('view-once-stage').replaceChildren(media);
+    }
+  } catch (error) {
+    closeViewOnce();
+    toast(error.message || 'Could not open View Once media');
   }
 }
 
@@ -1445,6 +1620,7 @@ function sendMessage() {
     file: pendingFile,
     type: pendingFile ? (pendingFile.mimeType?.split('/')[0] || 'file') : 'text',
     replyTo,
+    viewOnce: !!pendingFile && $('view-once-toggle').checked,
   };
   // Everything goes through the outbox, connection or not. A message is only
   // dropped from it once the server has confirmed it, so a send that dies
@@ -1541,6 +1717,7 @@ function outboxToMessage(item) {
     text: item.text || '',
     file: item.file || null,
     type: item.type || 'text',
+    viewOnce: item.viewOnce === true,
     replyTo: item.replyTo || null,
     timestamp: item.queuedAt,
     reactions: {},
@@ -1595,6 +1772,7 @@ function sendQueued(item) {
         file: item.file,
         type: item.type,
         replyTo: item.replyTo,
+        viewOnce: item.viewOnce === true,
         tempId: item.tempId,
         clientId: item.clientId,
       }, res => {
@@ -1851,6 +2029,9 @@ async function uploadFile(file) {
       ? `<img src="${data.url}" alt="" />`
       : (data.mimeType?.startsWith('video/') ? '🎥' : data.mimeType?.startsWith('audio/') ? '🎵' : '📄');
     $('file-bar').classList.add('show');
+    const viewOnceEligible = /^(image|video)\//i.test(data.mimeType || '');
+    $('view-once-choice').hidden = !viewOnceEligible;
+    $('view-once-toggle').checked = false;
     updateSendBtn();
     $('msg-input').focus();
   } catch (err) {
@@ -2071,28 +2252,82 @@ function clearPendingFile() {
   pendingFile = null;
   $('file-bar').classList.remove('show');
   $('file-input').value = '';
+  $('view-once-toggle').checked = false;
+  $('view-once-choice').hidden = true;
   updateSendBtn();
 }
 
 // ── Emoji panel ────────────────────────────────────────────────────────
 function buildEmojiPanel() {
-  const p = $('emoji-panel');
-  p.innerHTML = '';
-  for (const [group, list] of Object.entries(EMOJI_GROUPS)) {
-    p.appendChild(el('div', 'grp-title', group));
-    const grid = el('div', 'grid');
-    list.forEach(e => {
-      const b = el('button', '', e);
-      b.onclick = () => {
-        const input = $('msg-input');
-        input.value += e;
-        input.focus();
-        updateSendBtn();
-      };
-      grid.appendChild(b);
-    });
-    p.appendChild(grid);
-  }
+  const panel = $('emoji-panel');
+  panel.innerHTML = '';
+  let selectedGroup = Object.keys(EMOJI_GROUPS)[0];
+  const tools = el('div', 'emoji-tools');
+  const search = el('input', 'emoji-search');
+  search.type = 'search';
+  search.placeholder = 'Search emoji';
+  search.setAttribute('aria-label', 'Search emoji');
+  tools.appendChild(search);
+  const categories = el('div', 'emoji-categories');
+  const results = el('div', 'emoji-results');
+
+  const insertEmoji = emoji => {
+    const input = $('msg-input');
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    input.setRangeText(emoji, start, end, 'end');
+    input.focus();
+    updateSendBtn();
+  };
+  const drawResults = () => {
+    const query = search.value.trim().toLowerCase();
+    results.innerHTML = '';
+    let groups;
+    if (!query) groups = [[selectedGroup, EMOJI_GROUPS[selectedGroup]]];
+    else {
+      const keywordMatches = Object.entries(EMOJI_SEARCH_TERMS)
+        .filter(([term]) => term.includes(query) || query.includes(term))
+        .flatMap(([, emojis]) => emojis);
+      groups = Object.entries(EMOJI_GROUPS).map(([name, emojis]) => {
+        const list = name.toLowerCase().includes(query)
+          ? emojis
+          : emojis.filter(emoji => emoji.includes(query) || keywordMatches.includes(emoji));
+        return [name, [...new Set(list)]];
+      }).filter(([, emojis]) => emojis.length);
+    }
+    if (!groups.length) {
+      results.appendChild(el('div', 'empty-list', 'No emoji found. Try words like love, food, travel, music, or Ghana.'));
+      return;
+    }
+    for (const [name, emojis] of groups) {
+      results.appendChild(el('div', 'grp-title', esc(name)));
+      const grid = el('div', 'grid');
+      emojis.forEach(emoji => {
+        const button = el('button', '', emoji);
+        button.type = 'button';
+        button.title = name;
+        button.onclick = () => insertEmoji(emoji);
+        grid.appendChild(button);
+      });
+      results.appendChild(grid);
+    }
+  };
+  Object.keys(EMOJI_GROUPS).forEach((name, index) => {
+    const button = el('button', index === 0 ? 'selected' : '', EMOJI_CATEGORY_ICONS[index] || '•');
+    button.type = 'button';
+    button.title = name;
+    button.setAttribute('aria-label', name);
+    button.onclick = () => {
+      selectedGroup = name;
+      search.value = '';
+      categories.querySelectorAll('button').forEach(item => item.classList.toggle('selected', item === button));
+      drawResults();
+    };
+    categories.appendChild(button);
+  });
+  search.oninput = drawResults;
+  panel.append(tools, categories, results);
+  drawResults();
 }
 
 // ── Drawer (contact / group info) ──────────────────────────────────────
@@ -2136,6 +2371,11 @@ function openDrawer() {
       body.appendChild(el('div', 'drawer-block left', `
         <div class="drawer-label">Phone number</div>
         <div class="drawer-value">${esc(entity.phone)}</div>`));
+    }
+    if (entity?.accountType === 'business') {
+      const businessPage = el('button', 'drawer-action', `${icon('info')} View public business page`);
+      businessPage.onclick = () => openBusinessPage(entity.id);
+      body.appendChild(businessPage);
     }
   } else {
     const members = el('div', 'drawer-block left');
@@ -2189,9 +2429,13 @@ function openDrawer() {
   mute.onclick = () => { socket.emit('chat:flag', { chatId: c.id, flag: 'muted', value: !c.muted }); setTimeout(openDrawer, 150); };
   const pin = el('button', 'drawer-action', `${icon('pin')} ${c.pinned ? 'Unpin chat' : 'Pin chat'}`);
   pin.onclick = () => { socket.emit('chat:flag', { chatId: c.id, flag: 'pinned', value: !c.pinned }); setTimeout(openDrawer, 150); };
+  const archive = el('button', 'drawer-action', `${icon('archive')} ${c.archived ? 'Unarchive chat' : 'Archive chat'}`);
+  archive.onclick = () => { socket.emit('chat:flag', { chatId: c.id, flag: 'archived', value: !c.archived }); $('drawer').classList.remove('open'); closeChat(); };
+  const lock = el('button', 'drawer-action', `${icon('lock')} ${c.locked ? 'Remove chat lock' : 'Lock and hide chat'}`);
+  lock.onclick = () => toggleChatLock(c);
   const clear = el('button', 'drawer-action danger', `${icon('trash')} Clear messages`);
   clear.onclick = () => { if (confirm('Clear all messages in this chat?')) socket.emit('chat:clear', { chatId: c.id }); };
-  actions.append(mute, pin);
+  actions.append(mute, pin, archive, lock);
   if (c.type === 'dm' && entity?.id) {
     const isBlocked = (me.blocked || []).includes(entity.id);
     const block = el('button', 'drawer-action danger', `${icon('close')} ${isBlocked ? 'Unblock' : 'Block'} ${esc(entity.username || 'contact')}`);
@@ -2242,6 +2486,60 @@ document.querySelectorAll('.overlay').forEach(o => {
   });
   o.querySelectorAll('[data-close]').forEach(b => b.onclick = () => closeModal(o.id));
 });
+
+const businessCategoryLabel = value => String(value || 'other').replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+async function openBusinessPage(userId = me?.id) {
+  if (!userId) return;
+  const result = await api(`/api/business/${encodeURIComponent(userId)}`);
+  if (!result.ok) return toast(result.data.error || 'Business page is unavailable');
+  const business = result.data.business;
+  const owner = business.owner || {};
+  const profile = business.profile || {};
+  $('business-page-head').innerHTML = `${avatarHTML(owner, 64)}<h2>${esc(profile.name || owner.username || 'Business')}</h2><p>${esc(businessCategoryLabel(profile.category))} · Public business-purpose page</p>`;
+  const ownerFields = $('business-owner-fields');
+  const details = $('business-public-details');
+  ownerFields.hidden = !business.canEdit;
+  if (business.canEdit) {
+    $('business-page-name').value = profile.name || '';
+    $('business-page-category').value = profile.category || 'other';
+    $('business-page-description').value = profile.description || '';
+    $('business-page-address').value = profile.address || '';
+    $('business-page-hours').value = profile.hours || '';
+    $('business-page-website').value = profile.website || '';
+    details.innerHTML = '<p class="capture-disclosure">This page describes your business purpose. Vchat does not add catalogs, carts, or shopping tools.</p>';
+    $('business-page-save').onclick = async () => {
+      const name = $('business-page-name').value.trim();
+      if (name.length < 2) return toast('Business name must be at least 2 characters');
+      const save = await api('/api/account/business-profile', {
+        name,
+        category: $('business-page-category').value,
+        description: $('business-page-description').value.trim(),
+        address: $('business-page-address').value.trim(),
+        hours: $('business-page-hours').value.trim(),
+        website: $('business-page-website').value.trim(),
+      }, { method: 'PUT' });
+      if (!save.ok) return toast(save.data.error || 'Could not save business page');
+      me = { ...me, ...(save.data.user || {}) };
+      toast('Business page updated');
+      openBusinessPage(me.id);
+    };
+    $('business-open-boosts').onclick = () => {
+      closeModal('modal-business');
+      openStoryBoosts();
+    };
+  } else {
+    const website = /^https:\/\//i.test(profile.website || '')
+      ? `<p><strong>Website</strong><br><a href="${esc(profile.website)}" target="_blank" rel="noopener noreferrer">${esc(profile.website)}</a></p>` : '';
+    details.innerHTML = `<div class="business-public-card">
+      <p><strong>Business purpose</strong><br>${esc(profile.description || 'No business purpose has been added yet.')}</p>
+      ${profile.address ? `<p><strong>Service area or address</strong><br>${esc(profile.address)}</p>` : ''}
+      ${profile.hours ? `<p><strong>Hours</strong><br>${esc(profile.hours)}</p>` : ''}
+      ${website}
+      <small>Public business page · No catalog, cart, or Vchat shopping features</small>
+    </div>`;
+  }
+  openModal('modal-business');
+}
 
 function openNewChat() {
   const render = (q = '') => {
@@ -2387,8 +2685,222 @@ async function openPrivacy() {
   $('two-step-status').textContent = me.twoStepEnabled ? 'PIN is enabled' : 'Add a PIN for extra account protection';
   $('two-step-set').textContent = me.twoStepEnabled ? 'Change PIN' : 'Set PIN';
   $('two-step-disable').hidden = !me.twoStepEnabled;
+  renderChatLockState();
   openModal('modal-privacy');
-  await loadDevices();
+  await Promise.all([loadDevices(), loadChatLockState()]);
+}
+
+function chatLockIsUnlocked() {
+  return Number(me?.chatLockUnlockedUntil) > Date.now();
+}
+
+function renderChatLockState() {
+  if (!me) return;
+  const enabled = me.chatLockEnabled === true;
+  const unlocked = enabled && chatLockIsUnlocked();
+  const count = Math.max(0, Number(me.lockedChatCount) || 0);
+  const filterButton = $('locked-chats-filter');
+  filterButton.hidden = !enabled;
+  $('locked-chat-count').textContent = count ? String(count) : '';
+  $('chat-lock-status').textContent = enabled
+    ? (unlocked ? 'Locked chats are unlocked on this device' : 'Locked chats are hidden')
+    : 'Protect hidden chats with a separate PIN';
+  $('chat-lock-note').textContent = unlocked
+    ? `Automatically locks again ${new Date(me.chatLockUnlockedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+    : 'Locked chats and previews stay hidden until this device session is unlocked.';
+  $('chat-lock-pin').textContent = enabled ? 'Change lock PIN' : 'Set lock PIN';
+  $('chat-lock-unlock').hidden = !enabled || unlocked;
+  $('chat-lock-now').hidden = !unlocked;
+  $('chat-lock-passkey-add').hidden = !enabled || !unlocked || !window.PublicKeyCredential
+    || Number(me.chatLockPasskeyCount) >= 10;
+  $('chat-lock-passkey-unlock').hidden = !enabled || unlocked || !(Number(me.chatLockPasskeyCount) > 0);
+  if (!unlocked && filter === 'locked') {
+    filter = 'all';
+    document.querySelectorAll('.chip').forEach(chip => chip.classList.toggle('on', chip.dataset.filter === 'all'));
+  }
+}
+
+async function loadChatLockState() {
+  const { ok, data } = await api('/api/account/chat-lock');
+  if (!ok) return;
+  me = { ...me, ...(data.user || {}) };
+  chatLockCredentials = Array.isArray(data.credentials) ? data.credentials : [];
+  renderChatLockCredentials();
+  renderChatLockState();
+}
+
+function renderChatLockCredentials() {
+  const list = $('chat-lock-credentials');
+  list.innerHTML = '';
+  if (!chatLockCredentials.length) {
+    list.innerHTML = '<div class="empty-list">No passkeys added. Your separate chat-lock PIN remains the fallback.</div>';
+    return;
+  }
+  chatLockCredentials.forEach(credential => {
+    const row = el('div', 'device-row', `<div>${icon('lock')}<span><strong>${esc(credential.name || 'Device passkey')}</strong><small>Added ${esc(new Date(credential.createdAt).toLocaleDateString())}</small></span></div>`);
+    const remove = el('button', 'btn-text danger', 'Remove');
+    remove.onclick = async () => {
+      const pin = prompt('Enter your separate 6-digit chat-lock PIN to remove this passkey');
+      if (pin == null) return;
+      const result = await api(`/api/account/chat-lock/passkey/${encodeURIComponent(credential.id)}`, { pin }, { method: 'DELETE' });
+      if (!result.ok) return toast(result.data.error || 'Could not remove passkey');
+      chatLockCredentials = result.data.credentials || [];
+      me.chatLockPasskeyCount = chatLockCredentials.length;
+      renderChatLockCredentials();
+      renderChatLockState();
+      toast('Passkey removed');
+    };
+    row.appendChild(remove);
+    list.appendChild(row);
+  });
+}
+
+async function setChatLockPin() {
+  const wasEnabled = me.chatLockEnabled === true;
+  const currentPin = wasEnabled ? prompt('Enter your current separate chat-lock PIN') : null;
+  if (wasEnabled && currentPin == null) return false;
+  const pin = prompt(wasEnabled
+    ? 'Choose a new 6-digit chat-lock PIN (different from two-step verification)'
+    : 'Choose a separate 6-digit PIN for locked chats');
+  if (pin == null) return false;
+  if (!/^\d{6}$/.test(pin)) { toast('The chat-lock PIN must contain exactly 6 digits'); return false; }
+  const result = await api('/api/account/chat-lock/pin', { pin, currentPin }, { method: 'PUT' });
+  if (!result.ok) { toast(result.data.error || 'Could not set chat-lock PIN'); return false; }
+  me = { ...me, ...(result.data.user || {}) };
+  chatLockCredentials = result.data.credentials || chatLockCredentials;
+  renderChatLockCredentials();
+  renderChatLockState();
+  toast(wasEnabled ? 'Chat-lock PIN updated' : 'Chat lock enabled');
+  return true;
+}
+
+async function unlockChatLockWithPin() {
+  if (!me.chatLockEnabled) return setChatLockPin();
+  const pin = prompt('Enter your separate 6-digit chat-lock PIN');
+  if (pin == null) return false;
+  const result = await api('/api/account/chat-lock/unlock', { pin });
+  if (!result.ok) { toast(result.data.error || 'Could not unlock chats'); return false; }
+  me = { ...me, ...(result.data.user || {}) };
+  renderChatLockState();
+  toast('Locked chats unlocked temporarily');
+  return true;
+}
+
+const bytesFromBase64url = value => {
+  const base64 = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(base64 + '='.repeat((4 - base64.length % 4) % 4));
+  return Uint8Array.from(binary, char => char.charCodeAt(0));
+};
+const base64urlFromBytes = value => {
+  if (value == null) return null;
+  const bytes = new Uint8Array(value);
+  let binary = '';
+  bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+};
+function publicKeyCreateOptions(options) {
+  return {
+    ...options,
+    challenge: bytesFromBase64url(options.challenge),
+    user: { ...options.user, id: bytesFromBase64url(options.user.id) },
+    excludeCredentials: (options.excludeCredentials || []).map(item => ({ ...item, id: bytesFromBase64url(item.id) })),
+  };
+}
+function publicKeyRequestOptions(options) {
+  return {
+    ...options,
+    challenge: bytesFromBase64url(options.challenge),
+    allowCredentials: (options.allowCredentials || []).map(item => ({ ...item, id: bytesFromBase64url(item.id) })),
+  };
+}
+function serializePasskeyCredential(credential) {
+  const response = credential.response;
+  const serialized = {
+    id: credential.id,
+    rawId: base64urlFromBytes(credential.rawId),
+    type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment || undefined,
+    clientExtensionResults: credential.getClientExtensionResults?.() || {},
+    response: { clientDataJSON: base64urlFromBytes(response.clientDataJSON) },
+  };
+  if ('attestationObject' in response) {
+    serialized.response.attestationObject = base64urlFromBytes(response.attestationObject);
+    serialized.response.transports = response.getTransports?.() || [];
+  } else {
+    serialized.response.authenticatorData = base64urlFromBytes(response.authenticatorData);
+    serialized.response.signature = base64urlFromBytes(response.signature);
+    serialized.response.userHandle = base64urlFromBytes(response.userHandle);
+  }
+  return serialized;
+}
+
+async function addChatLockPasskey() {
+  if (!window.PublicKeyCredential || !navigator.credentials) return toast('Passkeys are not supported by this browser');
+  if (!chatLockIsUnlocked() && !(await unlockChatLockWithPin())) return;
+  try {
+    const optionsResult = await api('/api/account/chat-lock/passkey/register/options', {});
+    if (!optionsResult.ok) throw new Error(optionsResult.data.error || 'Could not begin passkey setup');
+    const credential = await navigator.credentials.create({ publicKey: publicKeyCreateOptions(optionsResult.data) });
+    if (!credential) throw new Error('Passkey setup was cancelled');
+    const name = /Mobile|Android|iPhone/i.test(navigator.userAgent) ? 'Mobile device passkey' : 'Desktop device passkey';
+    const verified = await api('/api/account/chat-lock/passkey/register/verify', {
+      credential: serializePasskeyCredential(credential), name,
+    });
+    if (!verified.ok) throw new Error(verified.data.error || 'Passkey could not be verified');
+    chatLockCredentials = verified.data.credentials || [];
+    me.chatLockPasskeyCount = chatLockCredentials.length;
+    renderChatLockCredentials();
+    renderChatLockState();
+    toast('Device passkey added');
+  } catch (error) {
+    toast(error.name === 'NotAllowedError' ? 'Passkey setup was cancelled' : (error.message || 'Could not add passkey'));
+  }
+}
+
+async function unlockChatLockWithPasskey() {
+  if (!window.PublicKeyCredential || !navigator.credentials) return toast('Passkeys are not supported by this browser'), false;
+  try {
+    const optionsResult = await api('/api/account/chat-lock/passkey/authenticate/options', {});
+    if (!optionsResult.ok) throw new Error(optionsResult.data.error || 'No passkey is available');
+    const credential = await navigator.credentials.get({ publicKey: publicKeyRequestOptions(optionsResult.data) });
+    if (!credential) throw new Error('Passkey unlock was cancelled');
+    const verified = await api('/api/account/chat-lock/passkey/authenticate/verify', {
+      credential: serializePasskeyCredential(credential),
+    });
+    if (!verified.ok) throw new Error(verified.data.error || 'Passkey unlock failed');
+    me = { ...me, ...(verified.data.user || {}) };
+    renderChatLockState();
+    toast('Locked chats unlocked temporarily');
+    return true;
+  } catch (error) {
+    toast(error.name === 'NotAllowedError' ? 'Passkey unlock was cancelled' : (error.message || 'Could not use passkey'));
+    return false;
+  }
+}
+
+async function lockChatsNow() {
+  const result = await api('/api/account/chat-lock/lock', {});
+  if (!result.ok) return toast(result.data.error || 'Could not lock chats');
+  me = { ...me, ...(result.data.user || {}) };
+  if (activeChat()?.locked) closeChat();
+  renderChatLockState();
+  renderChatList();
+  toast('Locked chats hidden');
+}
+
+async function toggleChatLock(chat) {
+  if (!chat) return;
+  if (!me.chatLockEnabled && !(await setChatLockPin())) return;
+  if (!chatLockIsUnlocked() && !(await unlockChatLockWithPin())) return;
+  const result = await api(`/api/messenger/chats/${encodeURIComponent(chat.id)}/lock`, { locked: !chat.locked }, { method: 'PUT' });
+  if (!result.ok) return toast(result.data.error || 'Could not change chat lock');
+  me = { ...me, ...(result.data.user || {}) };
+  if (result.data.locked) {
+    if (activeId === chat.id) closeChat();
+    setFilter('all');
+    toast('Chat locked and moved to Locked');
+  } else toast('Chat removed from Locked');
+  renderChatLockState();
 }
 
 async function loadDevices() {
@@ -2894,9 +3406,36 @@ async function loadStories({ quiet = false } = {}) {
   }
 }
 
+function openSponsoredStory(item) {
+  if (!item) return;
+  storySequence = [{ ...item, kind: 'ad' }];
+  $('stories-home').hidden = true;
+  $('story-viewer').hidden = false;
+  storyIndex = 0;
+  renderCurrentStory();
+}
+
+function renderSponsoredDiscovery() {
+  const section = $('sponsored-discovery');
+  const tray = $('sponsored-story-tray');
+  const ads = storyAds.filter(Boolean);
+  tray.innerHTML = '';
+  section.hidden = ads.length === 0;
+  ads.forEach(item => {
+    const card = el('button', `story-tray-card sponsored-tray-card unseen${item.type === 'text' ? ` story-bg-${item.background || 'jade'}` : ''}`);
+    card.type = 'button';
+    card.setAttribute('role', 'listitem');
+    card.setAttribute('aria-label', `Sponsored Status from ${item.advertiser?.username || 'a business'}`);
+    card.innerHTML = `${avatarHTML(item.advertiser, 40)}<span class="story-tray-name">${esc(item.advertiser?.username || 'Business')}</span><span class="story-tray-meta">${esc(item.cta || 'View sponsored Status')}</span>`;
+    card.onclick = () => openSponsoredStory(item);
+    tray.appendChild(card);
+  });
+}
+
 function renderStoryTray() {
   const tray = $('story-tray');
   tray.innerHTML = '';
+  renderSponsoredDiscovery();
   const own = storyGroups.find(group => group.mine);
   if (!own) {
     const add = el('button', 'story-tray-card add-card');
@@ -3004,6 +3543,10 @@ function renderCurrentStory() {
   $('story-sponsored').hidden = !isAd;
   $('story-ad-countdown').hidden = !isAd;
   $('story-delete').hidden = isAd || !item.mine;
+  $('story-save').hidden = isAd || item.mine || item.canSave !== true;
+  $('story-save').title = item.canSave === true
+    ? 'Save a copy permitted by the Status owner'
+    : 'The Status owner has not enabled saving';
   $('story-insight').hidden = isAd || !item.mine;
   $('story-insight').textContent = item.mine ? `${Number(item.viewCount) || 0} view${Number(item.viewCount) === 1 ? '' : 's'} · ${Number(item.reactionCount) || 0} reactions` : '';
   $('story-reactions').hidden = isAd || item.mine;
@@ -3030,7 +3573,10 @@ function renderCurrentStory() {
       if (result?.error) return toast(result.error);
       if (!result?.chat) return;
       openChat(result.chat.id);
-      if (item.objective === 'profile_visits') setTimeout(openDrawer, 0);
+      if (item.objective === 'profile_visits') {
+        if (item.advertiser.accountType === 'business') openBusinessPage(item.advertiser.id);
+        else setTimeout(openDrawer, 0);
+      }
     });
   } : null);
 
@@ -3104,6 +3650,48 @@ async function reactToStory(item, reaction) {
   toast(desired ? `Reacted ${desired}` : 'Reaction removed');
 }
 
+async function saveCurrentStory() {
+  const item = storySequence[storyIndex];
+  if (!item || item.kind === 'ad' || item.mine || item.canSave !== true) {
+    return toast('The Status owner has not allowed saving');
+  }
+  const button = $('story-save');
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/stories/${encodeURIComponent(item.id)}/save`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || 'Saving is no longer allowed');
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition') || '';
+    const matchedName = disposition.match(/filename="?([^";]+)"?/i)?.[1];
+    const extension = item.type === 'text' ? 'txt'
+      : item.mimeType === 'image/png' ? 'png'
+        : item.mimeType === 'image/webp' ? 'webp'
+          : item.mimeType === 'image/jpeg' ? 'jpg'
+            : item.mimeType === 'video/webm' ? 'webm'
+              : item.mimeType === 'video/quicktime' ? 'mov' : 'mp4';
+    const url = URL.createObjectURL(blob);
+    const download = el('a');
+    download.href = url;
+    download.download = matchedName || `vchat-status-${item.id}.${extension}`;
+    document.body.appendChild(download);
+    download.click();
+    download.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast('Status saved with the owner’s permission');
+  } catch (error) {
+    toast(error.message || 'Could not save this Status');
+    loadStories({ quiet: true }).catch(() => {});
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function deleteCurrentStory() {
   const item = storySequence[storyIndex];
   if (!item?.mine || !confirm('Delete this status?')) return;
@@ -3146,6 +3734,7 @@ function openStoryComposer() {
   $('story-text').value = '';
   $('story-file-name').textContent = '';
   $('story-media-remove').hidden = true;
+  $('story-allow-save').checked = false;
   $('story-boost-toggle').checked = false;
   $('story-boost-fields').hidden = true;
   $('boost-objective').value = 'profile_visits';
@@ -3213,6 +3802,7 @@ async function publishStory() {
   form.append('type', storyFile ? (storyFile.type.startsWith('video/') ? 'video' : 'image') : 'text');
   form.append('text', text);
   form.append('background', storyBackground);
+  form.append('allowSave', String($('story-allow-save').checked));
   if (storyFile) form.append('media', storyFile, storyFile.name);
   form.append('boost', String(boosted));
   if (boosted) {
@@ -3441,6 +4031,7 @@ function mainMenu(e) {
     { label: 'Status updates', fn: openStories },
     { label: document.body.classList.contains('reels-open') ? 'Close reels' : 'Reels · scroll while chatting', fn: toggleReels },
     { label: 'Profile', fn: openProfile },
+    ...(me?.accountType === 'business' ? [{ label: 'Business page & dashboard', fn: () => openBusinessPage(me.id) }] : []),
     { label: 'Privacy & security', fn: openPrivacy },
     { label: 'Notifications & media', fn: openNotifications },
     { label: 'Archived', fn: () => setFilter('archived') },
@@ -3465,8 +4056,10 @@ function chatMenu(e) {
   showCtxMenu(e, [
     { label: c.type === 'group' ? 'Group info' : 'Contact info', fn: openDrawer },
     { label: c.muted ? 'Unmute notifications' : 'Mute notifications', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'muted', value: !c.muted }) },
+    { label: c.pinned ? 'Unpin chat' : 'Pin chat', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'pinned', value: !c.pinned }) },
     { label: c.favorite ? 'Remove from Favorites' : 'Add to Favorites', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'favorite', value: !c.favorite }) },
     { label: c.archived ? 'Unarchive chat' : 'Archive chat', fn: () => { socket.emit('chat:flag', { chatId: c.id, flag: 'archived', value: !c.archived }); closeChat(); } },
+    { label: c.locked ? 'Remove chat lock' : 'Lock and hide chat', fn: () => toggleChatLock(c) },
     ...(canManagePrivacy ? [{ label: 'Disappearing messages', fn: () => chooseDisappearing(c) }] : []),
     ...(canManagePrivacy ? [{
       label: c.advancedPrivacy ? 'Turn off advanced chat privacy' : 'Turn on advanced chat privacy',
@@ -3495,7 +4088,13 @@ function chooseDisappearing(chat) {
   });
 }
 
-function setFilter(f) {
+async function setFilter(f) {
+  if (f === 'locked' && !chatLockIsUnlocked()) {
+    const usePasskey = Number(me?.chatLockPasskeyCount) > 0
+      && confirm('Unlock locked chats with your device passkey? Choose Cancel to use the separate chat-lock PIN.');
+    const unlocked = usePasskey ? await unlockChatLockWithPasskey() : await unlockChatLockWithPin();
+    if (!unlocked) return;
+  }
   filter = f;
   document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.filter === f));
   renderChatList();
@@ -4044,6 +4643,7 @@ function wire() {
   $('story-prev').onclick = showPreviousStory;
   $('story-next').onclick = () => showNextStory();
   $('story-delete').onclick = deleteCurrentStory;
+  $('story-save').onclick = saveCurrentStory;
   $('story-media-button').onclick = () => { $('story-file-input').value = ''; $('story-file-input').click(); };
   $('story-file-input').onchange = event => chooseStoryMedia(event.target.files?.[0]);
   $('story-media-remove').onclick = removeStoryMedia;
@@ -4082,7 +4682,8 @@ function wire() {
   $('ring-decline').onclick = () => declineCall();
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
-    if (call && $('ring').classList.contains('on')) declineCall();
+    if (!$('view-once-viewer').hidden) closeViewOnce();
+    else if (call && $('ring').classList.contains('on')) declineCall();
     else if ($('modal-story-compose').classList.contains('show')) closeModal('modal-story-compose');
     else if (!$('story-viewer').hidden) closeStoryViewer();
     else if ($('stories-screen').classList.contains('open')) closeStories();
@@ -4093,6 +4694,13 @@ function wire() {
   $('btn-chat-search').onclick = () => { $('search-input').focus(); if (window.innerWidth <= 900) closeChat(); };
   $('peer-open').onclick = openDrawer;
   $('drawer-close').onclick = () => $('drawer').classList.remove('open');
+  $('view-once-close').onclick = closeViewOnce;
+
+  $('chat-lock-pin').onclick = setChatLockPin;
+  $('chat-lock-unlock').onclick = unlockChatLockWithPin;
+  $('chat-lock-now').onclick = lockChatsNow;
+  $('chat-lock-passkey-add').onclick = addChatLockPasskey;
+  $('chat-lock-passkey-unlock').onclick = unlockChatLockWithPasskey;
 
   $('search-input').oninput = e => {
     searchQuery = e.target.value.trim();
@@ -4166,6 +4774,8 @@ document.body.classList.toggle('lite', lite);
 // The browser tells us before the socket does.
 window.addEventListener('online', () => flushOutbox());
 window.addEventListener('offline', () => updateOfflineBar());
+window.addEventListener('pagehide', closeViewOnce);
+window.addEventListener('beforeunload', closeViewOnce);
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 }

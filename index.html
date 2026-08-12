@@ -113,7 +113,27 @@
       <label class="field-label" for="name-input">Your name</label>
       <input id="name-input" type="text" placeholder="e.g. Daniel" autocomplete="name" maxlength="24" />
 
-      <label class="field-label">Choose an avatar</label>
+      <label class="field-label">Account type</label>
+      <div class="account-type-picker" role="radiogroup" aria-label="Account type">
+        <label class="account-type-card selected"><input type="radio" name="register-account-type" value="personal" checked /><strong>Personal</strong><span>For everyday conversations</span></label>
+        <label class="account-type-card"><input type="radio" name="register-account-type" value="business" /><strong>Business</strong><span>Public purpose page and Status boosting</span></label>
+      </div>
+      <div class="business-register-fields" id="business-register-fields" hidden>
+        <label class="field-label" for="business-name-input">Business name</label>
+        <input id="business-name-input" type="text" maxlength="80" placeholder="Your public business name" />
+        <label class="field-label" for="business-category-input">Category</label>
+        <select id="business-category-input"><option value="professional_services">Professional services</option><option value="retail">Retail</option><option value="food">Food</option><option value="beauty">Beauty</option><option value="health">Health</option><option value="education">Education</option><option value="technology">Technology</option><option value="media">Media</option><option value="travel">Travel</option><option value="nonprofit">Nonprofit</option><option value="creator">Creator</option><option value="other">Other</option></select>
+        <label class="field-label" for="business-description-input">Business purpose</label>
+        <textarea id="business-description-input" maxlength="500" rows="3" placeholder="What your business does"></textarea>
+      </div>
+
+      <label class="field-label">Profile photo <span class="field-hint">optional · JPEG, PNG or WebP</span></label>
+      <div class="registration-photo-row">
+        <button class="registration-photo-preview" id="registration-photo-choose" type="button" aria-label="Choose profile photo"><span id="registration-photo-preview"><svg class="icon"><use href="#i-photo"/></svg></span></button>
+        <div><button class="btn-text" id="registration-photo-button" type="button">Choose photo</button><button class="btn-text danger" id="registration-photo-remove" type="button" hidden>Remove</button><small id="registration-photo-name">You can replace or remove it later.</small></div>
+      </div>
+      <input id="registration-photo-input" type="file" accept="image/jpeg,image/png,image/webp" hidden />
+      <label class="field-label">Or choose an avatar</label>
       <div class="avatar-picker" id="avatar-picker"></div>
 
       <button class="btn-primary" id="login-btn">Start chatting</button>
@@ -151,6 +171,7 @@
         <button class="chip" data-filter="favorites">Favorites</button>
         <button class="chip" data-filter="groups">Groups</button>
         <button class="chip" data-filter="archived">Archived</button>
+        <button class="chip locked-filter" id="locked-chats-filter" data-filter="locked" hidden>🔒 Locked <span id="locked-chat-count"></span></button>
       </div>
 
       <div class="chat-list" id="chat-list"></div>
@@ -209,6 +230,7 @@
           <div style="flex:1;min-width:0">
             <div class="fb-name" id="fb-name"></div>
             <div class="fb-size" id="fb-size"></div>
+            <label class="view-once-choice" id="view-once-choice" hidden><input type="checkbox" id="view-once-toggle" /> <span>① View once</span></label>
           </div>
           <button class="bar-x" id="fb-close"><svg class="icon-sm"><use href="#i-close"/></svg></button>
         </div>
@@ -288,6 +310,10 @@
       <div><h2>Share what’s happening</h2><p>Photos, videos and text are visible to mutual contacts for 24 hours.</p></div>
     </div>
     <div class="story-tray" id="story-tray" role="list" aria-label="Recent status updates"></div>
+    <section class="sponsored-discovery" id="sponsored-discovery" hidden aria-labelledby="sponsored-discovery-title">
+      <div class="sponsored-discovery-head"><div><h3 id="sponsored-discovery-title">Sponsored status</h3><p>Reviewed promotions available across Vchat, separate from friend updates.</p></div><span>Ads</span></div>
+      <div class="story-tray sponsored-story-tray" id="sponsored-story-tray" role="list" aria-label="Sponsored status updates"></div>
+    </section>
     <div class="stories-empty" id="stories-empty" hidden>
       <div class="stories-empty-art"><svg class="icon"><use href="#i-camera"/></svg></div>
       <h3>No friend updates yet</h3>
@@ -302,6 +328,7 @@
       <div class="story-viewer-who"><strong id="story-viewer-name"></strong><span id="story-viewer-time"></span></div>
       <span class="sponsored-label" id="story-sponsored" hidden>Sponsored</span>
       <span class="story-ad-countdown" id="story-ad-countdown" hidden></span>
+      <a class="story-icon-button" id="story-save" aria-label="Save status" title="Save status" download hidden><svg class="icon"><use href="#i-download"/></svg></a>
       <button class="story-icon-button" id="story-delete" type="button" aria-label="Delete status" hidden><svg class="icon"><use href="#i-trash"/></svg></button>
       <button class="story-icon-button" id="story-viewer-close" type="button" aria-label="Close viewer"><svg class="icon"><use href="#i-close"/></svg></button>
     </div>
@@ -342,6 +369,8 @@
         </div>
       </fieldset>
       <p class="story-audience-note"><svg class="icon-sm"><use href="#i-lock"/></svg> Visible to mutual contacts for 24 hours</p>
+      <label class="lite-row story-save-privacy"><span><span class="lite-title">Allow viewers to save</span><span class="lite-note">Adds Vchat’s Save action to this Status only</span></span><input type="checkbox" id="story-allow-save" class="switch" /></label>
+      <p class="capture-disclosure">Vchat can hide its Save action, but no app can prevent screenshots, screen recording, another camera, or external capture.</p>
 
       <section class="story-boost-box">
         <label class="story-boost-toggle"><span><strong><svg class="icon-sm"><use href="#i-megaphone"/></svg> Boost post</strong><small>Promote this status as a clearly labelled sponsored story</small></span><input type="checkbox" id="story-boost-toggle" class="switch" /></label>
@@ -506,6 +535,26 @@
   </div>
 </div>
 
+<div class="overlay" id="modal-business">
+  <div class="modal business-modal">
+    <div class="modal-head">Business page &amp; dashboard</div>
+    <div class="modal-body">
+      <div class="business-page-head" id="business-page-head"></div>
+      <div id="business-owner-fields" hidden>
+        <label class="field-label" for="business-page-name">Public business name</label><input id="business-page-name" maxlength="80" />
+        <label class="field-label" for="business-page-category">Category</label><select id="business-page-category"><option value="professional_services">Professional services</option><option value="retail">Retail</option><option value="food">Food</option><option value="beauty">Beauty</option><option value="health">Health</option><option value="education">Education</option><option value="technology">Technology</option><option value="media">Media</option><option value="travel">Travel</option><option value="nonprofit">Nonprofit</option><option value="creator">Creator</option><option value="other">Other</option></select>
+        <label class="field-label" for="business-page-description">Business purpose</label><textarea id="business-page-description" maxlength="500" rows="4"></textarea>
+        <label class="field-label" for="business-page-address">Service area or address</label><input id="business-page-address" maxlength="200" />
+        <label class="field-label" for="business-page-hours">Hours</label><input id="business-page-hours" maxlength="120" placeholder="e.g. Mon–Fri, 9:00–17:00" />
+        <label class="field-label" for="business-page-website">Website</label><input id="business-page-website" type="url" maxlength="1000" placeholder="https://example.com" />
+        <div class="business-dashboard-actions"><button class="btn-text" id="business-open-boosts" type="button">Status boost dashboard</button><button class="btn-primary" id="business-page-save" type="button">Save business page</button></div>
+      </div>
+      <div id="business-public-details"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
+  </div>
+</div>
+
 <div class="overlay" id="modal-privacy">
   <div class="modal settings-modal">
     <div class="modal-head">Privacy &amp; security</div>
@@ -522,6 +571,10 @@
       <label class="lite-row"><span><span class="lite-title">Read receipts</span><span class="lite-note">Group-chat receipts are always sent</span></span><input type="checkbox" id="privacy-receipts" class="switch" /></label>
       <label class="lite-row"><span><span class="lite-title">Advanced privacy for new chats</span><span class="lite-note">Limit forwarding and attachment downloads by default</span></span><input type="checkbox" id="privacy-advanced" class="switch" /></label>
       <label class="lite-row"><span><span class="lite-title">Silence unknown callers</span><span class="lite-note">Unknown calls will not ring</span></span><input type="checkbox" id="privacy-silence" class="switch" /></label>
+      <div class="settings-section-title">Chat lock</div>
+      <div class="setting-action chat-lock-setting"><span><strong id="chat-lock-status">Protect hidden chats with a separate PIN</strong><small id="chat-lock-note">Locked chats and previews stay hidden until this device session is unlocked.</small></span><span class="setting-buttons"><button class="btn-text" id="chat-lock-pin">Set lock PIN</button><button class="btn-text" id="chat-lock-unlock" hidden>Unlock</button><button class="btn-text" id="chat-lock-now" hidden>Lock now</button></span></div>
+      <div class="setting-action"><span><strong>Device biometric or passkey</strong><small>Uses your device screen lock, fingerprint, face, or security key through WebAuthn.</small></span><span class="setting-buttons"><button class="btn-text" id="chat-lock-passkey-add">Add passkey</button><button class="btn-text" id="chat-lock-passkey-unlock" hidden>Use passkey</button></span></div>
+      <div id="chat-lock-credentials" class="device-list"></div>
       <div class="settings-section-title">Two-step verification</div>
       <div class="setting-action"><span id="two-step-status">Add a PIN for extra account protection</span><span class="setting-buttons"><button class="btn-text" id="two-step-set">Set PIN</button><button class="btn-text danger" id="two-step-disable" hidden>Disable</button></span></div>
       <div class="settings-section-title">Linked devices</div>
@@ -579,6 +632,12 @@
     <a id="lb-download" download><svg class="icon"><use href="#i-download"/></svg></a>
   </div>
   <img id="lb-img" alt="" />
+</div>
+
+<div class="view-once-viewer" id="view-once-viewer" hidden>
+  <div class="view-once-head"><span>① View once</span><button id="view-once-close" type="button" aria-label="Close View Once media"><svg class="icon"><use href="#i-close"/></svg></button></div>
+  <div class="view-once-stage" id="view-once-stage"></div>
+  <p>This media closes when you leave this viewer. Vchat disables normal Save and forward actions, but screenshots and external capture cannot be technically prevented.</p>
 </div>
 
 <!-- ── Call ── -->

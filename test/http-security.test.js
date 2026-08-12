@@ -8,7 +8,7 @@ const path = require('node:path');
 const net = require('node:net');
 const http = require('node:http');
 const crypto = require('node:crypto');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { io: socketClient } = require('socket.io-client');
 
 const root = path.join(__dirname, '..');
@@ -24,7 +24,7 @@ async function availablePort() {
   });
 }
 
-async function startServer(t, extraEnv = {}) {
+async function startServer(t, extraEnv = {}, seed = null) {
   const port = await availablePort();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vchat-http-test-'));
   const env = {
@@ -44,6 +44,7 @@ async function startServer(t, extraEnv = {}) {
   delete env.TWILIO_FROM;
   if (!Object.hasOwn(extraEnv, 'VALMONTPAY_SECRET_KEY')) delete env.VALMONTPAY_SECRET_KEY;
   if (!Object.hasOwn(extraEnv, 'VALMONTPAY_API_URL')) delete env.VALMONTPAY_API_URL;
+  if (seed) await seed({ dataDir, env });
   const child = spawn(process.execPath, ['server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
   const ready = new Promise((resolve, reject) => {
@@ -192,6 +193,11 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
     phone: request.phone,
     username: 'HTTP Tester',
     avatar: 'T',
+    accountType: 'business',
+    businessProfile: {
+      name: 'HTTP Test Studio', category: 'technology', description: 'Public test purpose',
+      website: 'https://studio.example', email: 'hello@studio.example', address: 'Accra',
+    },
   });
   assert.equal(response.status, 200);
   const setCookie = response.headers.get('set-cookie');
@@ -202,6 +208,8 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   const cookie = setCookie.match(/^([^;]+)/)[1];
   const account = (await response.json()).user;
   assert.equal(account.phone, request.phone);
+  assert.equal(account.accountType, 'business');
+  assert.equal(account.business.name, 'HTTP Test Studio');
 
   response = await fetch(`${base}/api/auth/session`, { headers: { cookie } });
   assert.equal(response.status, 200);
@@ -270,6 +278,18 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   assert.equal(response.status, 200);
   const otherCookie = response.headers.get('set-cookie').match(/^([^;]+)/)[1];
   const otherAccount = (await response.json()).user;
+  assert.equal(otherAccount.accountType, 'personal');
+  response = await fetch(`${base}/api/business/${account.id}`, { headers: { cookie: otherCookie } });
+  assert.equal(response.status, 200);
+  const publicBusiness = (await response.json()).business;
+  assert.equal(publicBusiness.profile.name, 'HTTP Test Studio');
+  assert.equal(publicBusiness.profile.description, 'Public test purpose');
+  assert.equal(publicBusiness.canEdit, false);
+  response = await jsonRequest(
+    `${base}/api/account/business-profile`, { description: 'No conversion' },
+    { cookie: otherCookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 403, 'personal accounts cannot be converted through business profile updates');
   response = await fetch(`${base}${photoAccount.photoUrl}`, { headers: { cookie: otherCookie } });
   assert.equal(response.status, 200, 'profile photos default to visible to everyone');
 
@@ -730,6 +750,315 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   assert.equal(response.status, 401);
 });
 
+
+test('chat-lock PIN sessions and View Once media are enforced across HTTP and realtime boundaries', async t => {
+  const { base } = await startServer(t);
+
+  async function register(number, username) {
+    let response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number });
+    const request = await response.json();
+    response = await jsonRequest(`${base}/api/auth/verify`, { phone: request.phone, code: request.devCode });
+    assert.equal(response.status, 200);
+    response = await jsonRequest(`${base}/api/auth/register`, {
+      phone: request.phone, username, avatar: username[0], accountType: 'personal',
+    });
+    assert.equal(response.status, 200);
+    return {
+      phone: request.phone,
+      cookie: response.headers.get('set-cookie').match(/^([^;]+)/)[1],
+      user: (await response.json()).user,
+    };
+  }
+
+  async function signInAgain(account) {
+    let response = await jsonRequest(`${base}/api/auth/request-code`, {
+      dialCode: '233', number: account.phone.replace(/^\+233/, ''),
+    });
+    const request = await response.json();
+    response = await jsonRequest(`${base}/api/auth/verify`, { phone: request.phone, code: request.devCode });
+    assert.equal(response.status, 200);
+    return response.headers.get('set-cookie').match(/^([^;]+)/)[1];
+  }
+
+  const alice = await register('501110001', 'Lock Alice');
+  const bob = await register('501110002', 'Once Bob');
+  const aliceSocket = socketClient(base, {
+    transports: ['websocket'], extraHeaders: { Cookie: alice.cookie, Origin: base }, reconnection: false,
+  });
+  const bobSocket = socketClient(base, {
+    transports: ['websocket'], extraHeaders: { Cookie: bob.cookie, Origin: base }, reconnection: false,
+  });
+  t.after(() => { aliceSocket.close(); bobSocket.close(); });
+  await Promise.all([socketEvent(aliceSocket, 'connect'), socketEvent(bobSocket, 'connect')]);
+  const chat = (await socketAck(aliceSocket, 'chat:startDM', { targetUserId: bob.user.id })).chat;
+  await socketAck(bobSocket, 'message:send', {
+    chatId: chat.id, text: 'Accept contact', type: 'text', clientId: 'contact-accept-1',
+  });
+
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
+  const uploadForm = new FormData();
+  uploadForm.append('chatId', chat.id);
+  uploadForm.append('file', new Blob([png], { type: 'image/png' }), 'one-time.png');
+  let response = await fetch(`${base}/api/messenger/upload`, {
+    method: 'POST', headers: { cookie: alice.cookie, origin: base }, body: uploadForm,
+  });
+  assert.equal(response.status, 201);
+  const attachment = await response.json();
+  const sent = (await socketAck(aliceSocket, 'message:send', {
+    chatId: chat.id, text: '', file: attachment, type: 'image',
+    clientId: 'view-once-http-1', viewOnce: true,
+  })).message;
+  assert.equal(sent.viewOnce, true);
+
+  response = await fetch(`${base}/api/messenger/messages/${chat.id}`, { headers: { cookie: bob.cookie } });
+  assert.equal(response.status, 200);
+  let bobMessage = (await response.json()).find(message => message.id === sent.id);
+  assert.equal(bobMessage.file.url, null, 'the ordinary media URL is never projected to the recipient');
+  response = await fetch(`${base}/api/messenger/media/${attachment.id}`, { headers: { cookie: bob.cookie } });
+  assert.equal(response.status, 404, 'ordinary attachment retrieval cannot bypass View Once consumption');
+  const forwarded = await socketAck(bobSocket, 'message:forward', {
+    chatId: chat.id, messageId: sent.id, targetChatIds: ['general'],
+  });
+  assert.equal(forwarded.count, 0, 'View Once media cannot be forwarded through the server');
+
+  response = await jsonRequest(
+    `${base}/api/messenger/messages/${chat.id}/${sent.id}/view-once`, {},
+    { cookie: bob.cookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  const grant = await response.json();
+  assert.match(grant.mediaUrl, /^\/api\/messenger\/view-once-media\//);
+  response = await fetch(`${base}${grant.mediaUrl}`, { headers: { cookie: bob.cookie } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-view-once'), 'true');
+  assert.match(response.headers.get('cache-control'), /no-store/);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
+  response = await fetch(`${base}${grant.mediaUrl}`, { headers: { cookie: bob.cookie } });
+  assert.equal(response.status, 404, 'the media capability itself is consumed by its first GET');
+  response = await jsonRequest(
+    `${base}/api/messenger/messages/${chat.id}/${sent.id}/view-once`, {},
+    { cookie: bob.cookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 410, 'the same recipient cannot obtain a second opening grant');
+  response = await fetch(`${base}/api/messenger/messages/${chat.id}`, { headers: { cookie: bob.cookie } });
+  bobMessage = (await response.json()).find(message => message.id === sent.id);
+  assert.equal(bobMessage.viewOnceOpened, true);
+  assert.equal(bobMessage.file, null);
+
+  const privateStatusForm = new FormData();
+  privateStatusForm.append('type', 'text');
+  privateStatusForm.append('text', 'Saving disabled');
+  response = await fetch(`${base}/api/stories`, {
+    method: 'POST', headers: { cookie: alice.cookie, origin: base }, body: privateStatusForm,
+  });
+  assert.equal(response.status, 201);
+  const privateStatus = (await response.json()).story;
+  response = await fetch(`${base}/api/stories/${privateStatus.id}/save`, { headers: { cookie: bob.cookie } });
+  assert.equal(response.status, 404, 'the Save action is denied unless the owner enables it per post');
+
+  const savableStatusForm = new FormData();
+  savableStatusForm.append('type', 'text');
+  savableStatusForm.append('text', 'Owner-approved Status copy');
+  savableStatusForm.append('allowSave', 'true');
+  response = await fetch(`${base}/api/stories`, {
+    method: 'POST', headers: { cookie: alice.cookie, origin: base }, body: savableStatusForm,
+  });
+  assert.equal(response.status, 201);
+  const savableStatus = (await response.json()).story;
+  response = await fetch(`${base}/api/stories`, { headers: { cookie: bob.cookie } });
+  const savableProjection = (await response.json()).groups
+    .flatMap(group => group.items).find(item => item.id === savableStatus.id);
+  assert.equal(savableProjection.canSave, true);
+  assert.match(savableProjection.saveUrl, /\/save$/);
+  response = await fetch(`${base}/api/stories/${savableStatus.id}/save`);
+  assert.equal(response.status, 401, 'Status saving always requires an authenticated session');
+  response = await fetch(`${base}/api/stories/${savableStatus.id}/save`, { headers: { cookie: bob.cookie } });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-disposition'), /vchat-status-.+\.txt/);
+  assert.match(response.headers.get('cache-control'), /no-store/);
+  assert.equal(await response.text(), 'Owner-approved Status copy');
+
+  response = await jsonRequest(
+    `${base}/api/account/chat-lock/pin`, { pin: '12' }, { cookie: alice.cookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 400);
+  response = await jsonRequest(
+    `${base}/api/account/chat-lock/pin`, { pin: '246810' }, { cookie: alice.cookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).user.chatLockEnabled, true);
+  response = await jsonRequest(
+    `${base}/api/account/chat-lock/passkey/register/options`, {}, { cookie: alice.cookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 200, 'an unlocked session can start verified device-passkey registration');
+  const passkeyOptions = await response.json();
+  assert.ok(passkeyOptions.challenge);
+  assert.equal(passkeyOptions.rp.id, '127.0.0.1');
+
+  response = await jsonRequest(
+    `${base}/api/messenger/chats/${chat.id}/lock`, { locked: true },
+    { cookie: alice.cookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).locked, true);
+  const secondAliceCookie = await signInAgain(alice);
+  response = await fetch(`${base}/api/messenger/chats`, { headers: { cookie: secondAliceCookie } });
+  assert.equal((await response.json()).some(item => item.id === chat.id), false,
+    'unlocking one device session never reveals locked chats in another session');
+
+  const lockedAliceSocket = socketClient(base, {
+    transports: ['websocket'], extraHeaders: { Cookie: secondAliceCookie, Origin: base }, reconnection: false,
+  });
+  t.after(() => lockedAliceSocket.close());
+  await socketEvent(lockedAliceSocket, 'connect');
+  const lockedSessionEvents = {
+    chatNew: [], accepted: [], signal: [], ended: [],
+  };
+  const lockedListeners = {
+    chatNew: payload => lockedSessionEvents.chatNew.push(payload),
+    accepted: payload => lockedSessionEvents.accepted.push(payload),
+    signal: payload => lockedSessionEvents.signal.push(payload),
+    ended: payload => lockedSessionEvents.ended.push(payload),
+  };
+  lockedAliceSocket.on('chat:new', lockedListeners.chatNew);
+  lockedAliceSocket.on('call:accepted', lockedListeners.accepted);
+  lockedAliceSocket.on('call:signal', lockedListeners.signal);
+  lockedAliceSocket.on('call:ended', lockedListeners.ended);
+
+  const visibleChatNew = socketEvent(aliceSocket, 'chat:new');
+  const existingChat = (await socketAck(bobSocket, 'chat:startDM', { targetUserId: alice.user.id })).chat;
+  assert.equal(existingChat.id, chat.id);
+  assert.equal((await visibleChatNew)[0].id, chat.id,
+    'the unlocked session still receives its chat projection');
+
+  const startedCall = await socketAck(aliceSocket, 'call:start', { chatId: chat.id, media: 'audio' });
+  const acceptedEvent = socketEvent(aliceSocket, 'call:accepted');
+  bobSocket.emit('call:accept', { callId: startedCall.callId });
+  const accepted = (await acceptedEvent)[0];
+  assert.equal(accepted.chatId, chat.id);
+
+  const signalEvent = socketEvent(aliceSocket, 'call:signal');
+  bobSocket.emit('call:signal', {
+    callId: startedCall.callId, data: { candidate: 'private-webrtc-candidate' },
+  });
+  const signal = (await signalEvent)[0];
+  assert.equal(signal.chatId, chat.id);
+  assert.equal(signal.data.candidate, 'private-webrtc-candidate');
+
+  const blockedCallEvents = { signal: [], ended: [] };
+  const blockedCallListeners = {
+    signal: payload => blockedCallEvents.signal.push(payload),
+    ended: payload => blockedCallEvents.ended.push(payload),
+  };
+  bobSocket.on('call:signal', blockedCallListeners.signal);
+  bobSocket.on('call:ended', blockedCallListeners.ended);
+  response = await jsonRequest(
+    `${base}/api/account/chat-lock/lock`, {}, { cookie: alice.cookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 200, 'the caller session can relock while its call is active');
+  aliceSocket.emit('call:signal', {
+    callId: startedCall.callId, data: { candidate: 'must-not-cross-relocked-chat' },
+  });
+  aliceSocket.emit('call:end', { callId: startedCall.callId });
+  aliceSocket.emit('call:cancel', { callId: startedCall.callId });
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.deepEqual(blockedCallEvents, { signal: [], ended: [] },
+    'a relocked socket cannot signal or mutate a call whose chat it can no longer access');
+  bobSocket.off('call:signal', blockedCallListeners.signal);
+  bobSocket.off('call:ended', blockedCallListeners.ended);
+
+  response = await jsonRequest(
+    `${base}/api/account/chat-lock/unlock`, { pin: '246810' }, { cookie: alice.cookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 200);
+  const endedEvent = socketEvent(aliceSocket, 'call:ended');
+  bobSocket.emit('call:end', { callId: startedCall.callId });
+  const ended = (await endedEvent)[0];
+  assert.equal(ended.chatId, chat.id);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.deepEqual(lockedSessionEvents, { chatNew: [], accepted: [], signal: [], ended: [] },
+    'chat projections and WebRTC data never reach another locked session');
+  lockedAliceSocket.off('chat:new', lockedListeners.chatNew);
+  lockedAliceSocket.off('call:accepted', lockedListeners.accepted);
+  lockedAliceSocket.off('call:signal', lockedListeners.signal);
+  lockedAliceSocket.off('call:ended', lockedListeners.ended);
+
+  response = await jsonRequest(
+    `${base}/api/account/chat-lock/lock`, {}, { cookie: alice.cookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 200);
+  response = await fetch(`${base}/api/messenger/chats`, { headers: { cookie: alice.cookie } });
+  assert.equal((await response.json()).some(item => item.id === chat.id), false);
+  response = await fetch(`${base}/api/messenger/messages/${chat.id}`, { headers: { cookie: alice.cookie } });
+  assert.equal(response.status, 404, 'locked message history uses not-found behavior while hidden');
+  response = await jsonRequest(
+    `${base}/api/account/chat-lock/unlock`, { pin: '000000' }, { cookie: alice.cookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 401);
+  response = await jsonRequest(
+    `${base}/api/account/chat-lock/unlock`, { pin: '246810' }, { cookie: alice.cookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 200);
+  assert.ok((await response.json()).user.chatLockUnlockedUntil > Date.now());
+  response = await fetch(`${base}/api/messenger/chats`, { headers: { cookie: alice.cookie } });
+  assert.equal((await response.json()).some(item => item.id === chat.id && item.locked), true);
+  response = await fetch(`${base}/api/messenger/messages/${chat.id}`, { headers: { cookie: alice.cookie } });
+  assert.equal(response.status, 200);
+
+  const removedFromVisibleSession = socketEvent(aliceSocket, 'chat:removed');
+  const removedFromLockedSession = socketEvent(lockedAliceSocket, 'chat:removed');
+  aliceSocket.emit('chat:leave', { chatId: chat.id });
+  const [[visibleRemoval], [lockedRemoval]] = await Promise.all([
+    removedFromVisibleSession, removedFromLockedSession,
+  ]);
+  assert.deepEqual(visibleRemoval, { chatId: chat.id });
+  assert.deepEqual(lockedRemoval, { chatId: chat.id },
+    'content-free removal notices remain deliverable after membership has ended');
+});
+
+test('passkey registration refuses an eleventh credential before WebAuthn setup begins', async t => {
+  const phone = '+233501119999';
+  const { base } = await startServer(t, {}, ({ env }) => {
+    const source = `
+      const store = require('./lib/messenger-store');
+      const user = store.upsertUserByPhone(${JSON.stringify(phone)}, { username: 'Passkey Cap' });
+      store.setChatLockPin(user.id, '246810');
+      for (let index = 0; index < store.MAX_CHAT_LOCK_CREDENTIALS; index += 1) {
+        const result = store.addChatLockCredential(user.id, {
+          id: 'seed-credential-' + index,
+          publicKey: 'seed-public-key-' + index,
+          name: 'Seed passkey ' + index,
+        });
+        if (!result || result.error) throw new Error('could not seed passkey cap');
+      }
+      setTimeout(() => {}, 400);
+    `;
+    const seeded = spawnSync(process.execPath, ['-e', source], {
+      cwd: root, env, encoding: 'utf8', timeout: 3000,
+    });
+    assert.equal(seeded.status, 0, seeded.stderr || seeded.stdout || 'passkey fixture seeding failed');
+  });
+
+  let response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number: '501119999' });
+  const requested = await response.json();
+  response = await jsonRequest(`${base}/api/auth/verify`, { phone: requested.phone, code: requested.devCode });
+  assert.equal(response.status, 200);
+  const cookie = response.headers.get('set-cookie').match(/^([^;]+)/)[1];
+
+  response = await jsonRequest(
+    `${base}/api/account/chat-lock/unlock`, { pin: '246810' }, { cookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 200);
+  response = await jsonRequest(
+    `${base}/api/account/chat-lock/passkey/register/options`, {}, { cookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).error, /up to 10 chat-lock passkeys/i);
+});
 
 test('production authentication fails closed when real SMS delivery is not configured', async t => {
   const { base } = await startServer(t, { NODE_ENV: 'production' });

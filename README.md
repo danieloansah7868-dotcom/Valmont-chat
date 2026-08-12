@@ -70,7 +70,12 @@ shared atomic store such as Redis before traffic is load-balanced across instanc
 ### Accounts and privacy
 
 - Phone-number registration and six-digit verification codes with expiry, resend
-  limits, and attempt limits
+  limits, and attempt limits; each new registration chooses an immutable Personal
+  or Business account type while retaining the same phone sign-in
+- Business accounts have a public business-purpose page (name, category,
+  description, HTTPS website, contact details, address, and hours) plus an owner
+  dashboard linked to Status boosting. Catalogs, carts, and shopping are not part
+  of this phase.
 - Opaque 256-bit session tokens stored server-side only as SHA-256 digests
 - Strict `HttpOnly`, `SameSite=Strict` session cookies; secure `__Host-` cookies in
   production
@@ -93,7 +98,15 @@ shared atomic store such as Redis before traffic is load-balanced across instanc
   starring, forwarding to at most five chats, and temporary message pins
 - Lightweight escaped rich text, code spans/blocks, links, forwarded labels, and
   disappearing-message indicators
-- Favorites, pin, mute, archive, manual unread, chat search, and message search
+- Favorites, pin, mute, archive, manual unread, chat search, and message search;
+  pin/archive/mute remain available alongside chat-lock controls
+- Per-account hidden chats whose rows, previews, history, media, search results,
+  calls, and realtime rooms remain unavailable until the current session is
+  unlocked. Unlock uses a separate salted-`scrypt` six-digit chat-lock PIN or a
+  device biometric/screen lock/security key through WebAuthn passkeys, expires
+  automatically after a bounded interval, and never unlocks other device sessions.
+- A searchable, categorized emoji picker spanning smileys, people, animals, food,
+  activities, travel, objects, symbols, and flags
 - Group admin roles, participant add/remove, invite-link reset and join,
   admin/member permissions, descriptions, and disappearing-message controls
 - Advanced chat privacy that disables Vchat forwarding/download actions for that
@@ -106,6 +119,11 @@ shared atomic store such as Redis before traffic is load-balanced across instanc
   denied
 - One-use upload claims and safe attachment metadata cloning when a message is
   forwarded to another authorized chat
+- WhatsApp-style View Once for chat photos and videos: ordinary recipient media
+  URLs are withheld, every recipient gets one independent server-side opening,
+  and Vchat forward/download actions are disabled. An opening uses a short-lived,
+  authenticated, `no-store` media grant; this is a product/privacy control rather
+  than DRM and cannot prevent an external camera or a modified device.
 - Image compression, inline image/video/audio, documents, voice recording and
   playback, and authenticated downloads
 - One-to-one WebRTC voice/video calls with dynamic STUN/TURN configuration, call
@@ -131,7 +149,10 @@ those production-scale controls belong in the infrastructure phase.
 
 - Users can publish text, JPEG/PNG/WebP, MP4/MOV/WebM Status posts. Posts expire
   after 24 hours and are visible only when both accounts are known contacts; blocks
-  apply in both directions.
+  apply in both directions. Each post has an **Allow viewers to save** switch.
+  Vchat exposes an authenticated Save action only when that owner permission is on;
+  the composer explicitly warns that screenshots and screen recording cannot be
+  prevented.
 - The full-screen viewer plays friends' posts sequentially, records protected views
   and reactions, shows owner-only counts, and resumes organic playback after a
   clearly disclosed **Sponsored** Vchat house Story. Sponsored slots run for 30
@@ -156,6 +177,11 @@ those production-scale controls belong in the infrastructure phase.
   Review/control actor and time data are retained, and owners can view deduplicated
   reach, impressions, clicks, review notes, and billing state. Stopping does not
   automatically create a refund.
+- Active broad campaigns are returned to eligible signed-in users even when they
+  are not contacts and have no friend Status to open. A standalone Sponsored
+  discovery tray makes that inventory reachable from the Status home screen while
+  still excluding the advertiser, honoring blocks and contact-only targeting, and
+  requiring the same review, payment, pause/stop, and reservation lifecycle.
 
 This is an honest first-party advertiser pilot, not a finished ad exchange. The
 GHS amount is a fixed campaign reservation rather than metered auction spend; it
@@ -219,6 +245,8 @@ Install from the Vchat menu where supported, or use the browser's **Install app*
 | `VALMONTPAY_SECRET_KEY` | Server-only ValmontPay tenant key for checkout, verification, and webhook signatures | unset |
 | `VALMONTPAY_API_URL` | ValmontPay API origin | `https://valmontpay.app` |
 | `PUBLIC_APP_URL` | Canonical HTTPS application URL used for the ValmontPay checkout return | unset |
+| `PASSKEY_ORIGIN` | Exact canonical browser origin allowed for WebAuthn ceremonies | request origin |
+| `PASSKEY_RP_ID` | WebAuthn relying-party domain (must match the origin host or a parent domain) | origin host |
 | `TWILIO_ACCOUNT_SID` | Server-only Twilio account SID for real verification SMS | development transport |
 | `TWILIO_AUTH_TOKEN` | Server-only Twilio API secret | development transport |
 | `TWILIO_FROM` | SMS-capable Twilio sender in E.164 format | development transport |
@@ -227,9 +255,12 @@ Install from the Vchat menu where supported, or use the browser's **Install app*
 
 For internet deployment, terminate TLS at a trusted reverse proxy, set
 `NODE_ENV=production`, set `TRUST_PROXY` to the exact proxy hop count or subnet,
-configure Twilio and TURN, use an explicit origin allowlist, and keep `data/` on
+configure Twilio and TURN, use an explicit origin allowlist, set `PASSKEY_ORIGIN`
+and `PASSKEY_RP_ID` to the canonical HTTPS deployment identity, and keep `data/` on
 encrypted persistent storage until the database/object-storage phase replaces it.
-If the advertiser pilot is intentionally enabled, set an HTTPS `PUBLIC_APP_URL`,
+Changing the passkey RP ID later invalidates existing passkeys, so establish the
+production domain before enrollment. If the advertiser pilot is intentionally
+enabled, set an HTTPS `PUBLIC_APP_URL`,
 store `VALMONTPAY_SECRET_KEY` only in the server secret manager, register
 `/api/story-ads/valmontpay/webhook` as the tenant webhook at ValmontPay, tightly
 control `STORY_AD_ADMIN_PHONES`, publish ad/review/refund policies, and verify the
