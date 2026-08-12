@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { io: socketClient } = require('socket.io-client');
 
@@ -22,7 +23,7 @@ async function availablePort() {
   });
 }
 
-async function startServer(t) {
+async function startServer(t, extraEnv = {}) {
   const port = await availablePort();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vchat-http-test-'));
   const env = {
@@ -32,6 +33,10 @@ async function startServer(t) {
     NODE_ENV: 'test',
     REEL_MAX_MB: '1',
     REEL_UPLOAD_LIMIT: '50',
+    STORY_MAX_MB: '1',
+    STORY_UPLOAD_LIMIT: '50',
+    STORY_AD_ADMIN_PHONES: '+233241234567',
+    ...extraEnv,
   };
   delete env.TWILIO_ACCOUNT_SID;
   delete env.TWILIO_AUTH_TOKEN;
@@ -67,6 +72,17 @@ function jsonRequest(url, body, headers = {}, method = 'POST') {
     method,
     headers: { 'content-type': 'application/json', ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+function socketAck(socket, event, payload, timeoutMs = 3000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timed out waiting for socket acknowledgement: ${event}`)), timeoutMs);
+    socket.emit(event, payload, result => {
+      clearTimeout(timer);
+      if (result?.error) reject(new Error(result.error));
+      else resolve(result);
+    });
   });
 }
 
@@ -193,6 +209,233 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   const otherAccount = (await response.json()).user;
   response = await fetch(`${base}${photoAccount.photoUrl}`, { headers: { cookie: otherCookie } });
   assert.equal(response.status, 200, 'profile photos default to visible to everyone');
+
+  // Status posts are visible only to mutual contacts, media stays protected,
+  // realtime notices are identifier-free, and boosts cannot deliver until an
+  // authorized review plus verified payment or an explicit admin waiver.
+  response = await fetch(`${base}/api/stories`);
+  assert.equal(response.status, 401);
+
+  const storyOwnerSocket = socketClient(base, {
+    transports: ['websocket'], extraHeaders: { Cookie: cookie, Origin: base }, reconnection: false,
+  });
+  const storyViewerSocket = socketClient(base, {
+    transports: ['websocket'], extraHeaders: { Cookie: otherCookie, Origin: base }, reconnection: false,
+  });
+  t.after(() => { storyOwnerSocket.close(); storyViewerSocket.close(); });
+  await Promise.all([socketEvent(storyOwnerSocket, 'connect'), socketEvent(storyViewerSocket, 'connect')]);
+  const dm = (await socketAck(storyOwnerSocket, 'chat:startDM', { targetUserId: otherAccount.id })).chat;
+  await socketAck(storyViewerSocket, 'message:send', {
+    chatId: dm.id, text: 'Mutual contact confirmation', type: 'text', clientId: 'story-contact-1',
+  });
+
+  const hostileStoryForm = new FormData();
+  hostileStoryForm.append('type', 'text');
+  hostileStoryForm.append('text', 'Cross origin');
+  response = await fetch(`${base}/api/stories`, {
+    method: 'POST', headers: { cookie, origin: 'https://evil.example' }, body: hostileStoryForm,
+  });
+  assert.equal(response.status, 403);
+
+  const invalidStoryForm = new FormData();
+  invalidStoryForm.append('media', new Blob(['not a picture'], { type: 'image/png' }), 'fake.png');
+  response = await fetch(`${base}/api/stories`, {
+    method: 'POST', headers: { cookie, origin: base }, body: invalidStoryForm,
+  });
+  assert.equal(response.status, 415);
+
+  const storyCreatedNotice = socketEvent(storyViewerSocket, 'stories:changed');
+  const textStoryForm = new FormData();
+  textStoryForm.append('type', 'text');
+  textStoryForm.append('text', 'Friends-only HTTP status');
+  textStoryForm.append('background', 'ocean');
+  response = await fetch(`${base}/api/stories`, {
+    method: 'POST', headers: { cookie, origin: base }, body: textStoryForm,
+  });
+  assert.equal(response.status, 201);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  const textStory = (await response.json()).story;
+  assert.deepEqual((await storyCreatedNotice)[0], { type: 'created' });
+
+  response = await fetch(`${base}/api/stories`, { headers: { cookie: otherCookie } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  let storyFeed = await response.json();
+  assert.ok(storyFeed.groups.flatMap(group => group.items).some(item => item.id === textStory.id));
+  assert.ok(storyFeed.ads.some(ad => ad.id === 'house-vchat' && ad.durationSeconds === 30 && ad.sponsored));
+  assert.equal(storyFeed.adAdmin, false);
+
+  response = await jsonRequest(
+    `${base}/api/stories/${textStory.id}/view`, {}, { cookie: otherCookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 200);
+  const reactionNotice = socketEvent(storyOwnerSocket, 'stories:changed');
+  response = await jsonRequest(
+    `${base}/api/stories/${textStory.id}/reaction`, { reaction: '🔥' },
+    { cookie: otherCookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual((await reactionNotice)[0], { type: 'reaction' }, 'realtime notices must not leak story owner IDs');
+  response = await jsonRequest(
+    `${base}/api/stories/${textStory.id}/reaction`, { reaction: '🔥' },
+    { cookie: otherCookie, origin: 'https://evil.example' }, 'PUT',
+  );
+  assert.equal(response.status, 403);
+
+  const imageStoryForm = new FormData();
+  imageStoryForm.append('media', new Blob([firstPhoto], { type: 'image/png' }), 'status.png');
+  imageStoryForm.append('text', 'Protected status image');
+  response = await fetch(`${base}/api/stories`, {
+    method: 'POST', headers: { cookie, origin: base }, body: imageStoryForm,
+  });
+  assert.equal(response.status, 201);
+  const imageStory = (await response.json()).story;
+  assert.match(imageStory.mediaUrl, new RegExp(`/api/stories/${imageStory.id}/media`));
+  response = await fetch(`${base}${imageStory.mediaUrl}`);
+  assert.equal(response.status, 401);
+  response = await fetch(`${base}${imageStory.mediaUrl}`, { headers: { cookie: otherCookie } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'image/png');
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), firstPhoto);
+  response = await jsonRequest(
+    `${base}/api/stories/${imageStory.id}`, {}, { cookie: otherCookie, origin: base }, 'DELETE',
+  );
+  assert.equal(response.status, 404);
+  response = await jsonRequest(
+    `${base}/api/stories/${imageStory.id}`, {}, { cookie, origin: base }, 'DELETE',
+  );
+  assert.equal(response.status, 200);
+  response = await fetch(`${base}${imageStory.mediaUrl}`, { headers: { cookie } });
+  assert.equal(response.status, 404, 'deleting a story removes its protected media');
+
+  const boostForm = new FormData();
+  for (const [key, value] of Object.entries({
+    type: 'text', text: 'Promote this status', background: 'jade', boost: 'true',
+    objective: 'profile_visits', cta: 'Visit profile', adAudience: 'broad',
+    budgetGhs: '25', durationDays: '3', billingEmail: 'tester@example.com',
+  })) boostForm.append(key, value);
+  response = await fetch(`${base}/api/stories`, {
+    method: 'POST', headers: { cookie, origin: base }, body: boostForm,
+  });
+  assert.equal(response.status, 201);
+  const boosted = await response.json();
+  assert.ok(boosted.campaign?.id);
+  assert.equal(boosted.campaign.paymentStatus, 'configuration_required');
+  assert.equal(boosted.campaign.checkoutUrl, null);
+  assert.match(boosted.boostError, /billing is not configured/i);
+
+  response = await fetch(`${base}/api/story-ads/campaigns`, { headers: { cookie: otherCookie } });
+  assert.deepEqual((await response.json()).campaigns, [], 'campaign billing data is private to its owner');
+  response = await fetch(`${base}/api/story-ads/review`, { headers: { cookie: otherCookie } });
+  assert.equal(response.status, 403);
+  response = await fetch(`${base}/api/story-ads/review`, { headers: { cookie } });
+  assert.equal(response.status, 200);
+  assert.ok((await response.json()).campaigns.some(campaign => campaign.id === boosted.campaign.id));
+
+  response = await jsonRequest(
+    `${base}/api/story-ads/${boosted.campaign.id}/review`,
+    { decision: 'approve', waivePayment: true },
+    { cookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 400, 'complimentary account credit requires a documented authorization reason');
+  response = await jsonRequest(
+    `${base}/api/story-ads/${boosted.campaign.id}/review`,
+    { decision: 'approve', note: 'Test-only authorized credit', waivePayment: true },
+    { cookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 200);
+  const approvedCampaign = (await response.json()).campaign;
+  assert.equal(approvedCampaign.status, 'active');
+  assert.equal(approvedCampaign.paymentStatus, 'waived');
+  assert.equal(approvedCampaign.reviewer.id, account.id);
+  assert.ok(approvedCampaign.reviewedAt);
+
+  response = await fetch(`${base}/api/stories`, { headers: { cookie: otherCookie } });
+  storyFeed = await response.json();
+  assert.ok(storyFeed.ads.some(ad => ad.id === boosted.campaign.id && ad.sponsored
+    && ad.durationSeconds === 30 && ad.objective === 'profile_visits'));
+  for (let index = 0; index < 2; index += 1) {
+    response = await jsonRequest(
+      `${base}/api/story-ads/${boosted.campaign.id}/impression`, {},
+      { cookie: otherCookie, origin: base }, 'POST',
+    );
+    assert.equal(response.status, 200);
+  }
+  response = await jsonRequest(
+    `${base}/api/story-ads/${boosted.campaign.id}/click`, {},
+    { cookie: otherCookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 200);
+  response = await fetch(`${base}/api/story-ads/campaigns`, { headers: { cookie } });
+  const campaignReport = (await response.json()).campaigns.find(item => item.id === boosted.campaign.id);
+  assert.equal(campaignReport.impressionCount, 1);
+  assert.equal(campaignReport.reachCount, 1);
+  assert.equal(campaignReport.clickCount, 1);
+
+  response = await jsonRequest(
+    `${base}/api/story-ads/${boosted.campaign.id}/control`, { action: 'pause' },
+    { cookie: otherCookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 409, 'only a campaign owner may control delivery');
+  response = await jsonRequest(
+    `${base}/api/story-ads/${boosted.campaign.id}/control`, { action: 'pause' },
+    { cookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).campaign.status, 'paused');
+  response = await fetch(`${base}/api/stories`, { headers: { cookie: otherCookie } });
+  assert.equal((await response.json()).ads.some(ad => ad.id === boosted.campaign.id), false);
+  response = await jsonRequest(
+    `${base}/api/story-ads/${boosted.campaign.id}/control`, { action: 'resume' },
+    { cookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).campaign.status, 'active');
+
+  const otherAdvertiserBoost = new FormData();
+  for (const [key, value] of Object.entries({
+    type: 'text', text: 'Another advertiser campaign', background: 'violet', boost: 'true',
+    objective: 'messages', cta: 'Send message', adAudience: 'broad',
+    budgetGhs: '20', durationDays: '2', billingEmail: 'viewer@example.com',
+  })) otherAdvertiserBoost.append(key, value);
+  response = await fetch(`${base}/api/stories`, {
+    method: 'POST', headers: { cookie: otherCookie, origin: base }, body: otherAdvertiserBoost,
+  });
+  assert.equal(response.status, 201);
+  const otherCampaign = (await response.json()).campaign;
+  response = await jsonRequest(
+    `${base}/api/story-ads/${otherCampaign.id}/review`,
+    { decision: 'approve', note: 'Authorized test credit', waivePayment: true },
+    { cookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).campaign.status, 'active');
+  response = await jsonRequest(
+    `${base}/api/story-ads/${otherCampaign.id}/control`, { action: 'stop' },
+    { cookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 400, 'an administrator must supply an audit reason when stopping another advertiser');
+  const safetyReason = 'Safety policy test stop';
+  response = await jsonRequest(
+    `${base}/api/story-ads/${otherCampaign.id}/control`, { action: 'stop', note: safetyReason },
+    { cookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 200);
+  const safetyStopped = (await response.json()).campaign;
+  assert.equal(safetyStopped.status, 'stopped');
+  assert.equal(safetyStopped.stopNote, safetyReason);
+  assert.equal(safetyStopped.stopActor.id, account.id);
+  assert.ok(safetyStopped.stoppedAt);
+  response = await fetch(`${base}/api/story-ads/campaigns`, { headers: { cookie: otherCookie } });
+  const ownerStoppedView = (await response.json()).campaigns.find(item => item.id === otherCampaign.id);
+  assert.equal(ownerStoppedView.stopNote, safetyReason);
+  assert.equal(ownerStoppedView.stopActor.id, account.id);
+
+  response = await fetch(`${base}/api/story-ads/payment/verify?reference=unknown`, { headers: { cookie } });
+  assert.equal(response.status, 404);
+  response = await jsonRequest(`${base}/api/story-ads/paystack/webhook`, { event: 'charge.success', data: {} });
+  assert.equal(response.status, 401, 'unsigned payment webhooks are rejected');
 
   // Reels use their own authenticated, block-aware media boundary and remove
   // rejected/deleted files from protected storage.
@@ -422,4 +665,27 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   assert.match(response.headers.get('set-cookie'), /Max-Age=0/);
   response = await fetch(`${base}/api/auth/session`, { headers: { cookie } });
   assert.equal(response.status, 401);
+});
+
+
+test('Paystack webhooks require an HMAC over the exact raw request bytes', async t => {
+  const secret = 'test-paystack-secret';
+  const { base } = await startServer(t, { PAYSTACK_SECRET_KEY: secret });
+  const payload = Buffer.from(JSON.stringify({ event: 'unhandled.test', data: { amount: 2500, currency: 'GHS' } }));
+  const signature = crypto.createHmac('sha512', secret).update(payload).digest('hex');
+
+  let response = await fetch(`${base}/api/story-ads/paystack/webhook`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-paystack-signature': signature },
+    body: payload,
+  });
+  assert.equal(response.status, 200);
+
+  const altered = Buffer.from(`${payload.toString()} `);
+  response = await fetch(`${base}/api/story-ads/paystack/webhook`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-paystack-signature': signature },
+    body: altered,
+  });
+  assert.equal(response.status, 401, 'a signature for different raw bytes must be rejected');
 });

@@ -36,7 +36,17 @@ app.use(helmet({
     },
   },
 }));
-app.use(express.json({ limit: '256kb', strict: true }));
+app.use(express.json({
+  limit: '256kb',
+  strict: true,
+  verify(req, _res, buffer) {
+    // Paystack webhook signatures cover the exact request bytes. Keep a raw
+    // copy only for that endpoint; all other JSON continues through normally.
+    if (req.originalUrl?.split('?')[0] === '/api/story-ads/paystack/webhook') {
+      req.rawBody = Buffer.from(buffer);
+    }
+  },
+}));
 
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,

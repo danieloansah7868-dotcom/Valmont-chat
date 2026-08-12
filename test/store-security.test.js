@@ -174,3 +174,176 @@ test('reels persist likes and enforce stable pagination, blocks, and ownership',
   assert.equal(removed.ownerId, alice.id);
   assert.equal(store.getReel(created[0].id, alice.id), null);
 });
+
+test('stories enforce mutual-contact privacy and campaigns require review plus exact payment', async () => {
+  const alice = store.findUserByPhone('+233240000001');
+  const bob = store.findUserByPhone('+233240000002');
+  const outsider = store.upsertUserByPhone('+233240000099', { username: 'Outsider' });
+
+  const story = store.createStory(alice.id, {
+    type: 'text', text: 'Friends only status', background: 'ocean',
+  });
+  assert.ok(story?.id);
+  assert.equal(store.listStories(bob.id).flatMap(group => group.items).some(item => item.id === story.id), true);
+  assert.equal(store.listStories(outsider.id).flatMap(group => group.items).some(item => item.id === story.id), false);
+  assert.equal(store.getStory(story.id, outsider.id), null);
+
+  const viewed = store.recordStoryView(story.id, bob.id);
+  assert.equal(viewed.seen, true);
+  assert.equal(store.setStoryReaction(story.id, bob.id, '🔥').myReaction, '🔥');
+  assert.equal(store.setStoryReaction(story.id, bob.id, 'not-allowed'), null);
+  assert.equal(store.recordStoryView(story.id, outsider.id), null);
+  const ownerFeedStory = store.listStories(alice.id).flatMap(group => group.items).find(item => item.id === story.id);
+  assert.equal(ownerFeedStory.viewCount, 1);
+  assert.equal(ownerFeedStory.reactionCount, 1);
+
+  store.blockUser(bob.id, alice.id, true);
+  assert.equal(store.getStory(story.id, bob.id), null);
+  store.blockUser(bob.id, alice.id, false);
+
+  const campaign = store.createStoryCampaign(alice.id, story.id, {
+    type: 'text', text: 'Promoted update', background: 'jade', objective: 'profile_visits',
+    cta: 'Visit profile', audience: 'broad', budgetGhs: 25, durationDays: 3,
+    billingEmail: 'alice@example.com', paymentProvider: 'paystack',
+  });
+  assert.ok(campaign?.id);
+  assert.equal(campaign.status, 'pending_review');
+  assert.equal(store.setCampaignPaymentInitialization(campaign.id, outsider.id, { initialized: true }), null);
+  const initialized = store.setCampaignPaymentInitialization(campaign.id, alice.id, {
+    provider: 'paystack', reference: 'story-test-reference',
+    authorizationUrl: 'https://checkout.paystack.com/example', initialized: true,
+  });
+  assert.equal(initialized.paymentStatus, 'pending');
+  assert.equal(initialized.checkoutUrl, 'https://checkout.paystack.com/example');
+
+  store.reviewStoryCampaign(campaign.id, { approved: true, note: 'Creative approved', reviewerId: alice.id });
+  assert.equal(store.listEligibleStoryAds(bob.id).some(item => item.id === campaign.id), false,
+    'approval without verified payment cannot activate delivery');
+  assert.equal(store.confirmCampaignPayment('story-test-reference', { amount: 2499, currency: 'GHS' }), null);
+  assert.equal(store.confirmCampaignPayment('story-test-reference', { amount: 2500, currency: 'USD' }), null);
+  assert.ok(store.confirmCampaignPayment('story-test-reference', { amount: 2500, currency: 'GHS', providerId: 'pay-1' }));
+
+  const eligible = store.listEligibleStoryAds(bob.id).find(item => item.id === campaign.id);
+  assert.ok(eligible);
+  assert.equal(eligible.checkoutUrl, undefined, 'billing checkout is visible only to the advertiser/admin');
+  assert.equal(store.listEligibleStoryAds(alice.id).some(item => item.id === campaign.id), false,
+    'advertisers do not receive their own campaign');
+  assert.equal(store.recordCampaignEvent(campaign.id, outsider.id, 'impression')?.id, campaign.id);
+  assert.equal(store.recordCampaignEvent(campaign.id, outsider.id, 'impression')?.id, campaign.id);
+  assert.equal(store.recordCampaignEvent(campaign.id, outsider.id, 'click')?.id, campaign.id);
+  assert.equal(store.recordCampaignEvent(campaign.id, outsider.id, 'click')?.id, campaign.id);
+  const report = store.listStoryCampaigns(alice.id).find(item => item.id === campaign.id);
+  assert.equal(report.impressionCount, 1, 'duplicate measurement calls are idempotent per viewer');
+  assert.equal(report.reachCount, 1);
+  assert.equal(report.clickCount, 1);
+  assert.equal(report.reviewer.id, alice.id);
+  assert.ok(report.reviewedAt);
+
+  assert.equal(store.controlStoryCampaign(campaign.id, outsider.id, 'pause'), null);
+  assert.equal(store.controlStoryCampaign(campaign.id, alice.id, 'pause').status, 'paused');
+  assert.equal(store.listEligibleStoryAds(bob.id).some(item => item.id === campaign.id), false);
+  assert.equal(store.controlStoryCampaign(campaign.id, alice.id, 'resume').status, 'active');
+  assert.equal(store.listEligibleStoryAds(bob.id).some(item => item.id === campaign.id), true);
+  assert.equal(store.controlStoryCampaign(campaign.id, alice.id, 'stop').status, 'stopped');
+  assert.equal(store.controlStoryCampaign(campaign.id, alice.id, 'resume'), null);
+  assert.equal(store.reviewStoryCampaign(campaign.id, { approved: true, reviewerId: alice.id }), null, 'review decisions are final');
+
+  const latePayment = store.createStoryCampaign(alice.id, story.id, {
+    type: 'text', text: 'Stopped before payment', objective: 'messages', cta: 'Send message',
+    audience: 'broad', budgetGhs: 10, durationDays: 1, billingEmail: 'alice@example.com',
+    paymentProvider: 'paystack',
+  });
+  store.setCampaignPaymentInitialization(latePayment.id, alice.id, {
+    provider: 'paystack', reference: 'late-payment-reference', initialized: true,
+  });
+  store.reviewStoryCampaign(latePayment.id, { approved: true, reviewerId: alice.id });
+  assert.equal(store.controlStoryCampaign(latePayment.id, alice.id, 'stop').status, 'stopped');
+  store.confirmCampaignPayment('late-payment-reference', { amount: 1000, currency: 'GHS' });
+  assert.equal(store.listStoryCampaigns(alice.id).find(item => item.id === latePayment.id).status, 'stopped',
+    'a late provider webhook cannot restart a stopped campaign');
+
+  const pausedExpiry = store.createStoryCampaign(alice.id, story.id, {
+    storageName: 'paused-campaign.png', type: 'image', mime: 'image/png', size: 10,
+    text: 'Paused until reservation end', objective: 'profile_visits', cta: 'Visit profile',
+    audience: 'broad', budgetGhs: 10, durationDays: 1, billingEmail: 'alice@example.com',
+  });
+  assert.equal(store.reviewStoryCampaign(pausedExpiry.id, {
+    approved: true, waivePayment: true, reviewerId: alice.id,
+  }), null, 'complimentary account credit requires a documented reason');
+  store.reviewStoryCampaign(pausedExpiry.id, {
+    approved: true, waivePayment: true, reviewerId: alice.id, note: 'Test account credit',
+  });
+  assert.equal(store.controlStoryCampaign(pausedExpiry.id, alice.id, 'pause').status, 'paused');
+  const pausedEndAt = store.listStoryCampaigns(alice.id).find(item => item.id === pausedExpiry.id).endAt;
+  assert.deepEqual(store.pruneExpiredStoryCampaigns(pausedEndAt + 1), ['paused-campaign.png']);
+  assert.equal(store.listStoryCampaigns(alice.id).find(item => item.id === pausedExpiry.id).status, 'completed',
+    'pausing delivery does not extend the fixed reservation window');
+  assert.equal(store.controlStoryCampaign(pausedExpiry.id, alice.id, 'resume', { now: pausedEndAt + 1 }), null,
+    'an ended paused campaign cannot resume');
+
+  await new Promise(resolve => setTimeout(resolve, 350));
+  const restoredChild = spawnSync(process.execPath, ['-e', `
+    const store = require('./lib/messenger-store');
+    process.stdout.write(JSON.stringify({
+      story: store.listStories(process.env.BOB_ID).flatMap(group => group.items).find(item => item.id === process.env.STORY_ID),
+      campaign: store.listStoryCampaigns(process.env.ALICE_ID).find(item => item.id === process.env.CAMPAIGN_ID),
+    }));
+  `], {
+    cwd: path.join(__dirname, '..'),
+    env: {
+      ...process.env, VCHAT_DATA_DIR: dataDir, BOB_ID: bob.id, ALICE_ID: alice.id,
+      STORY_ID: story.id, CAMPAIGN_ID: campaign.id,
+    },
+    encoding: 'utf8',
+  });
+  assert.equal(restoredChild.status, 0, restoredChild.stderr);
+  const restored = JSON.parse(restoredChild.stdout);
+  assert.equal(restored.story.myReaction, '🔥');
+  assert.equal(restored.campaign.status, 'stopped');
+  assert.equal(restored.campaign.reviewer.id, alice.id);
+
+  const restartMediaName = 'restart-expired-story.png';
+  const restartMediaDir = path.join(dataDir, 'media');
+  fs.mkdirSync(restartMediaDir, { recursive: true });
+  fs.writeFileSync(path.join(restartMediaDir, restartMediaName), 'expired protected bytes');
+  const restartExpired = store.createStory(alice.id, {
+    type: 'image', text: 'Expires across restart', storageName: restartMediaName,
+    mime: 'image/png', size: 23,
+  });
+  const rawRestartExpired = store.getStory(restartExpired.id, alice.id);
+  rawRestartExpired.expiresAt = Date.now() - 1;
+  store.createStory(alice.id, { type: 'text', text: 'Persistence flush', background: 'jade' });
+  await new Promise(resolve => setTimeout(resolve, 350));
+
+  const cleanupChild = spawnSync(process.execPath, ['-e', `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const http = require('node:http');
+    const express = require('express');
+    const app = express();
+    app.locals.isOriginAllowed = () => true;
+    require('./lib/messenger').attach(http.createServer(app), app);
+    setTimeout(() => {
+      const snapshot = JSON.parse(fs.readFileSync(process.env.DB_FILE, 'utf8'));
+      process.stdout.write(JSON.stringify({
+        mediaExists: fs.existsSync(path.join(process.env.MEDIA_DIR, process.env.MEDIA_NAME)),
+        metadataExists: snapshot.stories.some(item => item.id === process.env.STORY_ID),
+      }));
+    }, 450);
+  `], {
+    cwd: path.join(__dirname, '..'),
+    env: {
+      ...process.env, VCHAT_DATA_DIR: dataDir, DB_FILE: store.DB_FILE, MEDIA_DIR: restartMediaDir,
+      MEDIA_NAME: restartMediaName, STORY_ID: restartExpired.id,
+    },
+    encoding: 'utf8',
+  });
+  assert.equal(cleanupChild.status, 0, cleanupChild.stderr);
+  assert.deepEqual(JSON.parse(cleanupChild.stdout), { mediaExists: false, metadataExists: false },
+    'service startup removes both expired Story metadata and protected bytes');
+
+  const rawStory = store.getStory(story.id, alice.id);
+  rawStory.expiresAt = Date.now() - 1;
+  assert.equal(store.pruneExpiredStories().some(item => item.id === story.id), true);
+  assert.equal(store.getStory(story.id, alice.id), null);
+});

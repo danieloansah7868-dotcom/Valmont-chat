@@ -30,6 +30,22 @@ let reelUploadFile = null;
 let reelUploadPreviewUrl = null;
 let reelUploadAbort = null;
 let reelUploadCleanup = null;
+let storyGroups = [];
+let storyAds = [];
+let storySequence = [];
+let storyIndex = -1;
+let storyPlayback = null;
+let storiesLoading = false;
+let storiesRefreshTimer = null;
+let storyMaxBytes = 30 * 1024 * 1024;
+let storyReactions = ['❤️', '😂', '😮', '😢', '👏', '🔥'];
+let storyFile = null;
+let storyPreviewUrl = null;
+let storyBackground = 'jade';
+let storyPublishing = false;
+let storyUploadRequest = null;
+let storyPaymentConfigured = false;
+let storyAdAdmin = false;
 
 const AVATARS = ['😀','😎','🦊','🐼','🐯','🦁','🐸','🐵','🦄','🐙','🌟','🚀','🔥','🍀','🎧','⚽','🎸','🌺','🍕','🐨'];
 const NOTIFICATION_DEFAULTS = {
@@ -522,6 +538,7 @@ function connect() {
       updateOfflineBar();
       flushOutbox();
       refreshIceServers();
+      verifyReturnedBoostPayment().catch(() => {});
       const invite = new URLSearchParams(location.search).get('invite');
       if (invite) {
         socket.emit('chat:joinInvite', { code: invite }, result => {
@@ -538,6 +555,8 @@ function connect() {
   socket.on('session:revoked', () => {
     socket.close();
     closeModal('modal-reel-upload');
+    closeModal('modal-story-compose');
+    closeStories();
     closeReels();
     reels = [];
     $('reels-feed').innerHTML = '';
@@ -580,6 +599,15 @@ function connect() {
     if (!document.body.classList.contains('reels-open')) return;
     clearTimeout(reelsRefreshTimer);
     reelsRefreshTimer = setTimeout(() => loadReels(true, true), 350);
+  });
+  socket.on('stories:changed', () => {
+    if (!$('stories-screen').classList.contains('open')) {
+      $('story-notice').hidden = false;
+      return;
+    }
+    if (!$('story-viewer').hidden) return;
+    clearTimeout(storiesRefreshTimer);
+    storiesRefreshTimer = setTimeout(() => loadStories({ quiet: true }), 350);
   });
 
   socket.on('call:incoming', onCallIncoming);
@@ -2176,6 +2204,7 @@ function openDrawer() {
       me.blocked = [...set];
       toast(isBlocked ? 'Contact unblocked' : 'Contact blocked');
       if (document.body.classList.contains('reels-open')) loadReels(true, true).catch(() => {});
+      if ($('stories-screen').classList.contains('open')) loadStories({ quiet: true }).catch(() => {});
       openDrawer();
     };
     const report = el('button', 'drawer-action danger', `${icon('info')} Report contact`);
@@ -2205,6 +2234,7 @@ function closeModal(id) {
   $(id).classList.remove('show');
   if (id === 'modal-profile') profileModalCleanup?.();
   if (id === 'modal-reel-upload') reelUploadCleanup?.();
+  if (id === 'modal-story-compose') cleanupStoryComposer();
   if (id === 'modal-rate') rating = null;
 }
 document.querySelectorAll('.overlay').forEach(o => {
@@ -2817,10 +2847,573 @@ async function publishReel() {
   }
 }
 
+// ── Status stories and sponsored playback ─────────────────────────────
+function storyBackgroundClass(background) {
+  return `story-bg-${['jade', 'ocean', 'sunset', 'violet', 'charcoal'].includes(background) ? background : 'jade'}`;
+}
+
+function setStoriesOpen(open) {
+  $('stories-screen').classList.toggle('open', open);
+  $('stories-screen').setAttribute('aria-hidden', String(!open));
+  if (!open) {
+    closeStoryViewer();
+    clearTimeout(storiesRefreshTimer);
+  }
+}
+
+async function openStories() {
+  closeReels();
+  setStoriesOpen(true);
+  $('story-notice').hidden = true;
+  await loadStories();
+}
+
+function closeStories() {
+  setStoriesOpen(false);
+}
+
+async function loadStories({ quiet = false } = {}) {
+  if (storiesLoading || !me) return;
+  storiesLoading = true;
+  if (!quiet) $('stories-loading').hidden = false;
+  try {
+    const { ok, data } = await api('/api/stories');
+    if (!ok) throw new Error(data.error || 'Could not load status updates');
+    storyGroups = Array.isArray(data.groups) ? data.groups : [];
+    storyAds = Array.isArray(data.ads) ? data.ads : [];
+    storyReactions = Array.isArray(data.reactions) ? data.reactions : storyReactions;
+    storyMaxBytes = Number(data.maxUploadBytes) || storyMaxBytes;
+    storyPaymentConfigured = data.paymentConfigured === true;
+    storyAdAdmin = data.adAdmin === true;
+    $('story-review-button').hidden = !storyAdAdmin;
+    renderStoryTray();
+  } catch (error) {
+    if (!quiet) toast(error.message || 'Could not load status updates');
+  } finally {
+    storiesLoading = false;
+    $('stories-loading').hidden = true;
+  }
+}
+
+function renderStoryTray() {
+  const tray = $('story-tray');
+  tray.innerHTML = '';
+  const own = storyGroups.find(group => group.mine);
+  if (!own) {
+    const add = el('button', 'story-tray-card add-card');
+    add.type = 'button';
+    add.innerHTML = `${avatarHTML(me, 40)}<span class="story-tray-name">Your status</span><span class="story-tray-meta">Tap to add an update</span>`;
+    add.onclick = openStoryComposer;
+    tray.appendChild(add);
+  }
+  for (const group of storyGroups) {
+    const card = el('button', `story-tray-card${group.unseenCount ? ' unseen' : ''}`);
+    card.type = 'button';
+    card.setAttribute('role', 'listitem');
+    const latest = group.items[group.items.length - 1];
+    card.innerHTML = `${avatarHTML(group.owner, 40)}<span class="story-tray-name">${esc(group.mine ? 'Your status' : group.owner?.username)}</span><span class="story-tray-meta">${group.unseenCount ? `${group.unseenCount} new · ` : ''}${esc(rowTime(latest?.createdAt || Date.now()))}</span>`;
+    card.onclick = () => openStoryViewer(group.owner?.id);
+    tray.appendChild(card);
+  }
+  const friendCount = storyGroups.filter(group => !group.mine).length;
+  $('stories-empty').hidden = friendCount > 0 || Boolean(own);
+}
+
+function buildStorySequence(ownerId) {
+  const selectedIndex = storyGroups.findIndex(group => group.owner?.id === ownerId);
+  if (selectedIndex < 0) return [];
+  const selected = storyGroups[selectedIndex];
+  const groups = selected.mine
+    ? [selected]
+    : storyGroups.slice(selectedIndex).filter(group => !group.mine);
+  const organic = groups.flatMap(group => group.items.map(item => ({ ...item, kind: 'story' })));
+  if (selected.mine || !organic.length || !storyAds.length) return organic;
+  const firstAdAfter = organic.length > 3 ? 3 : Math.max(1, organic.length - 1);
+  const sequence = [];
+  let sinceAd = 0;
+  let adIndex = 0;
+  for (const item of organic) {
+    sequence.push(item);
+    sinceAd += 1;
+    const threshold = adIndex === 0 ? firstAdAfter : 3;
+    if (sinceAd >= threshold && adIndex < storyAds.length) {
+      sequence.push({ ...storyAds[adIndex], kind: 'ad' });
+      adIndex += 1;
+      sinceAd = 0;
+    }
+  }
+  return sequence;
+}
+
+function openStoryViewer(ownerId) {
+  storySequence = buildStorySequence(ownerId);
+  if (!storySequence.length) return;
+  $('stories-home').hidden = true;
+  $('story-viewer').hidden = false;
+  storyIndex = 0;
+  renderCurrentStory();
+}
+
+function closeStoryViewer() {
+  stopStoryPlayback();
+  $('story-stage').querySelectorAll('video').forEach(video => video.pause());
+  $('story-viewer').hidden = true;
+  $('stories-home').hidden = false;
+  storySequence = [];
+  storyIndex = -1;
+  if ($('stories-screen').classList.contains('open')) loadStories({ quiet: true }).catch(() => {});
+}
+
+function renderStoryProgress() {
+  $('story-progress').innerHTML = storySequence.map((_item, index) => `<span class="story-progress-part${index < storyIndex ? ' done' : ''}"><span class="story-progress-fill"></span></span>`).join('');
+}
+
+function stopStoryPlayback() {
+  if (storyPlayback?.raf) cancelAnimationFrame(storyPlayback.raf);
+  storyPlayback = null;
+}
+
+function startStoryPlayback(duration) {
+  stopStoryPlayback();
+  const index = storyIndex;
+  const state = { duration: Math.max(1000, duration), elapsed: 0, last: performance.now(), raf: 0 };
+  storyPlayback = state;
+  const fill = $('story-progress').children[index]?.firstElementChild;
+  const tick = now => {
+    if (storyPlayback !== state || index !== storyIndex) return;
+    const delta = Math.min(250, now - state.last);
+    state.last = now;
+    if (!document.hidden) state.elapsed += delta;
+    if (fill) fill.style.width = `${Math.min(100, (state.elapsed / state.duration) * 100)}%`;
+    if (storySequence[index]?.kind === 'ad') $('story-ad-countdown').textContent = `${Math.max(0, Math.ceil((state.duration - state.elapsed) / 1000))}s`;
+    if (state.elapsed >= state.duration) return showNextStory(true);
+    state.raf = requestAnimationFrame(tick);
+  };
+  state.raf = requestAnimationFrame(tick);
+}
+
+function renderCurrentStory() {
+  stopStoryPlayback();
+  if (storyIndex < 0 || storyIndex >= storySequence.length) return closeStoryViewer();
+  const item = storySequence[storyIndex];
+  const isAd = item.kind === 'ad';
+  const owner = isAd ? item.advertiser : item.owner;
+  renderStoryProgress();
+  $('story-viewer-avatar').innerHTML = avatarHTML(owner || { id: 'vchat', username: 'Vchat', avatar: '💬' }, 40);
+  $('story-viewer-name').textContent = owner?.username || 'Vchat';
+  $('story-viewer-time').textContent = isAd ? 'Promoted story' : rowTime(item.createdAt);
+  $('story-sponsored').hidden = !isAd;
+  $('story-ad-countdown').hidden = !isAd;
+  $('story-delete').hidden = isAd || !item.mine;
+  $('story-insight').hidden = isAd || !item.mine;
+  $('story-insight').textContent = item.mine ? `${Number(item.viewCount) || 0} view${Number(item.viewCount) === 1 ? '' : 's'} · ${Number(item.reactionCount) || 0} reactions` : '';
+  $('story-reactions').hidden = isAd || item.mine;
+  $('story-reactions').innerHTML = isAd || item.mine ? '' : storyReactions.map(reaction => `<button class="story-reaction${item.myReaction === reaction ? ' selected' : ''}" type="button" data-reaction="${reaction}" aria-label="React ${reaction}">${reaction}</button>`).join('');
+  $('story-reactions').querySelectorAll('.story-reaction').forEach(button => {
+    button.onclick = () => reactToStory(item, button.dataset.reaction);
+  });
+
+  const cta = $('story-ad-cta');
+  const destination = isAd && /^https?:\/\//i.test(item.destinationUrl || '') ? item.destinationUrl : null;
+  const internalAction = isAd && ['profile_visits', 'messages'].includes(item.objective)
+    && item.advertiser?.id && item.advertiser.id !== me.id;
+  cta.hidden = !destination && !internalAction;
+  cta.textContent = item.cta || (item.objective === 'messages' ? 'Send message' : 'Learn more');
+  cta.href = destination || '#';
+  cta.target = destination ? '_blank' : '';
+  cta.onclick = destination ? () => {
+    api(`/api/story-ads/${encodeURIComponent(item.id)}/click`, {}).catch(() => {});
+  } : (internalAction ? event => {
+    event.preventDefault();
+    api(`/api/story-ads/${encodeURIComponent(item.id)}/click`, {}).catch(() => {});
+    closeStories();
+    socket.emit('chat:startDM', { targetUserId: item.advertiser.id }, result => {
+      if (result?.error) return toast(result.error);
+      if (!result?.chat) return;
+      openChat(result.chat.id);
+      if (item.objective === 'profile_visits') setTimeout(openDrawer, 0);
+    });
+  } : null);
+
+  const stage = $('story-stage');
+  stage.innerHTML = '';
+  if (item.type === 'image' && item.mediaUrl) {
+    const image = el('img', 'story-stage-media');
+    image.alt = item.text || `${owner?.username || 'Contact'} status`;
+    image.src = item.mediaUrl;
+    stage.appendChild(image);
+    if (item.text) stage.appendChild(el('div', 'story-stage-caption', esc(item.text)));
+    startStoryPlayback(isAd ? 30000 : 6500);
+  } else if (item.type === 'video' && item.mediaUrl) {
+    const video = el('video', 'story-stage-media');
+    video.src = item.mediaUrl;
+    video.playsInline = true;
+    video.preload = lite ? 'none' : 'metadata';
+    video.loop = isAd;
+    video.onloadedmetadata = () => {
+      const normalDuration = Number.isFinite(video.duration) ? Math.min(60000, Math.max(3000, video.duration * 1000)) : 10000;
+      if (!isAd) startStoryPlayback(normalDuration);
+      video.play().catch(() => { video.controls = true; });
+    };
+    video.onerror = () => toast('This status video is unavailable');
+    stage.appendChild(video);
+    if (item.text) stage.appendChild(el('div', 'story-stage-caption', esc(item.text)));
+    startStoryPlayback(isAd ? 30000 : 10000);
+  } else {
+    const headline = isAd && item.headline ? `<div>${esc(item.headline)}</div>` : '';
+    const detail = item.text ? `<small>${esc(item.text)}</small>` : '';
+    const text = el('div', `story-stage-text ${storyBackgroundClass(item.background)}`, `${headline || (!isAd ? esc(item.text) : '')}${isAd ? detail : ''}`);
+    stage.appendChild(text);
+    startStoryPlayback(isAd ? 30000 : 6500);
+  }
+
+  if (isAd) {
+    api(`/api/story-ads/${encodeURIComponent(item.id)}/impression`, {}).catch(() => {});
+  } else if (!item.mine) {
+    api(`/api/stories/${encodeURIComponent(item.id)}/view`, {}).then(({ ok, data }) => {
+      if (ok && storySequence[storyIndex]?.id === item.id) Object.assign(item, data.story || {}, { seen: true });
+    }).catch(() => {});
+  }
+}
+
+function showNextStory(adFinished = false) {
+  if (storySequence[storyIndex]?.kind === 'ad' && !adFinished) {
+    toast(`Sponsored story · ${$('story-ad-countdown').textContent || '30s'} remaining`);
+    return;
+  }
+  if (storyIndex >= storySequence.length - 1) {
+    closeStoryViewer();
+    loadStories({ quiet: true });
+    return;
+  }
+  storyIndex += 1;
+  renderCurrentStory();
+}
+
+function showPreviousStory() {
+  if (storyIndex <= 0) return;
+  storyIndex -= 1;
+  renderCurrentStory();
+}
+
+async function reactToStory(item, reaction) {
+  const desired = item.myReaction === reaction ? null : reaction;
+  const { ok, data } = await api(`/api/stories/${encodeURIComponent(item.id)}/reaction`, { reaction: desired }, { method: 'PUT' });
+  if (!ok) return toast(data.error || 'Could not send reaction');
+  Object.assign(item, data.story || {});
+  renderCurrentStory();
+  toast(desired ? `Reacted ${desired}` : 'Reaction removed');
+}
+
+async function deleteCurrentStory() {
+  const item = storySequence[storyIndex];
+  if (!item?.mine || !confirm('Delete this status?')) return;
+  const { ok, data } = await api(`/api/stories/${encodeURIComponent(item.id)}`, {}, { method: 'DELETE' });
+  if (!ok) return toast(data.error || 'Could not delete status');
+  toast('Status deleted');
+  closeStoryViewer();
+  loadStories();
+}
+
+function cleanupStoryComposer() {
+  storyUploadRequest?.abort();
+  storyUploadRequest = null;
+  storyPublishing = false;
+  if (storyPreviewUrl) URL.revokeObjectURL(storyPreviewUrl);
+  storyPreviewUrl = null;
+  storyFile = null;
+  $('story-file-input').value = '';
+}
+
+function updateStoryComposePreview() {
+  const preview = $('story-compose-preview');
+  preview.className = `story-compose-preview ${storyBackgroundClass(storyBackground)}`;
+  preview.innerHTML = '';
+  if (storyFile) {
+    const media = document.createElement(storyFile.type.startsWith('video/') ? 'video' : 'img');
+    media.src = storyPreviewUrl;
+    if (media.tagName === 'VIDEO') { media.muted = true; media.loop = true; media.autoplay = true; media.playsInline = true; }
+    media.alt = '';
+    preview.appendChild(media);
+  } else {
+    const text = $('story-text').value.trim();
+    preview.textContent = text || 'Write a status or choose a photo or video';
+  }
+}
+
+function openStoryComposer() {
+  cleanupStoryComposer();
+  storyBackground = 'jade';
+  $('story-text').value = '';
+  $('story-file-name').textContent = '';
+  $('story-media-remove').hidden = true;
+  $('story-boost-toggle').checked = false;
+  $('story-boost-fields').hidden = true;
+  $('boost-objective').value = 'profile_visits';
+  $('boost-url-row').hidden = true;
+  $('boost-url').value = '';
+  $('boost-budget').value = '30';
+  $('boost-days').value = '7';
+  $('boost-email').value = '';
+  $('story-publish-status').textContent = '';
+  $('story-publish').disabled = false;
+  document.querySelectorAll('[data-story-color]').forEach(button => button.classList.toggle('selected', button.dataset.storyColor === 'jade'));
+  updateStoryBoostDisclosure();
+  updateBoostEstimate();
+  updateStoryComposePreview();
+  openModal('modal-story-compose');
+}
+
+function chooseStoryMedia(file) {
+  if (!file) return;
+  const supported = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/quicktime', 'video/webm'];
+  if (!supported.includes(file.type) || file.size > storyMaxBytes) return toast(`Choose a supported photo or video up to ${fileSize(storyMaxBytes)}`);
+  if (storyPreviewUrl) URL.revokeObjectURL(storyPreviewUrl);
+  storyFile = file;
+  storyPreviewUrl = URL.createObjectURL(file);
+  $('story-file-name').textContent = `${file.name} · ${fileSize(file.size)}`;
+  $('story-media-remove').hidden = false;
+  updateStoryComposePreview();
+}
+
+function removeStoryMedia() {
+  if (storyPreviewUrl) URL.revokeObjectURL(storyPreviewUrl);
+  storyPreviewUrl = null;
+  storyFile = null;
+  $('story-file-input').value = '';
+  $('story-file-name').textContent = '';
+  $('story-media-remove').hidden = true;
+  updateStoryComposePreview();
+}
+
+function updateStoryBoostDisclosure() {
+  $('story-boost-disclosure').textContent = storyPaymentConfigured
+    ? 'Boosts require ad review and confirmed payment before delivery. Posting your normal status does not depend on approval.'
+    : 'Billing is not configured. Your status can still post, but this boost will not deliver unless an authorized administrator intentionally grants account credit.';
+}
+
+function updateBoostEstimate() {
+  const budget = Math.max(0, Number($('boost-budget').value) || 0);
+  const days = Math.max(1, Number($('boost-days').value) || 1);
+  $('boost-estimate').textContent = `Pilot reservation: GHS ${budget.toLocaleString()} for up to ${days} day${days === 1 ? '' : 's'} after activation. No delivery forecast or result is guaranteed.`;
+}
+
+async function publishStory() {
+  if (storyPublishing) return;
+  const text = $('story-text').value.trim();
+  const boosted = $('story-boost-toggle').checked;
+  const status = $('story-publish-status');
+  if (!storyFile && !text) { status.textContent = 'Write something or choose a photo or video.'; return; }
+  if (boosted) {
+    if (!/^\S+@\S+\.\S+$/.test($('boost-email').value.trim())) { status.textContent = 'Enter a billing email for your boost.'; return; }
+    if ($('boost-objective').value === 'website_visits' && !/^https?:\/\//i.test($('boost-url').value.trim())) { status.textContent = 'Enter a complete http or https website address.'; return; }
+    const budget = Number($('boost-budget').value);
+    if (!Number.isFinite(budget) || budget < 10 || budget > 10000) { status.textContent = 'Choose a budget from GHS 10 to GHS 10,000.'; return; }
+  }
+  const form = new FormData();
+  form.append('type', storyFile ? (storyFile.type.startsWith('video/') ? 'video' : 'image') : 'text');
+  form.append('text', text);
+  form.append('background', storyBackground);
+  if (storyFile) form.append('media', storyFile, storyFile.name);
+  form.append('boost', String(boosted));
+  if (boosted) {
+    form.append('objective', $('boost-objective').value);
+    form.append('cta', $('boost-cta').value);
+    form.append('destinationUrl', $('boost-url').value.trim());
+    form.append('adAudience', $('boost-audience').value);
+    form.append('budgetGhs', $('boost-budget').value);
+    form.append('durationDays', $('boost-days').value);
+    form.append('billingEmail', $('boost-email').value.trim());
+  }
+  const request = new XMLHttpRequest();
+  storyUploadRequest = request;
+  storyPublishing = true;
+  $('story-publish').disabled = true;
+  status.style.color = 'var(--text-secondary)';
+  status.textContent = 'Publishing securely… 0%';
+  try {
+    const data = await new Promise((resolve, reject) => {
+      request.open('POST', '/api/stories');
+      request.withCredentials = true;
+      request.responseType = 'json';
+      request.upload.onprogress = event => {
+        if (event.lengthComputable) status.textContent = `Publishing securely… ${Math.min(99, Math.round((event.loaded / event.total) * 100))}%`;
+      };
+      request.onerror = () => reject(new Error('Network error while publishing'));
+      request.onabort = () => reject(Object.assign(new Error('Publishing cancelled'), { name: 'AbortError' }));
+      request.onload = () => {
+        const body = request.response && typeof request.response === 'object' ? request.response : {};
+        if (request.status >= 200 && request.status < 300) resolve(body);
+        else reject(new Error(body.error || 'Could not publish status'));
+      };
+      request.send(form);
+    });
+    storyUploadRequest = null;
+    storyPublishing = false;
+    closeModal('modal-story-compose');
+    await loadStories();
+    if (data.boostError) toast(data.boostError);
+    else toast(data.campaign ? 'Status posted · boost saved for review and payment' : 'Status posted');
+    if (data.payment?.authorizationUrl && confirm('Your status is live. Continue to Paystack to pay for this boost?')) {
+      location.assign(data.payment.authorizationUrl);
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') return;
+    storyUploadRequest = null;
+    storyPublishing = false;
+    $('story-publish').disabled = false;
+    status.style.color = 'var(--danger)';
+    status.textContent = error.message || 'Could not publish status';
+  }
+}
+
+function campaignStatusLabel(status) {
+  return String(status || 'pending').replaceAll('_', ' ');
+}
+
+function campaignCard(campaign, admin = false) {
+  const card = el('article', 'campaign-card');
+  const advertiser = admin ? `<p>Advertiser: <strong>${esc(campaign.advertiser?.username || 'Unknown')}</strong></p>` : '';
+  const payment = campaign.paymentStatus ? `<p>Payment: ${esc(campaignStatusLabel(campaign.paymentStatus))} · Review: ${esc(campaignStatusLabel(campaign.reviewStatus))}</p>` : '';
+  card.innerHTML = `<div class="campaign-card-head"><div><h3>${esc(campaign.text || 'Media status promotion')}</h3>${advertiser}<p>${esc(campaign.objective?.replaceAll('_', ' ') || 'Sponsored status')} · GHS ${Number(campaign.budgetGhs || 0).toFixed(2)} · ${Number(campaign.durationDays) || 0} day${Number(campaign.durationDays) === 1 ? '' : 's'}</p>${payment}</div><span class="campaign-state ${esc(campaign.status)}">${esc(campaignStatusLabel(campaign.status))}</span></div><div class="campaign-metrics"><div class="campaign-metric"><strong>${Number(campaign.reachCount) || 0}</strong><span>Reach</span></div><div class="campaign-metric"><strong>${Number(campaign.impressionCount) || 0}</strong><span>Impressions</span></div><div class="campaign-metric"><strong>${Number(campaign.clickCount) || 0}</strong><span>Clicks</span></div></div>`;
+  const actions = el('div', 'campaign-actions');
+  if (!admin && campaign.status === 'active') {
+    const pause = el('button', '', 'Pause delivery');
+    pause.type = 'button';
+    pause.onclick = () => controlStoryCampaign(campaign.id, 'pause');
+    actions.appendChild(pause);
+  }
+  if (!admin && campaign.status === 'paused') {
+    const resume = el('button', '', 'Resume delivery');
+    resume.type = 'button';
+    resume.onclick = () => controlStoryCampaign(campaign.id, 'resume');
+    actions.appendChild(resume);
+  }
+  if (!admin && !['completed', 'expired', 'rejected', 'stopped'].includes(campaign.status)) {
+    const stop = el('button', '', 'Stop campaign');
+    stop.type = 'button';
+    stop.onclick = () => controlStoryCampaign(campaign.id, 'stop');
+    actions.appendChild(stop);
+  }
+  if (!admin && campaign.checkoutUrl && !['paid', 'waived'].includes(campaign.paymentStatus)) {
+    const pay = el('a', '', 'Continue secure payment');
+    pay.href = campaign.checkoutUrl;
+    pay.rel = 'noopener noreferrer';
+    actions.appendChild(pay);
+  }
+  if (campaign.reviewNote) actions.appendChild(el('span', '', `Review note: ${esc(campaign.reviewNote)}`));
+  if (campaign.reviewer) {
+    const reviewedWhen = campaign.reviewedAt ? ` · ${esc(new Date(campaign.reviewedAt).toLocaleString())}` : '';
+    actions.appendChild(el('span', '', `Reviewed by ${esc(campaign.reviewer.username || 'administrator')}${reviewedWhen}`));
+  }
+  if (campaign.stopNote || campaign.stopActor) {
+    const stoppedWhen = campaign.stoppedAt ? ` · ${esc(new Date(campaign.stoppedAt).toLocaleString())}` : '';
+    const stoppedBy = campaign.stopActor?.username ? ` by ${esc(campaign.stopActor.username)}` : '';
+    actions.appendChild(el('span', '', `Stopped${stoppedBy}${stoppedWhen}${campaign.stopNote ? ` · ${esc(campaign.stopNote)}` : ''}`));
+  }
+  if (admin && ['active', 'paused'].includes(campaign.status)) {
+    const stop = el('button', '', 'Stop delivery');
+    stop.type = 'button';
+    stop.onclick = () => controlStoryCampaign(campaign.id, 'stop', true);
+    actions.appendChild(stop);
+  }
+  if (admin && campaign.reviewStatus === 'pending' && campaign.status !== 'stopped') {
+    const approve = el('button', '', 'Approve');
+    approve.onclick = () => reviewCampaign(campaign.id, 'approve', false);
+    const reject = el('button', '', 'Reject');
+    reject.onclick = () => reviewCampaign(campaign.id, 'reject', false);
+    actions.appendChild(approve);
+    if (campaign.paymentStatus !== 'paid') {
+      const credit = el('button', '', 'Approve with account credit');
+      credit.onclick = () => reviewCampaign(campaign.id, 'approve', true);
+      actions.appendChild(credit);
+    }
+    actions.appendChild(reject);
+  }
+  if (actions.childNodes.length) card.appendChild(actions);
+  return card;
+}
+
+async function controlStoryCampaign(campaignId, action, asAdmin = false) {
+  let note = '';
+  if (asAdmin) {
+    note = prompt('Safety reason shown to the advertiser:', 'Advertising policy or safety action');
+    if (note == null || !note.trim()) return;
+  } else {
+    const warning = action === 'stop'
+      ? 'Stop this campaign permanently? This does not automatically issue a payment refund.'
+      : `${action === 'pause' ? 'Pause' : 'Resume'} this campaign?`;
+    if (!confirm(warning)) return;
+  }
+  const { ok, data } = await api(
+    `/api/story-ads/${encodeURIComponent(campaignId)}/control`,
+    { action, note },
+    { method: 'PUT' },
+  );
+  if (!ok) return toast(data.error || 'Could not update campaign delivery');
+  toast(`Campaign ${campaignStatusLabel(data.campaign.status)}`);
+  if (asAdmin) await openStoryReview();
+  else await openStoryBoosts();
+}
+
+async function openStoryBoosts() {
+  openModal('modal-story-boosts');
+  $('story-campaign-list').innerHTML = '<div class="empty-list">Loading boosts…</div>';
+  const { ok, data } = await api('/api/story-ads/campaigns');
+  if (!ok) { $('story-campaign-list').innerHTML = `<div class="empty-list">${esc(data.error || 'Could not load boosts')}</div>`; return; }
+  const list = $('story-campaign-list');
+  list.innerHTML = '';
+  if (!data.campaigns?.length) list.innerHTML = '<div class="empty-list">No boosted status posts yet.</div>';
+  else data.campaigns.forEach(campaign => list.appendChild(campaignCard(campaign)));
+}
+
+async function openStoryReview() {
+  if (!storyAdAdmin) return;
+  openModal('modal-story-review');
+  $('story-review-list').innerHTML = '<div class="empty-list">Loading review queue…</div>';
+  const { ok, data } = await api('/api/story-ads/review');
+  if (!ok) { $('story-review-list').innerHTML = `<div class="empty-list">${esc(data.error || 'Could not load review queue')}</div>`; return; }
+  const list = $('story-review-list');
+  list.innerHTML = '';
+  if (!data.campaigns?.length) list.innerHTML = '<div class="empty-list">No campaigns to review.</div>';
+  else data.campaigns.forEach(campaign => list.appendChild(campaignCard(campaign, true)));
+}
+
+async function reviewCampaign(id, decision, waivePayment) {
+  const message = waivePayment
+    ? 'Granting account credit intentionally waives payment and may activate this ad. Continue?'
+    : `${decision === 'approve' ? 'Approve' : 'Reject'} this campaign?`;
+  if (!confirm(message)) return;
+  let note = '';
+  if (waivePayment) note = prompt('Required account-credit authorization reason:', 'Approved promotional account credit');
+  else if (decision === 'reject') note = prompt('Reason shown to the advertiser:', 'Creative does not meet advertising policy');
+  if ((waivePayment || decision === 'reject') && (note == null || !note.trim())) return;
+  const { ok, data } = await api(`/api/story-ads/${encodeURIComponent(id)}/review`, { decision, waivePayment, note }, { method: 'PUT' });
+  if (!ok) return toast(data.error || 'Could not review campaign');
+  toast(waivePayment ? 'Approved with documented account credit' : `Campaign ${decision}d`);
+  openStoryReview();
+}
+
+async function verifyReturnedBoostPayment() {
+  const params = new URLSearchParams(location.search);
+  if (params.get('boost_return') !== '1') return;
+  const reference = params.get('reference') || params.get('trxref');
+  params.delete('boost_return');
+  params.delete('reference');
+  params.delete('trxref');
+  const remaining = params.toString();
+  history.replaceState({}, '', `${location.pathname}${remaining ? `?${remaining}` : ''}${location.hash}`);
+  if (!reference) return toast('Returned from checkout without a payment reference');
+  const { ok, data } = await api(`/api/story-ads/payment/verify?reference=${encodeURIComponent(reference)}`);
+  toast(ok ? 'Boost payment confirmed. Delivery starts after ad review.' : (data.error || 'Payment could not be verified'));
+  if (ok) openStoryBoosts();
+}
+
 // ── Main menu ──────────────────────────────────────────────────────────
 function mainMenu(e) {
   showCtxMenu(e, [
     { label: 'New group', fn: openNewGroup },
+    { label: 'Status updates', fn: openStories },
     { label: document.body.classList.contains('reels-open') ? 'Close reels' : 'Reels · scroll while chatting', fn: toggleReels },
     { label: 'Profile', fn: openProfile },
     { label: 'Privacy & security', fn: openPrivacy },
@@ -3416,6 +4009,32 @@ function wire() {
   $('btn-menu').onclick = mainMenu;
   $('btn-back').onclick = closeChat;
   $('btn-chat-menu').onclick = chatMenu;
+  $('btn-stories').onclick = openStories;
+  $('stories-close').onclick = closeStories;
+  $('story-viewer-close').onclick = closeStoryViewer;
+  $('story-create-button').onclick = openStoryComposer;
+  $('story-empty-create').onclick = openStoryComposer;
+  $('story-boosts-button').onclick = openStoryBoosts;
+  $('story-review-button').onclick = openStoryReview;
+  $('story-prev').onclick = showPreviousStory;
+  $('story-next').onclick = () => showNextStory();
+  $('story-delete').onclick = deleteCurrentStory;
+  $('story-media-button').onclick = () => { $('story-file-input').value = ''; $('story-file-input').click(); };
+  $('story-file-input').onchange = event => chooseStoryMedia(event.target.files?.[0]);
+  $('story-media-remove').onclick = removeStoryMedia;
+  $('story-text').oninput = updateStoryComposePreview;
+  $('story-boost-toggle').onchange = event => { $('story-boost-fields').hidden = !event.target.checked; };
+  $('boost-objective').onchange = event => { $('boost-url-row').hidden = event.target.value !== 'website_visits'; };
+  $('boost-budget').oninput = updateBoostEstimate;
+  $('boost-days').onchange = updateBoostEstimate;
+  $('story-publish').onclick = publishStory;
+  document.querySelectorAll('[data-story-color]').forEach(button => {
+    button.onclick = () => {
+      storyBackground = button.dataset.storyColor;
+      document.querySelectorAll('[data-story-color]').forEach(choice => choice.classList.toggle('selected', choice === button));
+      updateStoryComposePreview();
+    };
+  });
   $('btn-reels').onclick = toggleReels;
   $('btn-reels-chat').onclick = toggleReels;
   $('reels-close').onclick = closeReels;
@@ -3439,6 +4058,9 @@ function wire() {
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
     if (call && $('ring').classList.contains('on')) declineCall();
+    else if ($('modal-story-compose').classList.contains('show')) closeModal('modal-story-compose');
+    else if (!$('story-viewer').hidden) closeStoryViewer();
+    else if ($('stories-screen').classList.contains('open')) closeStories();
     else if ($('modal-reel-upload').classList.contains('show')) closeModal('modal-reel-upload');
     else if (document.body.classList.contains('reels-open')) closeReels();
   });

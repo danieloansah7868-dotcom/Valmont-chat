@@ -9,8 +9,10 @@ Socket.IO, WebRTC, and a framework-free browser client.
 > (E2EE), encrypted backups, and safety-number verification are **not complete**.
 > Do not describe this release as end-to-end encrypted.
 
-Meta AI and WhatsApp Business/commerce features are intentionally out of scope.
-The device target is an installable responsive PWA rather than separate native apps.
+Meta AI and general WhatsApp Business/commerce features are intentionally out of
+scope. Status advertising and user-initiated boosted Status posts are the explicit
+advertising exception. The device target is an installable responsive PWA rather
+than separate native apps.
 
 ## Run locally
 
@@ -95,6 +97,44 @@ Reels currently share the transitional local media store. There is no object-sto
 replication, transcoding ladder, malware/content-moderation pipeline, CDN, or DRM;
 those production-scale controls belong in the infrastructure phase.
 
+### Status and Story advertising pilot
+
+- Users can publish text, JPEG/PNG/WebP, MP4/MOV/WebM Status posts. Posts expire
+  after 24 hours and are visible only when both accounts are known contacts; blocks
+  apply in both directions.
+- The full-screen viewer plays friends' posts sequentially, records protected views
+  and reactions, shows owner-only counts, and resumes organic playback after a
+  clearly disclosed **Sponsored** Vchat house Story. Sponsored slots run for 30
+  visible seconds and cannot be advanced early with the next control.
+- Status media is signature-checked, stored outside the public tree, authorized on
+  every request, served with `private, no-store`, and removed after deletion or
+  expiry. Generic realtime notices do not expose Story or owner IDs.
+- The final composer step includes **Boost post**. The pilot captures objective,
+  CTA, optional HTTPS destination, broad/contact audience, duration, fixed GHS
+  campaign reservation, and billing email. Uploaded creative is copied into a
+  campaign-owned protected object so normal 24-hour Story cleanup cannot remove an
+  approved ad.
+- Redirect checkout is initialized only on the server. Paystack references,
+  currency, and exact minor-unit amounts are reverified server-side; webhooks use
+  HMAC-SHA512 over the exact raw body. Browser callback parameters never activate
+  delivery.
+- Delivery requires both advertising review and either verified payment or an
+  intentional administrator account-credit waiver with a documented reason. Owners
+  can pause, resume, or permanently stop delivery; administrators can stop active
+  delivery for safety only with a required advertiser-visible audit reason.
+  Review/control actor and time data are retained, and owners can view deduplicated
+  reach, impressions, clicks, review notes, and billing state. Stopping does not
+  automatically create a refund.
+
+This is an honest first-party advertiser pilot, not a finished ad exchange. The
+GHS amount is a fixed campaign reservation rather than metered auction spend; it
+carries no delivery or results guarantee. There is no auction, CPM/CPC billing,
+inventory forecast, budget pacing, frequency cap, refund automation, conversion
+attribution, advanced geography/demographic model,
+creative malware/transcoding service, independent fraud detection, or scaled human
+moderation operation yet. Keep paid delivery disabled until policy, support,
+refund, and operational controls appropriate to the deployment are in place.
+
 ### Web app
 
 - Responsive two-pane/mobile interface, light/dark themes, and Lite mode
@@ -137,6 +177,16 @@ Install from the Vchat menu where supported, or use the browser's **Install app*
 | `MAX_UPLOAD_MB` | Maximum chat attachment size | `100` |
 | `REEL_MAX_MB` | Maximum Reel video size (clamped to 1–200 MB) | `50` |
 | `REEL_UPLOAD_LIMIT` | Reel upload attempts per client IP per hour (clamped to 1–500) | `20` |
+| `STORY_MAX_MB` | Maximum Status image/video size (clamped to 1–100 MB) | `30` |
+| `STORY_UPLOAD_LIMIT` | Status publish attempts per client IP per day (clamped to 1–200) | `30` |
+| `STORY_HOUSE_AD_NAME` | Disclosed house-ad advertiser name | `Vchat` |
+| `STORY_HOUSE_AD_HEADLINE` | House-ad headline | Vchat copy |
+| `STORY_HOUSE_AD_TEXT` | House-ad body copy | Vchat copy |
+| `STORY_HOUSE_AD_CTA` | House-ad CTA label | `Learn more` |
+| `STORY_HOUSE_AD_URL` | Optional HTTPS/HTTP house-ad destination | unset |
+| `STORY_AD_ADMIN_PHONES` | E.164 numbers authorized to review ads, grant credit, and safety-stop delivery | unset |
+| `PAYSTACK_SECRET_KEY` | Server-only Paystack key for GHS redirect checkout and webhook verification | unset |
+| `PUBLIC_APP_URL` | Canonical HTTPS application URL used for the checkout return | unset |
 | `TWILIO_ACCOUNT_SID` | Twilio account SID | development transport |
 | `TWILIO_AUTH_TOKEN` | Twilio API secret | development transport |
 | `TWILIO_FROM` | Twilio sender number | development transport |
@@ -147,6 +197,11 @@ For internet deployment, terminate TLS at a trusted reverse proxy, set
 `NODE_ENV=production`, set `TRUST_PROXY` to the exact proxy hop count or subnet,
 configure Twilio and TURN, use an explicit origin allowlist, and keep `data/` on
 encrypted persistent storage until the database/object-storage phase replaces it.
+If the advertiser pilot is intentionally enabled, set an HTTPS `PUBLIC_APP_URL`,
+store `PAYSTACK_SECRET_KEY` only in the server secret manager, register
+`/api/story-ads/paystack/webhook` at Paystack, tightly control
+`STORY_AD_ADMIN_PHONES`, publish ad/review/refund policies, and verify the signed
+webhook path through every proxy before accepting money.
 
 ## Storage and security model
 
@@ -154,7 +209,9 @@ encrypted persistent storage until the database/object-storage phase replaces it
 one process and writes a mode-`0600` snapshot to `data/db.v2.json`. It intentionally
 never imports the legacy schema-v1 `data/db.json`; the approved migration policy is
 a secure reset. Protected attachments, profile photos, and Reel videos live under
-`data/media`; Reel metadata and like sets are serialized into the schema-v2 snapshot.
+`data/media`; Reel, 24-hour Status, and campaign-creative metadata plus engagement
+sets/maps are serialized into the schema-v2 snapshot. Expired Status files and
+ended/stale campaign creative files are pruned by the single-node maintenance loop.
 
 This adapter is suitable for deterministic local development and phased feature
 work, not horizontal production scale. It has no multi-process consistency,
@@ -190,13 +247,18 @@ rather than as nonfunctional demo screens:
 2. **Cryptographic phase:** audited multi-device E2EE protocol integration,
    pre-key service, encrypted media keys, device verification, key-change alerts,
    encrypted backup/restore, and secure history synchronization.
-3. **Conversation surfaces:** Status, Channels, Communities, broadcasts/custom
-   lists, events and polls, richer media/view-once behavior, personalization, and
-   accessibility hardening.
-4. **Production infrastructure and calling:** PostgreSQL, Redis, object storage,
+3. **Conversation surfaces (in progress):** the transitional Status/Story and
+   first-party boost pilot described above is implemented; Channels, Communities,
+   broadcasts/custom lists, events and polls, richer media/view-once behavior,
+   personalization, and accessibility hardening remain.
+4. **Advertiser operations:** policy tooling, moderation queues and audit logs,
+   advertiser verification, fraud/abuse response, inventory forecasting, pacing,
+   frequency caps, attribution, refunds, tax/accounting controls, and production
+   reporting exports.
+5. **Production infrastructure and calling:** PostgreSQL, Redis, object storage,
    jobs/notifications, observability, abuse operations, backup recovery, and an
    SFU/TURN architecture for scalable group calls, screen sharing, and waiting
    rooms.
 
-Until phases 2–4 land and receive independent review, Vchat should be treated as a
+Until phases 2–5 land and receive independent review, Vchat should be treated as a
 securely staged development system—not a finished WhatsApp replacement.

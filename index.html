@@ -54,6 +54,9 @@
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></symbol>
   <symbol id="i-camera" viewBox="0 0 24 24"><path d="M20 5h-3.2L15 3H9L7.2 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm-8 13a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></symbol>
+  <symbol id="i-status" viewBox="0 0 24 24"><path d="M3.7 7.4A9.5 9.5 0 0 1 6.9 4.2L5.8 2.5A11.5 11.5 0 0 0 2 6.3l1.7 1.1zM16.6 3.7A9.5 9.5 0 0 1 19.8 7l1.7-1.1A11.5 11.5 0 0 0 17.7 2l-1.1 1.7zM20.3 16.6a9.5 9.5 0 0 1-3.3 3.2l1.1 1.7a11.5 11.5 0 0 0 3.8-3.8l-1.6-1.1zM7.4 20.3a9.5 9.5 0 0 1-3.2-3.3l-1.7 1.1A11.5 11.5 0 0 0 6.3 22l1.1-1.7zM12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></symbol>
+  <symbol id="i-megaphone" viewBox="0 0 24 24"><path d="M3 10v4a2 2 0 0 0 2 2h1l2 5h3l-2-5h2l8 4V4l-8 4H5a2 2 0 0 0-2 2zm18-1v6h2V9h-2z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M11 5v6H5v2h6v6h2v-6h6v-2h-6V5h-2z"/></symbol>
 </svg>
 
 <!-- ═══ LOGIN ════════════════════════════════════════════════ -->
@@ -128,6 +131,7 @@
       <header class="side-header">
         <div class="avatar sz-40 me-avatar" id="me-avatar" title="Profile"></div>
         <div class="spacer"></div>
+        <button class="hdr-btn" id="btn-stories" title="Status updates" aria-label="Open status updates" aria-controls="stories-screen"><svg class="icon"><use href="#i-status"/></svg><span class="story-notice" id="story-notice" hidden></span></button>
         <button class="hdr-btn" id="btn-reels" title="Open reels beside chat" aria-label="Open reels" aria-controls="reels-panel" aria-expanded="false"><svg class="icon"><use href="#i-play"/></svg></button>
         <button class="hdr-btn" id="btn-new-group" title="New group"><svg class="icon"><use href="#i-group"/></svg></button>
         <button class="hdr-btn" id="btn-new-chat" title="New chat"><svg class="icon"><use href="#i-newchat"/></svg></button>
@@ -267,7 +271,124 @@
   </div>
 </div>
 
+<!-- ═══ STATUS / STORIES ═════════════════════════════════════ -->
+<section class="stories-screen" id="stories-screen" aria-label="Status updates" aria-hidden="true">
+  <header class="stories-header">
+    <button class="story-icon-button" id="stories-close" type="button" aria-label="Close status"><svg class="icon"><use href="#i-back"/></svg></button>
+    <div class="stories-title"><strong>Status</strong><span>Updates disappear after 24 hours</span></div>
+    <div class="stories-header-actions">
+      <button class="story-text-button" id="story-boosts-button" type="button"><svg class="icon-sm"><use href="#i-megaphone"/></svg> My boosts</button>
+      <button class="story-text-button" id="story-review-button" type="button" hidden>Ad review</button>
+      <button class="story-primary-button" id="story-create-button" type="button"><svg class="icon-sm"><use href="#i-plus"/></svg> Add status</button>
+    </div>
+  </header>
+  <div class="stories-home" id="stories-home">
+    <div class="status-intro">
+      <span class="status-intro-icon"><svg class="icon"><use href="#i-status"/></svg></span>
+      <div><h2>Share what’s happening</h2><p>Photos, videos and text are visible to mutual contacts for 24 hours.</p></div>
+    </div>
+    <div class="story-tray" id="story-tray" role="list" aria-label="Recent status updates"></div>
+    <div class="stories-empty" id="stories-empty" hidden>
+      <div class="stories-empty-art"><svg class="icon"><use href="#i-camera"/></svg></div>
+      <h3>No friend updates yet</h3>
+      <p>When mutual contacts post a status, it will appear here.</p>
+      <button class="story-primary-button" id="story-empty-create" type="button">Share your first status</button>
+    </div>
+  </div>
+  <div class="story-viewer" id="story-viewer" hidden>
+    <div class="story-progress" id="story-progress" aria-hidden="true"></div>
+    <div class="story-viewer-meta">
+      <div id="story-viewer-avatar"></div>
+      <div class="story-viewer-who"><strong id="story-viewer-name"></strong><span id="story-viewer-time"></span></div>
+      <span class="sponsored-label" id="story-sponsored" hidden>Sponsored</span>
+      <span class="story-ad-countdown" id="story-ad-countdown" hidden></span>
+      <button class="story-icon-button" id="story-delete" type="button" aria-label="Delete status" hidden><svg class="icon"><use href="#i-trash"/></svg></button>
+      <button class="story-icon-button" id="story-viewer-close" type="button" aria-label="Close viewer"><svg class="icon"><use href="#i-close"/></svg></button>
+    </div>
+    <div class="story-stage" id="story-stage"></div>
+    <button class="story-nav story-nav-prev" id="story-prev" type="button" aria-label="Previous status"><svg class="icon"><use href="#i-back"/></svg></button>
+    <button class="story-nav story-nav-next" id="story-next" type="button" aria-label="Next status"><svg class="icon"><use href="#i-back"/></svg></button>
+    <div class="story-viewer-footer" id="story-viewer-footer">
+      <div class="story-reactions" id="story-reactions" aria-label="React to this status"></div>
+      <span class="story-insight" id="story-insight"></span>
+      <a class="story-ad-cta" id="story-ad-cta" target="_blank" rel="noopener noreferrer sponsored" hidden></a>
+    </div>
+  </div>
+  <div class="stories-loading" id="stories-loading" hidden><span class="spinner"></span> Loading status updates…</div>
+</section>
+
 <!-- ═══ Modals ═══════════════════════════════════════════════ -->
+<div class="overlay" id="modal-story-compose">
+  <div class="modal story-compose-modal">
+    <div class="modal-head">Create status</div>
+    <div class="modal-body">
+      <div class="story-compose-preview story-bg-jade" id="story-compose-preview"><span id="story-preview-placeholder">Write a status or choose a photo or video</span></div>
+      <div class="story-compose-actions">
+        <button class="story-media-choice" id="story-media-button" type="button"><svg class="icon-sm"><use href="#i-camera"/></svg> Photo or video</button>
+        <button class="btn-text danger" id="story-media-remove" type="button" hidden>Remove</button>
+        <span class="story-file-name" id="story-file-name"></span>
+      </div>
+      <input type="file" id="story-file-input" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm,.jpg,.jpeg,.png,.webp,.mp4,.mov,.webm" hidden />
+      <label class="field-label" for="story-text">Text <span class="field-hint">700 characters</span></label>
+      <textarea id="story-text" maxlength="700" rows="3" placeholder="Type a status…"></textarea>
+      <fieldset class="story-color-field">
+        <legend>Background</legend>
+        <div class="story-colors" id="story-colors">
+          <button type="button" class="story-color jade selected" data-story-color="jade" aria-label="Jade background"></button>
+          <button type="button" class="story-color ocean" data-story-color="ocean" aria-label="Ocean background"></button>
+          <button type="button" class="story-color sunset" data-story-color="sunset" aria-label="Sunset background"></button>
+          <button type="button" class="story-color violet" data-story-color="violet" aria-label="Violet background"></button>
+          <button type="button" class="story-color charcoal" data-story-color="charcoal" aria-label="Charcoal background"></button>
+        </div>
+      </fieldset>
+      <p class="story-audience-note"><svg class="icon-sm"><use href="#i-lock"/></svg> Visible to mutual contacts for 24 hours</p>
+
+      <section class="story-boost-box">
+        <label class="story-boost-toggle"><span><strong><svg class="icon-sm"><use href="#i-megaphone"/></svg> Boost post</strong><small>Promote this status as a clearly labelled sponsored story</small></span><input type="checkbox" id="story-boost-toggle" class="switch" /></label>
+        <div class="story-boost-fields" id="story-boost-fields" hidden>
+          <div class="story-boost-disclosure" id="story-boost-disclosure">Boosts require ad review and confirmed payment before delivery. Posting your normal status does not depend on approval.</div>
+          <label class="field-label" for="boost-objective">Goal</label>
+          <select id="boost-objective"><option value="profile_visits">More profile visits</option><option value="website_visits">More website visits</option><option value="messages">More messages</option></select>
+          <div id="boost-url-row" hidden><label class="field-label" for="boost-url">Website</label><input id="boost-url" type="url" maxlength="1000" placeholder="https://example.com" /></div>
+          <div class="story-form-grid">
+            <label>Call to action<select id="boost-cta"><option>Learn more</option><option>Visit profile</option><option>Send message</option><option>Sign up</option></select></label>
+            <label>Audience<select id="boost-audience"><option value="broad">Vchat audience</option><option value="contacts">Mutual contacts</option></select></label>
+            <label>Budget (GHS)<input id="boost-budget" type="number" min="10" max="10000" step="1" value="30" /></label>
+            <label>Duration<select id="boost-days"><option value="1">1 day</option><option value="3">3 days</option><option value="7" selected>7 days</option><option value="14">14 days</option></select></label>
+          </div>
+          <label class="field-label" for="boost-email">Billing email</label>
+          <input id="boost-email" type="email" maxlength="200" autocomplete="email" placeholder="you@example.com" />
+          <div class="boost-estimate" id="boost-estimate">Pilot reservation: GHS 30 for up to 7 days after activation. No delivery forecast or result is guaranteed.</div>
+        </div>
+      </section>
+      <div class="story-publish-status" id="story-publish-status" role="status"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Cancel</button><button class="btn-primary" id="story-publish" type="button">Post status</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-story-boosts">
+  <div class="modal story-campaign-modal">
+    <div class="modal-head">My boosted status</div>
+    <div class="modal-body">
+      <p class="setting-explainer">Pilot budgets are fixed campaign reservations, not live auction spend. You can pause, resume, or permanently stop active delivery; stopping does not automatically issue a refund.</p>
+      <div class="campaign-list" id="story-campaign-list"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Done</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-story-review">
+  <div class="modal story-campaign-modal">
+    <div class="modal-head">Advertising review</div>
+    <div class="modal-body">
+      <p class="setting-explainer">Approval alone never fabricates a payment. Use a documented account credit only when you intentionally waive billing.</p>
+      <div class="campaign-list" id="story-review-list"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Done</button></div>
+  </div>
+</div>
+
 <div class="overlay" id="modal-newchat">
   <div class="modal">
     <div class="modal-head">New chat</div>
