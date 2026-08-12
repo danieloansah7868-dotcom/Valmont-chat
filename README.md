@@ -35,6 +35,36 @@ npm test                 # security and integration tests
 npm audit --omit=dev     # production dependency audit
 ```
 
+## Enable real SMS verification
+
+Vchat currently sends production verification messages through Twilio's Messaging
+API. Create a funded Twilio project, obtain an SMS-capable sender that can reach the
+countries you enable, and set all three values in the deployment secret manager:
+
+```bash
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_server_only_auth_token
+TWILIO_FROM=+1xxxxxxxxxx
+NODE_ENV=production
+```
+
+`TWILIO_FROM` must be a Twilio sender/number authorized for the destination; enable
+its required geographic permissions and comply with sender-registration rules in
+each market. Twilio trial projects generally deliver only to recipient numbers that
+you have verified with Twilio, so use a production project before public testing.
+Never place the Auth Token in browser JavaScript or commit it to Git.
+
+After redeploying, request a code using a real E.164 number such as
+`+233501234567` and inspect Twilio's message logs if delivery fails. The application
+generates a cryptographically random six-digit code, stores only a salted hash,
+expires it after five minutes, limits resends and guesses, and consumes successful
+verification. In `NODE_ENV=production`, missing or incomplete Twilio configuration
+now returns HTTP 503 and never displays or logs the development code.
+
+The current OTP state is process-local. A single production server can use it, but
+a multi-instance deployment must move pending-code, attempt, and resend state to a
+shared atomic store such as Redis before traffic is load-balanced across instances.
+
 ## Implemented foundation
 
 ### Accounts and privacy
@@ -189,9 +219,9 @@ Install from the Vchat menu where supported, or use the browser's **Install app*
 | `VALMONTPAY_SECRET_KEY` | Server-only ValmontPay tenant key for checkout, verification, and webhook signatures | unset |
 | `VALMONTPAY_API_URL` | ValmontPay API origin | `https://valmontpay.app` |
 | `PUBLIC_APP_URL` | Canonical HTTPS application URL used for the ValmontPay checkout return | unset |
-| `TWILIO_ACCOUNT_SID` | Twilio account SID | development transport |
-| `TWILIO_AUTH_TOKEN` | Twilio API secret | development transport |
-| `TWILIO_FROM` | Twilio sender number | development transport |
+| `TWILIO_ACCOUNT_SID` | Server-only Twilio account SID for real verification SMS | development transport |
+| `TWILIO_AUTH_TOKEN` | Server-only Twilio API secret | development transport |
+| `TWILIO_FROM` | SMS-capable Twilio sender in E.164 format | development transport |
 | `TURN_URLS` | Comma-separated TURN URLs | STUN only |
 | `TURN_SECRET` | HMAC secret for temporary TURN credentials | unset |
 

@@ -367,7 +367,6 @@ async function requestCode(resend) {
   authPhone = data.phone;
   $('code-target').textContent = data.phone;
   localStorage.setItem('vchat.phone', data.phone);
-  if (data.username) $('name-input').value = data.username;
 
   // Dev mode: no SMS provider configured, so surface the code in the UI.
   const dev = $('dev-code');

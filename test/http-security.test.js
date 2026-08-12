@@ -181,6 +181,8 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   assert.equal(response.status, 200);
   const request = await response.json();
   assert.match(request.devCode, /^\d{6}$/);
+  assert.equal(request.registered, undefined, 'code requests must not disclose whether an account exists');
+  assert.equal(request.username, undefined, 'code requests must not disclose account profile data');
 
   response = await jsonRequest(`${base}/api/auth/verify`, { phone: request.phone, code: request.devCode });
   assert.equal(response.status, 200);
@@ -728,6 +730,18 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   assert.equal(response.status, 401);
 });
 
+
+test('production authentication fails closed when real SMS delivery is not configured', async t => {
+  const { base } = await startServer(t, { NODE_ENV: 'production' });
+  const response = await jsonRequest(
+    `${base}/api/auth/request-code`,
+    { dialCode: '233', number: '501234567' },
+  );
+  assert.equal(response.status, 503);
+  const body = await response.json();
+  assert.match(body.error, /temporarily unavailable/i);
+  assert.equal(body.devCode, undefined);
+});
 
 test('ValmontPay checkout uses the tenant contract and verifies major-unit GHS payments', async t => {
   const secret = 'test-valmontpay-secret';
