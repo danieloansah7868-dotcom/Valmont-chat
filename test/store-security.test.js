@@ -204,17 +204,17 @@ test('stories enforce mutual-contact privacy and campaigns require review plus e
   const campaign = store.createStoryCampaign(alice.id, story.id, {
     type: 'text', text: 'Promoted update', background: 'jade', objective: 'profile_visits',
     cta: 'Visit profile', audience: 'broad', budgetGhs: 25, durationDays: 3,
-    billingEmail: 'alice@example.com', paymentProvider: 'paystack',
+    billingEmail: 'alice@example.com', paymentProvider: 'valmontpay',
   });
   assert.ok(campaign?.id);
   assert.equal(campaign.status, 'pending_review');
   assert.equal(store.setCampaignPaymentInitialization(campaign.id, outsider.id, { initialized: true }), null);
   const initialized = store.setCampaignPaymentInitialization(campaign.id, alice.id, {
-    provider: 'paystack', reference: 'story-test-reference',
-    authorizationUrl: 'https://checkout.paystack.com/example', initialized: true,
+    provider: 'valmontpay', reference: 'story-test-reference',
+    authorizationUrl: 'https://valmontpay.app/pay.html?access_code=ac_test', initialized: true,
   });
   assert.equal(initialized.paymentStatus, 'pending');
-  assert.equal(initialized.checkoutUrl, 'https://checkout.paystack.com/example');
+  assert.equal(initialized.checkoutUrl, 'https://valmontpay.app/pay.html?access_code=ac_test');
 
   store.reviewStoryCampaign(campaign.id, { approved: true, note: 'Creative approved', reviewerId: alice.id });
   assert.equal(store.listEligibleStoryAds(bob.id).some(item => item.id === campaign.id), false,
@@ -251,10 +251,10 @@ test('stories enforce mutual-contact privacy and campaigns require review plus e
   const latePayment = store.createStoryCampaign(alice.id, story.id, {
     type: 'text', text: 'Stopped before payment', objective: 'messages', cta: 'Send message',
     audience: 'broad', budgetGhs: 10, durationDays: 1, billingEmail: 'alice@example.com',
-    paymentProvider: 'paystack',
+    paymentProvider: 'valmontpay',
   });
   store.setCampaignPaymentInitialization(latePayment.id, alice.id, {
-    provider: 'paystack', reference: 'late-payment-reference', initialized: true,
+    provider: 'valmontpay', reference: 'late-payment-reference', initialized: true,
   });
   store.reviewStoryCampaign(latePayment.id, { approved: true, reviewerId: alice.id });
   assert.equal(store.controlStoryCampaign(latePayment.id, alice.id, 'stop').status, 'stopped');

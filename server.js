@@ -40,9 +40,9 @@ app.use(express.json({
   limit: '256kb',
   strict: true,
   verify(req, _res, buffer) {
-    // Paystack webhook signatures cover the exact request bytes. Keep a raw
+    // ValmontPay webhook signatures cover the exact request bytes. Keep a raw
     // copy only for that endpoint; all other JSON continues through normally.
-    if (req.originalUrl?.split('?')[0] === '/api/story-ads/paystack/webhook') {
+    if (req.originalUrl?.split('?')[0] === '/api/story-ads/valmontpay/webhook') {
       req.rawBody = Buffer.from(buffer);
     }
   },

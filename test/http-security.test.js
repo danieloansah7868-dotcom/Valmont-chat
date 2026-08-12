@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
+const http = require('node:http');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { io: socketClient } = require('socket.io-client');
@@ -41,6 +42,8 @@ async function startServer(t, extraEnv = {}) {
   delete env.TWILIO_ACCOUNT_SID;
   delete env.TWILIO_AUTH_TOKEN;
   delete env.TWILIO_FROM;
+  if (!Object.hasOwn(extraEnv, 'VALMONTPAY_SECRET_KEY')) delete env.VALMONTPAY_SECRET_KEY;
+  if (!Object.hasOwn(extraEnv, 'VALMONTPAY_API_URL')) delete env.VALMONTPAY_API_URL;
   const child = spawn(process.execPath, ['server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
   const ready = new Promise((resolve, reject) => {
@@ -73,6 +76,64 @@ function jsonRequest(url, body, headers = {}, method = 'POST') {
     headers: { 'content-type': 'application/json', ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+}
+
+async function startValmontPayStub(t, secret) {
+  const port = await availablePort();
+  const requests = [];
+  const initialized = new Map();
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      const rawBody = Buffer.concat(chunks).toString();
+      const body = rawBody ? JSON.parse(rawBody) : null;
+      requests.push({ method: req.method, url: req.url, authorization: req.headers.authorization, body });
+      res.setHeader('Content-Type', 'application/json');
+      if (req.headers.authorization !== `Bearer ${secret}`) {
+        res.statusCode = 401;
+        return res.end(JSON.stringify({ status: false, message: 'Unauthorized' }));
+      }
+      if (req.method === 'POST' && req.url === '/api/transaction/initialize') {
+        initialized.set(body.reference, body);
+        return res.end(JSON.stringify({
+          status: true,
+          data: {
+            access_code: 'ac_contract_test',
+            reference: body.reference,
+            amount: body.amount,
+            currency: body.currency,
+            pay_url: `https://valmontpay.app/pay.html?access_code=ac_contract_test`,
+          },
+        }));
+      }
+      const verifyMatch = req.method === 'GET' && req.url.match(/^\/api\/transaction\/verify\/(.+)$/);
+      if (verifyMatch && initialized.has(decodeURIComponent(verifyMatch[1]))) {
+        const payment = initialized.get(decodeURIComponent(verifyMatch[1]));
+        return res.end(JSON.stringify({
+          status: true,
+          data: {
+            reference: payment.reference,
+            status: 'success',
+            amount: payment.amount,
+            currency: payment.currency,
+            channel: 'mobile_money',
+            paid_at: '2025-06-15T12:00:00Z',
+            merchant: 'vchat',
+            gateway_reference: payment.reference,
+          },
+        }));
+      }
+      res.statusCode = 404;
+      return res.end(JSON.stringify({ status: false, message: 'Not found' }));
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', resolve);
+  });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  return { base: `http://127.0.0.1:${port}`, requests };
 }
 
 function socketAck(socket, event, payload, timeoutMs = 3000) {
@@ -434,7 +495,7 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
 
   response = await fetch(`${base}/api/story-ads/payment/verify?reference=unknown`, { headers: { cookie } });
   assert.equal(response.status, 404);
-  response = await jsonRequest(`${base}/api/story-ads/paystack/webhook`, { event: 'charge.success', data: {} });
+  response = await jsonRequest(`${base}/api/story-ads/valmontpay/webhook`, { event: 'charge.success', data: {} });
   assert.equal(response.status, 401, 'unsigned payment webhooks are rejected');
 
   // Reels use their own authenticated, block-aware media boundary and remove
@@ -668,23 +729,122 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
 });
 
 
-test('Paystack webhooks require an HMAC over the exact raw request bytes', async t => {
-  const secret = 'test-paystack-secret';
-  const { base } = await startServer(t, { PAYSTACK_SECRET_KEY: secret });
-  const payload = Buffer.from(JSON.stringify({ event: 'unhandled.test', data: { amount: 2500, currency: 'GHS' } }));
-  const signature = crypto.createHmac('sha512', secret).update(payload).digest('hex');
+test('ValmontPay checkout uses the tenant contract and verifies major-unit GHS payments', async t => {
+  const secret = 'test-valmontpay-secret';
+  const provider = await startValmontPayStub(t, secret);
+  const { base } = await startServer(t, {
+    VALMONTPAY_SECRET_KEY: secret,
+    VALMONTPAY_API_URL: provider.base,
+    PUBLIC_APP_URL: 'https://chat.example.com',
+  });
 
-  let response = await fetch(`${base}/api/story-ads/paystack/webhook`, {
+  let response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number: '501234567' });
+  const request = await response.json();
+  response = await jsonRequest(`${base}/api/auth/verify`, { phone: request.phone, code: request.devCode });
+  assert.equal(response.status, 200);
+  response = await jsonRequest(`${base}/api/auth/register`, {
+    phone: request.phone,
+    username: 'ValmontPay Tester',
+    avatar: 'V',
+  });
+  const cookie = response.headers.get('set-cookie').match(/^([^;]+)/)[1];
+
+  const boost = new FormData();
+  for (const [key, value] of Object.entries({
+    type: 'text', text: 'Pay for this promoted status', background: 'jade', boost: 'true',
+    objective: 'profile_visits', cta: 'Visit profile', adAudience: 'broad',
+    budgetGhs: '25', durationDays: '3', billingEmail: 'payer@example.com',
+  })) boost.append(key, value);
+  response = await fetch(`${base}/api/stories`, {
+    method: 'POST', headers: { cookie, origin: base }, body: boost,
+  });
+  assert.equal(response.status, 201);
+  const created = await response.json();
+  assert.equal(created.campaign.paymentProvider, 'valmontpay');
+  assert.equal(created.campaign.paymentStatus, 'pending');
+  assert.equal(created.payment.authorizationUrl, 'https://valmontpay.app/pay.html?access_code=ac_contract_test');
+
+  const initialization = provider.requests.find(entry => entry.url === '/api/transaction/initialize');
+  assert.equal(initialization.authorization, `Bearer ${secret}`);
+  assert.deepEqual(initialization.body, {
+    amount: 25,
+    reference: created.payment.reference,
+    currency: 'GHS',
+    email: 'payer@example.com',
+    phone: '+233501234567',
+    callback_url: 'https://chat.example.com/api/story-ads/valmontpay/return',
+  });
+
+  response = await jsonRequest(
+    `${base}/api/story-ads/${created.campaign.id}/payment/initialize`,
+    {}, { cookie, origin: base },
+  );
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).payment.authorizationUrl, created.payment.authorizationUrl);
+  assert.equal(provider.requests.filter(entry => entry.url === '/api/transaction/initialize').length, 1,
+    'an existing pending checkout is reused instead of creating another transaction');
+
+  const webhookBody = Buffer.from(JSON.stringify({
+    event: 'charge.success',
+    data: {
+      reference: created.payment.reference,
+      status: 'success',
+      amount: 25,
+      currency: 'GHS',
+      gateway_reference: created.payment.reference,
+    },
+  }));
+  response = await fetch(`${base}/api/story-ads/valmontpay/webhook`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-paystack-signature': signature },
+    headers: {
+      'content-type': 'application/json',
+      'x-valmontpay-signature': crypto.createHmac('sha256', secret).update(webhookBody).digest('hex'),
+    },
+    body: webhookBody,
+  });
+  assert.equal(response.status, 200);
+  response = await fetch(`${base}/api/story-ads/campaigns`, { headers: { cookie } });
+  assert.equal((await response.json()).campaigns[0].paymentStatus, 'paid');
+
+  response = await fetch(
+    `${base}/api/story-ads/valmontpay/return?ref=${encodeURIComponent(created.payment.reference)}&status=success&merchant=vchat`,
+    { redirect: 'manual' },
+  );
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get('location'), `/?boost_return=1&reference=${encodeURIComponent(created.payment.reference)}`);
+
+  response = await fetch(
+    `${base}/api/story-ads/payment/verify?reference=${encodeURIComponent(created.payment.reference)}`,
+    { headers: { cookie } },
+  );
+  assert.equal(response.status, 200);
+  const verified = await response.json();
+  assert.equal(verified.campaign.paymentStatus, 'paid');
+  assert.equal(verified.campaign.status, 'pending_review');
+  const verification = provider.requests.find(entry => entry.url.startsWith('/api/transaction/verify/'));
+  assert.equal(verification.authorization, `Bearer ${secret}`);
+});
+
+test('ValmontPay webhooks require an HMAC-SHA256 over the exact raw request bytes', async t => {
+  const secret = 'test-valmontpay-secret';
+  const { base } = await startServer(t, { VALMONTPAY_SECRET_KEY: secret });
+  const payload = Buffer.from(JSON.stringify({
+    event: 'unhandled.test',
+    data: { amount: 25, currency: 'GHS' },
+  }));
+  const signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+
+  let response = await fetch(`${base}/api/story-ads/valmontpay/webhook`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-valmontpay-signature': signature },
     body: payload,
   });
   assert.equal(response.status, 200);
 
   const altered = Buffer.from(`${payload.toString()} `);
-  response = await fetch(`${base}/api/story-ads/paystack/webhook`, {
+  response = await fetch(`${base}/api/story-ads/valmontpay/webhook`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-paystack-signature': signature },
+    headers: { 'content-type': 'application/json', 'x-valmontpay-signature': signature },
     body: altered,
   });
   assert.equal(response.status, 401, 'a signature for different raw bytes must be rejected');

@@ -114,10 +114,11 @@ those production-scale controls belong in the infrastructure phase.
   campaign reservation, and billing email. Uploaded creative is copied into a
   campaign-owned protected object so normal 24-hour Story cleanup cannot remove an
   approved ad.
-- Redirect checkout is initialized only on the server. Paystack references,
-  currency, and exact minor-unit amounts are reverified server-side; webhooks use
-  HMAC-SHA512 over the exact raw body. Browser callback parameters never activate
-  delivery.
+- Redirect checkout is initialized only on the server through the tenant-scoped
+  ValmontPay API. References, GHS currency, and exact major-unit amounts are
+  reverified server-side; webhooks use `x-valmontpay-signature` with HMAC-SHA256
+  over the exact raw body. Failed checkout initialization can be retried from **My
+  boosts**; browser callback parameters never activate delivery.
 - Delivery requires both advertising review and either verified payment or an
   intentional administrator account-credit waiver with a documented reason. Owners
   can pause, resume, or permanently stop delivery; administrators can stop active
@@ -185,8 +186,9 @@ Install from the Vchat menu where supported, or use the browser's **Install app*
 | `STORY_HOUSE_AD_CTA` | House-ad CTA label | `Learn more` |
 | `STORY_HOUSE_AD_URL` | Optional HTTPS/HTTP house-ad destination | unset |
 | `STORY_AD_ADMIN_PHONES` | E.164 numbers authorized to review ads, grant credit, and safety-stop delivery | unset |
-| `PAYSTACK_SECRET_KEY` | Server-only Paystack key for GHS redirect checkout and webhook verification | unset |
-| `PUBLIC_APP_URL` | Canonical HTTPS application URL used for the checkout return | unset |
+| `VALMONTPAY_SECRET_KEY` | Server-only ValmontPay tenant key for checkout, verification, and webhook signatures | unset |
+| `VALMONTPAY_API_URL` | ValmontPay API origin | `https://valmontpay.app` |
+| `PUBLIC_APP_URL` | Canonical HTTPS application URL used for the ValmontPay checkout return | unset |
 | `TWILIO_ACCOUNT_SID` | Twilio account SID | development transport |
 | `TWILIO_AUTH_TOKEN` | Twilio API secret | development transport |
 | `TWILIO_FROM` | Twilio sender number | development transport |
@@ -198,10 +200,12 @@ For internet deployment, terminate TLS at a trusted reverse proxy, set
 configure Twilio and TURN, use an explicit origin allowlist, and keep `data/` on
 encrypted persistent storage until the database/object-storage phase replaces it.
 If the advertiser pilot is intentionally enabled, set an HTTPS `PUBLIC_APP_URL`,
-store `PAYSTACK_SECRET_KEY` only in the server secret manager, register
-`/api/story-ads/paystack/webhook` at Paystack, tightly control
-`STORY_AD_ADMIN_PHONES`, publish ad/review/refund policies, and verify the signed
-webhook path through every proxy before accepting money.
+store `VALMONTPAY_SECRET_KEY` only in the server secret manager, register
+`/api/story-ads/valmontpay/webhook` as the tenant webhook at ValmontPay, tightly
+control `STORY_AD_ADMIN_PHONES`, publish ad/review/refund policies, and verify the
+signed webhook path through every proxy before accepting money. This integration
+uses HMAC-SHA256 because that is the supplied `x-valmontpay-signature` algorithm;
+confirm the tenant configuration uses the same algorithm before going live.
 
 ## Storage and security model
 

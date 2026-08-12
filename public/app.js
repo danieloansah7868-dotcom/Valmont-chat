@@ -3254,7 +3254,7 @@ async function publishStory() {
     await loadStories();
     if (data.boostError) toast(data.boostError);
     else toast(data.campaign ? 'Status posted · boost saved for review and payment' : 'Status posted');
-    if (data.payment?.authorizationUrl && confirm('Your status is live. Continue to Paystack to pay for this boost?')) {
+    if (data.payment?.authorizationUrl && confirm('Your status is live. Continue to ValmontPay to pay for this boost?')) {
       location.assign(data.payment.authorizationUrl);
     }
   } catch (error) {
@@ -3300,6 +3300,12 @@ function campaignCard(campaign, admin = false) {
     pay.href = campaign.checkoutUrl;
     pay.rel = 'noopener noreferrer';
     actions.appendChild(pay);
+  } else if (!admin && storyPaymentConfigured && ['failed', 'configuration_required'].includes(campaign.paymentStatus)
+      && !['completed', 'expired', 'rejected', 'stopped'].includes(campaign.status)) {
+    const retry = el('button', '', 'Start ValmontPay checkout');
+    retry.type = 'button';
+    retry.onclick = () => initializeStoryBoostPayment(campaign.id, retry);
+    actions.appendChild(retry);
   }
   if (campaign.reviewNote) actions.appendChild(el('span', '', `Review note: ${esc(campaign.reviewNote)}`));
   if (campaign.reviewer) {
@@ -3332,6 +3338,24 @@ function campaignCard(campaign, admin = false) {
   }
   if (actions.childNodes.length) card.appendChild(actions);
   return card;
+}
+
+async function initializeStoryBoostPayment(campaignId, button) {
+  button.disabled = true;
+  const { ok, data } = await api(
+    `/api/story-ads/${encodeURIComponent(campaignId)}/payment/initialize`,
+    {},
+    { method: 'POST' },
+  );
+  if (!ok) {
+    button.disabled = false;
+    return toast(data.error || 'ValmontPay checkout could not be started');
+  }
+  if (!data.payment?.authorizationUrl) {
+    button.disabled = false;
+    return toast('ValmontPay did not return a checkout address');
+  }
+  location.assign(data.payment.authorizationUrl);
 }
 
 async function controlStoryCampaign(campaignId, action, asAdmin = false) {
@@ -3397,10 +3421,12 @@ async function reviewCampaign(id, decision, waivePayment) {
 async function verifyReturnedBoostPayment() {
   const params = new URLSearchParams(location.search);
   if (params.get('boost_return') !== '1') return;
-  const reference = params.get('reference') || params.get('trxref');
+  const reference = params.get('reference') || params.get('ref');
   params.delete('boost_return');
   params.delete('reference');
-  params.delete('trxref');
+  params.delete('ref');
+  params.delete('status');
+  params.delete('merchant');
   const remaining = params.toString();
   history.replaceState({}, '', `${location.pathname}${remaining ? `?${remaining}` : ''}${location.hash}`);
   if (!reference) return toast('Returned from checkout without a payment reference');
