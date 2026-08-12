@@ -18,6 +18,18 @@ let searchQuery = '';
 let typingUsers = new Map();   // chatId -> Map(userId -> {name, timer})
 const typingTimers = {};
 let unseen = 0;
+let reels = [];
+let reelsCursor = null;
+let reelsLoading = false;
+let reelsReloadPending = false;
+let reelsExhausted = false;
+let reelsObserver = null;
+let reelsRefreshTimer = null;
+let reelMaxBytes = 50 * 1024 * 1024;
+let reelUploadFile = null;
+let reelUploadPreviewUrl = null;
+let reelUploadAbort = null;
+let reelUploadCleanup = null;
 
 const AVATARS = ['😀','😎','🦊','🐼','🐯','🦁','🐸','🐵','🦄','🐙','🌟','🚀','🔥','🍀','🎧','⚽','🎸','🌺','🍕','🐨'];
 const NOTIFICATION_DEFAULTS = {
@@ -525,6 +537,10 @@ function connect() {
 
   socket.on('session:revoked', () => {
     socket.close();
+    closeModal('modal-reel-upload');
+    closeReels();
+    reels = [];
+    $('reels-feed').innerHTML = '';
     $('login').style.display = '';
     document.body.classList.remove('ready');
     showStep('step-phone');
@@ -560,6 +576,11 @@ function connect() {
     refreshDrawerIfOpen();
   });
   socket.on('presence:update', () => {});
+  socket.on('reels:changed', () => {
+    if (!document.body.classList.contains('reels-open')) return;
+    clearTimeout(reelsRefreshTimer);
+    reelsRefreshTimer = setTimeout(() => loadReels(true, true), 350);
+  });
 
   socket.on('call:incoming', onCallIncoming);
   socket.on('call:accepted', onCallAccepted);
@@ -716,7 +737,15 @@ function notifyTitle() {
   document.title = `(${unseen}) VChat`;
 }
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) { unseen = 0; document.title = 'VChat'; }
+  if (document.hidden) pauseReelVideos();
+  else {
+    unseen = 0;
+    document.title = 'VChat';
+    if (document.body.classList.contains('reels-open') && reelAutoplayEnabled()) {
+      const current = $('reels-feed')?.querySelector(`[data-id="${visibleReelId() || ''}"] video`);
+      current?.play().catch(() => {});
+    }
+  }
 });
 
 // ── Me / profile ───────────────────────────────────────────────────────
@@ -1687,7 +1716,8 @@ function setLite(on) {
   document.body.classList.toggle('lite', lite);
   updateCallButtons();
   if (activeId) renderMessages();
-  toast(lite ? 'Lite mode on — photos load on tap' : 'Lite mode off');
+  if (document.body.classList.contains('reels-open')) renderReels(visibleReelId());
+  toast(lite ? 'Lite mode on — media loads only when requested' : 'Lite mode off');
 }
 
 function openLiteMode() {
@@ -2145,6 +2175,7 @@ function openDrawer() {
       if (isBlocked) set.delete(entity.id); else set.add(entity.id);
       me.blocked = [...set];
       toast(isBlocked ? 'Contact unblocked' : 'Contact blocked');
+      if (document.body.classList.contains('reels-open')) loadReels(true, true).catch(() => {});
       openDrawer();
     };
     const report = el('button', 'drawer-action danger', `${icon('info')} Report contact`);
@@ -2173,6 +2204,7 @@ function openModal(id) { $(id).classList.add('show'); }
 function closeModal(id) {
   $(id).classList.remove('show');
   if (id === 'modal-profile') profileModalCleanup?.();
+  if (id === 'modal-reel-upload') reelUploadCleanup?.();
   if (id === 'modal-rate') rating = null;
 }
 document.querySelectorAll('.overlay').forEach(o => {
@@ -2485,10 +2517,311 @@ function openNotifications() {
   openModal('modal-notifications');
 }
 
+// ── Reels companion pane ──────────────────────────────────────────────
+function visibleReelId() {
+  const feed = $('reels-feed');
+  const cards = [...feed.querySelectorAll('.reel-card')];
+  if (!cards.length) return null;
+  return cards.reduce((best, card) => (
+    Math.abs(card.offsetTop - feed.scrollTop) < Math.abs(best.offsetTop - feed.scrollTop) ? card : best
+  )).dataset.id;
+}
+
+function pauseReelVideos() {
+  $('reels-feed')?.querySelectorAll('video').forEach(video => video.pause());
+}
+
+function reelAutoplayEnabled() {
+  return !lite && !document.hidden && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+async function loadReels(reset = false, preservePosition = false) {
+  if (reelsLoading) {
+    if (reset) reelsReloadPending = true;
+    return;
+  }
+  const keepId = preservePosition ? visibleReelId() : null;
+  reelsLoading = true;
+  if (reset) {
+    reelsCursor = null;
+    reelsExhausted = false;
+  }
+  if (!reels.length) $('reels-feed').innerHTML = '<div class="reels-loading">Loading reels…</div>';
+  try {
+    const query = new URLSearchParams({ limit: '10' });
+    if (!reset && reelsCursor) query.set('cursor', reelsCursor);
+    const response = await fetch(`/api/reels?${query}`, { credentials: 'same-origin' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Could not load reels');
+    const incoming = Array.isArray(data.items) ? data.items : [];
+    if (Number.isFinite(data.maxUploadBytes) && data.maxUploadBytes > 0) reelMaxBytes = data.maxUploadBytes;
+    if (reset) reels = incoming;
+    else {
+      const known = new Set(reels.map(reel => reel.id));
+      reels.push(...incoming.filter(reel => !known.has(reel.id)));
+    }
+    reelsCursor = data.nextCursor || null;
+    reelsExhausted = !reelsCursor;
+    if (document.body.classList.contains('reels-open')) renderReels(keepId);
+  } catch (error) {
+    if (!reels.length) {
+      $('reels-feed').innerHTML = `<div class="reels-empty"><strong>Reels unavailable</strong><span>${esc(error.message)}</span><button class="btn-text" type="button" id="reels-retry">Try again</button></div>`;
+      $('reels-retry').onclick = () => loadReels(true);
+    } else toast(error.message);
+  } finally {
+    reelsLoading = false;
+    if (reelsReloadPending) {
+      reelsReloadPending = false;
+      if (document.body.classList.contains('reels-open')) loadReels(true, true);
+    }
+  }
+}
+
+function renderReels(keepId = null) {
+  const feed = $('reels-feed');
+  reelsObserver?.disconnect();
+  reelsObserver = null;
+  feed.innerHTML = '';
+
+  if (!reels.length) {
+    feed.innerHTML = '<div class="reels-empty"><strong>No reels yet</strong><span>Post a short video and keep chatting while everyone scrolls.</span><button class="btn-text" type="button" id="reels-empty-upload">Post the first reel</button></div>';
+    $('reels-empty-upload').onclick = chooseReelFile;
+    return;
+  }
+
+  for (const reel of reels) {
+    const owner = reel.owner || { id: '', username: 'Vchat user', avatar: '🎬' };
+    const mine = owner.id === me.id;
+    const card = el('article', 'reel-card paused');
+    card.dataset.id = reel.id;
+    card.innerHTML = `
+      <video class="reel-video" src="${esc(reel.videoUrl)}" muted loop playsinline preload="${lite ? 'none' : 'metadata'}" aria-label="Reel by ${esc(owner.username)}"></video>
+      <div class="reel-play-state">${icon('play')}</div>
+      <div class="reel-shade"></div>
+      <div class="reel-meta">
+        <button class="reel-owner" type="button" data-reel-action="chat" ${mine ? 'disabled' : ''}>${avatarHTML(owner, 32)}<span>${esc(mine ? 'You' : owner.username)}</span></button>
+        ${reel.caption ? `<div class="reel-caption">${esc(reel.caption)}</div>` : ''}
+        <span class="reel-date">${esc(dayLabel(reel.createdAt))} · ${esc(timeOf(reel.createdAt))}</span>
+      </div>
+      <div class="reel-actions">
+        <button class="reel-action ${reel.liked ? 'on' : ''}" type="button" data-reel-action="like" aria-label="${reel.liked ? 'Unlike' : 'Like'} reel"><span aria-hidden="true">♥</span><span class="reel-action-count">${Number(reel.likeCount) || 0}</span></button>
+        <button class="reel-action" type="button" data-reel-action="play" aria-label="Play reel">${icon('play')}</button>
+        ${mine
+          ? `<button class="reel-action" type="button" data-reel-action="delete" aria-label="Delete reel">${icon('trash')}</button>`
+          : `<button class="reel-action" type="button" data-reel-action="chat" aria-label="Chat with ${esc(owner.username)}">${icon('chat')}</button>`}
+        <button class="reel-action" type="button" data-reel-action="sound" aria-label="Turn sound on"><span aria-hidden="true">🔇</span></button>
+      </div>`;
+
+    const video = card.querySelector('video');
+    const playButton = card.querySelector('[data-reel-action="play"]');
+    const setPlaying = playing => {
+      card.classList.toggle('paused', !playing);
+      playButton.innerHTML = icon(playing ? 'pause' : 'play');
+      playButton.setAttribute('aria-label', playing ? 'Pause reel' : 'Play reel');
+    };
+    video.onclick = () => video.paused ? video.play().catch(() => {}) : video.pause();
+    video.onplay = () => setPlaying(true);
+    video.onpause = () => setPlaying(false);
+    video.onerror = () => card.classList.add('reel-error');
+    playButton.onclick = event => {
+      event.stopPropagation();
+      if (video.paused) video.play().catch(() => {});
+      else video.pause();
+    };
+
+    card.querySelectorAll('[data-reel-action="chat"]').forEach(button => {
+      if (!mine) button.onclick = event => { event.stopPropagation(); chatWithReelOwner(owner.id); };
+    });
+    card.querySelector('[data-reel-action="like"]').onclick = event => {
+      event.stopPropagation();
+      updateReelLike(reel, card);
+    };
+    card.querySelector('[data-reel-action="sound"]').onclick = event => {
+      event.stopPropagation();
+      video.muted = !video.muted;
+      event.currentTarget.firstElementChild.textContent = video.muted ? '🔇' : '🔊';
+      event.currentTarget.setAttribute('aria-label', video.muted ? 'Turn sound on' : 'Mute reel');
+      if (video.paused) video.play().catch(() => {});
+    };
+    if (mine) card.querySelector('[data-reel-action="delete"]').onclick = event => {
+      event.stopPropagation();
+      removeReel(reel.id);
+    };
+    feed.appendChild(card);
+  }
+
+  reelsObserver = new IntersectionObserver(entries => {
+    if (!document.body.classList.contains('reels-open')) return;
+    for (const entry of entries) {
+      const video = entry.target.querySelector('video');
+      if (entry.isIntersecting && entry.intersectionRatio >= 0.65) {
+        feed.querySelectorAll('video').forEach(other => { if (other !== video) other.pause(); });
+        if (reelAutoplayEnabled()) video.play().catch(() => entry.target.classList.add('paused'));
+      } else if (entry.intersectionRatio < 0.35) video.pause();
+    }
+  }, { root: feed, threshold: [0.2, 0.35, 0.65, 0.85] });
+  feed.querySelectorAll('.reel-card').forEach(card => reelsObserver.observe(card));
+
+  requestAnimationFrame(() => {
+    const target = keepId && feed.querySelector(`[data-id="${CSS.escape(keepId)}"]`);
+    if (target) feed.scrollTop = target.offsetTop;
+  });
+}
+
+async function updateReelLike(reel, card) {
+  const button = card.querySelector('[data-reel-action="like"]');
+  if (button.disabled) return;
+  button.disabled = true;
+  const desired = !reel.liked;
+  reel.liked = desired;
+  reel.likeCount = Math.max(0, (Number(reel.likeCount) || 0) + (desired ? 1 : -1));
+  button.classList.toggle('on', desired);
+  button.setAttribute('aria-label', desired ? 'Unlike reel' : 'Like reel');
+  button.querySelector('.reel-action-count').textContent = reel.likeCount;
+  try {
+    const { ok, data } = await api(`/api/reels/${encodeURIComponent(reel.id)}/like`, { liked: desired }, { method: 'PUT' });
+    if (!ok) throw new Error(data.error || 'Could not update like');
+    Object.assign(reel, data.reel);
+    button.querySelector('.reel-action-count').textContent = reel.likeCount;
+  } catch (error) {
+    reel.liked = !desired;
+    reel.likeCount = Math.max(0, reel.likeCount + (desired ? -1 : 1));
+    button.classList.toggle('on', reel.liked);
+    button.querySelector('.reel-action-count').textContent = reel.likeCount;
+    toast(error.message || 'Could not update like');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function chatWithReelOwner(ownerId) {
+  if (!ownerId || ownerId === me.id) return;
+  socket.emit('chat:startDM', { targetUserId: ownerId }, result => {
+    if (result?.error) return toast(result.error);
+    if (result?.chat) openChat(result.chat.id);
+  });
+}
+
+async function removeReel(reelId) {
+  if (!confirm('Delete this reel permanently?')) return;
+  try {
+    const { ok, data } = await api(`/api/reels/${encodeURIComponent(reelId)}`, {}, { method: 'DELETE' });
+    if (!ok) throw new Error(data.error || 'Could not delete reel');
+    const keep = visibleReelId();
+    reels = reels.filter(reel => reel.id !== reelId);
+    renderReels(keep === reelId ? null : keep);
+    toast('Reel deleted');
+  } catch (error) {
+    toast(error.message || 'Could not delete reel');
+  }
+}
+
+function openReels() {
+  document.body.classList.add('reels-open');
+  $('reels-panel').setAttribute('aria-hidden', 'false');
+  $('btn-reels').setAttribute('aria-expanded', 'true');
+  $('btn-reels-chat').setAttribute('aria-expanded', 'true');
+  $('drawer').classList.remove('open');
+  loadReels(true);
+}
+
+function closeReels() {
+  clearTimeout(reelsRefreshTimer);
+  reelsReloadPending = false;
+  document.body.classList.remove('reels-open');
+  $('reels-panel').setAttribute('aria-hidden', 'true');
+  $('btn-reels').setAttribute('aria-expanded', 'false');
+  $('btn-reels-chat').setAttribute('aria-expanded', 'false');
+  pauseReelVideos();
+}
+
+function toggleReels() {
+  if (document.body.classList.contains('reels-open')) closeReels();
+  else openReels();
+}
+
+function chooseReelFile() {
+  $('reel-file-input').value = '';
+  $('reel-file-input').click();
+}
+
+function prepareReelUpload(file) {
+  if (!file) return;
+  if (!['video/mp4', 'video/quicktime', 'video/webm'].includes(file.type) || file.size > reelMaxBytes) {
+    return toast(`Choose an MP4, MOV, or WebM video up to ${fileSize(reelMaxBytes)}`);
+  }
+  reelUploadCleanup?.();
+  reelUploadFile = file;
+  reelUploadPreviewUrl = URL.createObjectURL(file);
+  $('reel-upload-preview').src = reelUploadPreviewUrl;
+  $('reel-file-summary').textContent = `${file.name} · ${fileSize(file.size)}`;
+  $('reel-caption').value = '';
+  $('reel-upload-status').textContent = '';
+  $('reel-publish').disabled = false;
+  const cleanup = () => {
+    reelUploadAbort?.abort();
+    reelUploadAbort = null;
+    $('reel-upload-preview').pause();
+    $('reel-upload-preview').removeAttribute('src');
+    $('reel-upload-preview').load();
+    if (reelUploadPreviewUrl) URL.revokeObjectURL(reelUploadPreviewUrl);
+    reelUploadPreviewUrl = null;
+    reelUploadFile = null;
+    $('reel-file-input').value = '';
+    if (reelUploadCleanup === cleanup) reelUploadCleanup = null;
+  };
+  reelUploadCleanup = cleanup;
+  openModal('modal-reel-upload');
+}
+
+async function publishReel() {
+  if (!reelUploadFile || reelUploadAbort) return;
+  const button = $('reel-publish');
+  const status = $('reel-upload-status');
+  const form = new FormData();
+  form.append('video', reelUploadFile, reelUploadFile.name);
+  form.append('caption', $('reel-caption').value.trim());
+  const request = new XMLHttpRequest();
+  reelUploadAbort = request;
+  button.disabled = true;
+  status.textContent = 'Uploading securely… 0%';
+  status.style.color = 'var(--text-secondary)';
+  try {
+    const data = await new Promise((resolve, reject) => {
+      request.open('POST', '/api/reels');
+      request.withCredentials = true;
+      request.responseType = 'json';
+      request.upload.onprogress = event => {
+        if (event.lengthComputable) status.textContent = `Uploading securely… ${Math.min(99, Math.round((event.loaded / event.total) * 100))}%`;
+      };
+      request.onerror = () => reject(new Error('Network error while uploading'));
+      request.onabort = () => reject(Object.assign(new Error('Upload cancelled'), { name: 'AbortError' }));
+      request.onload = () => {
+        const body = request.response && typeof request.response === 'object' ? request.response : {};
+        if (request.status >= 200 && request.status < 300) resolve(body);
+        else reject(new Error(body.error || 'Could not post reel'));
+      };
+      request.send(form);
+    });
+    if (!data.reel) throw new Error('The server did not return the published reel');
+    reelUploadAbort = null;
+    closeModal('modal-reel-upload');
+    openReels();
+    toast('Reel posted');
+  } catch (error) {
+    if (error.name === 'AbortError') return;
+    reelUploadAbort = null;
+    button.disabled = false;
+    status.style.color = 'var(--danger)';
+    status.textContent = error.message || 'Could not post reel';
+  }
+}
+
 // ── Main menu ──────────────────────────────────────────────────────────
 function mainMenu(e) {
   showCtxMenu(e, [
     { label: 'New group', fn: openNewGroup },
+    { label: document.body.classList.contains('reels-open') ? 'Close reels' : 'Reels · scroll while chatting', fn: toggleReels },
     { label: 'Profile', fn: openProfile },
     { label: 'Privacy & security', fn: openPrivacy },
     { label: 'Notifications & media', fn: openNotifications },
@@ -2718,6 +3051,7 @@ function attachLocal(stream) {
 }
 
 async function startCall(media) {
+  pauseReelVideos();
   const c = activeChat();
   if (!c) return;
   if (c.type !== 'dm') return toast('Calls are one-to-one only');
@@ -2747,6 +3081,7 @@ async function startCall(media) {
 
 function onCallIncoming({ callId, chatId, media, from }) {
   if (call) return;  // server guards this, belt & braces
+  pauseReelVideos();
   call = { id: callId, chatId, peer: from, media, role: 'callee', state: 'ringing' };
   ringShow(from, media);
   showCallNotification(from, media);
@@ -3081,6 +3416,18 @@ function wire() {
   $('btn-menu').onclick = mainMenu;
   $('btn-back').onclick = closeChat;
   $('btn-chat-menu').onclick = chatMenu;
+  $('btn-reels').onclick = toggleReels;
+  $('btn-reels-chat').onclick = toggleReels;
+  $('reels-close').onclick = closeReels;
+  $('reel-upload-button').onclick = chooseReelFile;
+  $('reel-file-input').onchange = event => prepareReelUpload(event.target.files?.[0]);
+  $('reel-publish').onclick = publishReel;
+  $('reels-feed').addEventListener('scroll', () => {
+    const feed = $('reels-feed');
+    if (!reelsLoading && !reelsExhausted && feed.scrollHeight - feed.scrollTop < feed.clientHeight * 2.25) {
+      loadReels(false, true);
+    }
+  }, { passive: true });
   $('btn-call-voice').onclick = () => startCall('audio');
   $('btn-call-video').onclick = () => startCall('video');
   $('call-hangup').onclick = () => hangUp();
@@ -3090,8 +3437,10 @@ function wire() {
   wireRatingStars();
   $('ring-decline').onclick = () => declineCall();
   document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape' || !call) return;
-    if ($('ring').classList.contains('on')) declineCall();
+    if (e.key !== 'Escape') return;
+    if (call && $('ring').classList.contains('on')) declineCall();
+    else if ($('modal-reel-upload').classList.contains('show')) closeModal('modal-reel-upload');
+    else if (document.body.classList.contains('reels-open')) closeReels();
   });
 
   $('btn-chat-search').onclick = () => { $('search-input').focus(); if (window.innerWidth <= 900) closeChat(); };

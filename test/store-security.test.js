@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vchat-store-test-'));
 process.env.VCHAT_DATA_DIR = dataDir;
@@ -111,4 +112,65 @@ test('attachments are one-use, chat-bound, and safely cloned when forwarded', ()
 
   assert.equal(store.setAdvancedPrivacy(source.id, alice.id, true)?.advancedPrivacy, true);
   assert.deepEqual(store.forwardMessage(source.id, message.id, alice.id, [target.id]), []);
+});
+
+test('reels persist likes and enforce stable pagination, blocks, and ownership', async () => {
+  const alice = store.findUserByPhone('+233240000001');
+  const bob = store.findUserByPhone('+233240000002');
+  const eve = store.findUserByPhone('+233240000003');
+  const created = [0, 1, 2].map(index => store.createReel(alice.id, {
+    storageName: `opaque-reel-${index}.mp4`,
+    mime: 'video/mp4',
+    size: 128 + index,
+    caption: `Reel ${index} 🎬`,
+  }));
+  assert.ok(created.every(Boolean));
+  assert.equal(store.listReels(bob.id, { cursor: 'not-a-cursor' }), null);
+
+  const seen = [];
+  let cursor = null;
+  do {
+    const page = store.listReels(bob.id, { cursor, limit: 1 });
+    assert.equal(page.items.length, 1);
+    seen.push(page.items[0].id);
+    cursor = page.nextCursor;
+  } while (cursor);
+  assert.equal(new Set(seen).size, created.length, 'cursor pages must not duplicate tied timestamps');
+  assert.deepEqual(new Set(seen), new Set(created.map(reel => reel.id)));
+
+  const liked = store.setReelLike(created[0].id, bob.id, true);
+  assert.equal(liked.liked, true);
+  assert.equal(liked.likeCount, 1);
+  assert.equal(store.reelView(store.getReel(created[0].id, alice.id), alice.id).liked, false);
+  assert.equal(store.deleteReel(created[0].id, eve.id), null, 'only the owner may delete a reel');
+
+  assert.equal(store.blockUser(bob.id, alice.id, true), true);
+  assert.equal(store.getReel(created[0].id, bob.id), null);
+  assert.equal(store.setReelLike(created[0].id, bob.id, false), null);
+  assert.equal(store.listReels(bob.id, { limit: 30 }).items.some(reel => seen.includes(reel.id)), false);
+  assert.equal(store.blockUser(bob.id, alice.id, false), true);
+
+  await new Promise(resolve => setTimeout(resolve, 350));
+  const snapshot = JSON.parse(fs.readFileSync(store.DB_FILE, 'utf8'));
+  const persisted = snapshot.reels.find(reel => reel.id === created[0].id);
+  assert.deepEqual(persisted.likedBy, [bob.id], 'likes serialize as arrays rather than leaking Set internals');
+
+  const child = spawnSync(process.execPath, ['-e', `
+    const store = require('./lib/messenger-store');
+    const item = store.listReels(process.env.VIEWER_ID, { limit: 30 }).items.find(r => r.id === process.env.REEL_ID);
+    process.stdout.write(JSON.stringify(item));
+  `], {
+    cwd: path.join(__dirname, '..'),
+    env: { ...process.env, VCHAT_DATA_DIR: dataDir, VIEWER_ID: bob.id, REEL_ID: created[0].id },
+    encoding: 'utf8',
+  });
+  assert.equal(child.status, 0, child.stderr);
+  const restored = JSON.parse(child.stdout);
+  assert.equal(restored.caption, 'Reel 0 🎬');
+  assert.equal(restored.liked, true);
+  assert.equal(restored.likeCount, 1);
+
+  const removed = store.deleteReel(created[0].id, alice.id);
+  assert.equal(removed.ownerId, alice.id);
+  assert.equal(store.getReel(created[0].id, alice.id), null);
 });

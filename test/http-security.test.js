@@ -25,7 +25,14 @@ async function availablePort() {
 async function startServer(t) {
   const port = await availablePort();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vchat-http-test-'));
-  const env = { ...process.env, PORT: String(port), VCHAT_DATA_DIR: dataDir, NODE_ENV: 'test' };
+  const env = {
+    ...process.env,
+    PORT: String(port),
+    VCHAT_DATA_DIR: dataDir,
+    NODE_ENV: 'test',
+    REEL_MAX_MB: '1',
+    REEL_UPLOAD_LIMIT: '50',
+  };
   delete env.TWILIO_ACCOUNT_SID;
   delete env.TWILIO_AUTH_TOKEN;
   delete env.TWILIO_FROM;
@@ -52,7 +59,7 @@ async function startServer(t) {
     child.kill('SIGTERM');
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
-  return `http://127.0.0.1:${port}`;
+  return { base: `http://127.0.0.1:${port}`, dataDir };
 }
 
 function jsonRequest(url, body, headers = {}, method = 'POST') {
@@ -78,7 +85,7 @@ function socketEvent(socket, event, timeoutMs = 3000) {
 }
 
 test('HTTP security boundary protects sessions, mutations, media, and legacy uploads', async t => {
-  const base = await startServer(t);
+  const { base, dataDir } = await startServer(t);
 
   let response = await fetch(`${base}/`);
   assert.equal(response.status, 200);
@@ -183,8 +190,155 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   });
   assert.equal(response.status, 200);
   const otherCookie = response.headers.get('set-cookie').match(/^([^;]+)/)[1];
+  const otherAccount = (await response.json()).user;
   response = await fetch(`${base}${photoAccount.photoUrl}`, { headers: { cookie: otherCookie } });
   assert.equal(response.status, 200, 'profile photos default to visible to everyone');
+
+  // Reels use their own authenticated, block-aware media boundary and remove
+  // rejected/deleted files from protected storage.
+  response = await fetch(`${base}/api/reels`);
+  assert.equal(response.status, 401);
+  response = await fetch(`${base}/api/reels?cursor=not-valid`, { headers: { cookie } });
+  assert.equal(response.status, 400);
+
+  const mediaDir = path.join(dataDir, 'media');
+  const mediaCount = () => fs.readdirSync(mediaDir).length;
+  const beforeRejectedReel = mediaCount();
+  const invalidReelForm = new FormData();
+  invalidReelForm.append('video', new Blob(['not a movie'], { type: 'video/mp4' }), 'fake.mp4');
+  invalidReelForm.append('caption', 'Invalid');
+  response = await fetch(`${base}/api/reels`, {
+    method: 'POST', headers: { cookie, origin: base }, body: invalidReelForm,
+  });
+  assert.equal(response.status, 415, 'a video MIME label must not bypass content validation');
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(mediaCount(), beforeRejectedReel, 'invalid reel bytes must be removed');
+
+  const oversizedReelForm = new FormData();
+  oversizedReelForm.append('video', new Blob([Buffer.alloc((1024 * 1024) + 1)], { type: 'video/mp4' }), 'large.mp4');
+  oversizedReelForm.append('caption', 'Too large');
+  response = await fetch(`${base}/api/reels`, {
+    method: 'POST', headers: { cookie, origin: base }, body: oversizedReelForm,
+  });
+  assert.equal(response.status, 413);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(mediaCount(), beforeRejectedReel, 'oversized partial uploads must be removed');
+
+  const validMp4 = Buffer.concat([
+    Buffer.from([0, 0, 0, 24]), Buffer.from('ftypisom'), Buffer.alloc(4), Buffer.from('isommp42'),
+    Buffer.from([0, 0, 0, 8]), Buffer.from('mdat'),
+  ]);
+  const mismatchedReelForm = new FormData();
+  mismatchedReelForm.append('video', new Blob([validMp4], { type: 'video/quicktime' }), 'not-a-mov.mov');
+  response = await fetch(`${base}/api/reels`, {
+    method: 'POST', headers: { cookie, origin: base }, body: mismatchedReelForm,
+  });
+  assert.equal(response.status, 415, 'the declared video type must match its container signature');
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(mediaCount(), beforeRejectedReel, 'MIME-mismatched reels must be removed');
+
+  const crossOriginForm = new FormData();
+  crossOriginForm.append('video', new Blob([validMp4], { type: 'video/mp4' }), 'cross-origin.mp4');
+  response = await fetch(`${base}/api/reels`, {
+    method: 'POST', headers: { cookie, origin: 'https://evil.example' }, body: crossOriginForm,
+  });
+  assert.equal(response.status, 403);
+
+  const reelSocket = socketClient(base, {
+    transports: ['websocket'],
+    extraHeaders: { Cookie: otherCookie, Origin: base },
+    reconnection: false,
+  });
+  t.after(() => reelSocket.close());
+  await socketEvent(reelSocket, 'connect');
+
+  async function postReel(caption, waitForEvent = false) {
+    const changed = waitForEvent ? socketEvent(reelSocket, 'reels:changed') : null;
+    const form = new FormData();
+    form.append('video', new Blob([validMp4], { type: 'video/mp4' }), `${caption}.mp4`);
+    form.append('caption', caption);
+    const result = await fetch(`${base}/api/reels`, {
+      method: 'POST', headers: { cookie, origin: base }, body: form,
+    });
+    assert.equal(result.status, 201);
+    assert.equal(result.headers.get('cache-control'), 'private, no-store');
+    const posted = (await result.json()).reel;
+    if (changed) {
+      const [notice] = await changed;
+      assert.deepEqual(notice, { type: 'created' }, 'realtime notices must not leak blocked reel IDs');
+    }
+    return posted;
+  }
+
+  const firstReel = await postReel('First reel 🎬', true);
+  const secondReel = await postReel('Second reel');
+  assert.equal(mediaCount(), beforeRejectedReel + 2);
+  assert.equal(firstReel.owner.id, account.id);
+  assert.equal(firstReel.caption, 'First reel 🎬');
+
+  response = await fetch(`${base}/api/reels?limit=1`, { headers: { cookie: otherCookie } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  const firstPage = await response.json();
+  assert.equal(firstPage.items.length, 1);
+  assert.equal(firstPage.maxUploadBytes, 1024 * 1024, 'clients receive the configured Reel upload maximum');
+  assert.ok(firstPage.nextCursor);
+  response = await fetch(`${base}/api/reels?limit=1&cursor=${encodeURIComponent(firstPage.nextCursor)}`, { headers: { cookie: otherCookie } });
+  const secondPage = await response.json();
+  assert.equal(secondPage.items.length, 1);
+  assert.notEqual(secondPage.items[0].id, firstPage.items[0].id);
+
+  response = await fetch(`${base}${firstReel.videoUrl}`);
+  assert.equal(response.status, 401);
+  response = await fetch(`${base}${firstReel.videoUrl}`, { headers: { cookie: otherCookie } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'video/mp4');
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), validMp4);
+  response = await fetch(`${base}${firstReel.videoUrl}`, {
+    headers: { cookie: otherCookie, range: 'bytes=0-7' },
+  });
+  assert.equal(response.status, 206, 'protected Reel media supports seeking with byte ranges');
+  assert.equal(response.headers.get('content-range'), `bytes 0-7/${validMp4.length}`);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), validMp4.subarray(0, 8));
+
+  response = await jsonRequest(
+    `${base}/api/reels/${firstReel.id}/like`, { liked: true }, { cookie: otherCookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 200);
+  const likedReel = (await response.json()).reel;
+  assert.equal(likedReel.liked, true);
+  assert.equal(likedReel.likeCount, 1);
+
+  response = await jsonRequest(
+    `${base}/api/account/block/${account.id}`, { blocked: true }, { cookie: otherCookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 200);
+  response = await fetch(`${base}/api/reels`, { headers: { cookie: otherCookie } });
+  assert.equal((await response.json()).items.some(reel => reel.owner.id === account.id), false);
+  response = await fetch(`${base}${firstReel.videoUrl}`, { headers: { cookie: otherCookie } });
+  assert.equal(response.status, 404);
+  response = await jsonRequest(
+    `${base}/api/account/block/${account.id}`, { blocked: false }, { cookie: otherCookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 200);
+
+  response = await jsonRequest(
+    `${base}/api/reels/${firstReel.id}`, {}, { cookie: otherCookie, origin: base }, 'DELETE',
+  );
+  assert.equal(response.status, 404, 'a non-owner may not delete a reel');
+  response = await jsonRequest(
+    `${base}/api/reels/${firstReel.id}`, {}, { cookie, origin: base }, 'DELETE',
+  );
+  assert.equal(response.status, 200);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(mediaCount(), beforeRejectedReel + 1, 'deleting a reel removes its protected video');
+  response = await fetch(`${base}${firstReel.videoUrl}`, { headers: { cookie } });
+  assert.equal(response.status, 404);
+
+  // Keep the second fixture reachable through the rest of the security test.
+  response = await fetch(`${base}${secondReel.videoUrl}`, { headers: { cookie } });
+  assert.equal(response.status, 200);
 
   response = await jsonRequest(
     `${base}/api/account/privacy`, { profilePhoto: 'nobody' }, { cookie }, 'PATCH',

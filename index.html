@@ -53,7 +53,6 @@
   <symbol id="i-info" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></symbol>
-  <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 17.3 6.2 3.7-1.6-7 5.4-4.7-7.1-.6L12 2 9.1 8.7l-7.1.6 5.4 4.7-1.6 7z"/></symbol>
   <symbol id="i-camera" viewBox="0 0 24 24"><path d="M20 5h-3.2L15 3H9L7.2 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm-8 13a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></symbol>
 </svg>
 
@@ -129,6 +128,7 @@
       <header class="side-header">
         <div class="avatar sz-40 me-avatar" id="me-avatar" title="Profile"></div>
         <div class="spacer"></div>
+        <button class="hdr-btn" id="btn-reels" title="Open reels beside chat" aria-label="Open reels" aria-controls="reels-panel" aria-expanded="false"><svg class="icon"><use href="#i-play"/></svg></button>
         <button class="hdr-btn" id="btn-new-group" title="New group"><svg class="icon"><use href="#i-group"/></svg></button>
         <button class="hdr-btn" id="btn-new-chat" title="New chat"><svg class="icon"><use href="#i-newchat"/></svg></button>
         <button class="hdr-btn" id="btn-menu" title="Menu"><svg class="icon"><use href="#i-menu"/></svg></button>
@@ -180,6 +180,7 @@
             <div class="peer-status" id="peer-status"></div>
           </div>
         </div>
+        <button class="hdr-btn reels-chat-button" id="btn-reels-chat" title="Reels beside chat" aria-label="Open reels" aria-controls="reels-panel" aria-expanded="false"><svg class="icon"><use href="#i-play"/></svg></button>
         <button class="hdr-btn" id="btn-call-video" title="Video call"><svg class="icon"><use href="#i-video"/></svg></button>
         <button class="hdr-btn" id="btn-call-voice" title="Voice call"><svg class="icon"><use href="#i-phone"/></svg></button>
         <button class="hdr-btn" id="btn-chat-search" title="Search"><svg class="icon"><use href="#i-search"/></svg></button>
@@ -235,6 +236,24 @@
         <input type="file" id="file-input" style="display:none" />
       </footer>
     </section>
+
+    <!-- ── Reels companion pane: it never replaces the active chat ── -->
+    <aside class="reels-panel" id="reels-panel" aria-label="Reels" aria-hidden="true">
+      <header class="reels-head">
+        <div>
+          <strong>Reels</strong>
+          <span>Scroll while you chat</span>
+        </div>
+        <div class="reels-head-actions">
+          <button class="hdr-btn" id="reel-upload-button" type="button" title="Post a reel" aria-label="Post a reel"><svg class="icon"><use href="#i-camera"/></svg></button>
+          <button class="hdr-btn" id="reels-close" type="button" title="Close reels" aria-label="Close reels"><svg class="icon"><use href="#i-close"/></svg></button>
+        </div>
+      </header>
+      <div class="reels-feed" id="reels-feed" tabindex="0" aria-live="polite">
+        <div class="reels-empty">Open Reels to load videos.</div>
+      </div>
+      <input type="file" id="reel-file-input" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" hidden />
+    </aside>
 
     <!-- ── Right drawer ── -->
     <aside class="drawer" id="drawer">
@@ -297,6 +316,21 @@
       <div class="lite-saved" id="lite-saved"></div>
     </div>
     <div class="modal-foot"><button class="btn-text" data-close>Done</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-reel-upload">
+  <div class="modal reel-upload-modal">
+    <div class="modal-head">Post a reel</div>
+    <div class="modal-body">
+      <video id="reel-upload-preview" class="reel-upload-preview" controls muted playsinline preload="metadata"></video>
+      <div class="reel-file-summary" id="reel-file-summary"></div>
+      <label class="field-label" for="reel-caption">Caption <span class="field-hint">optional · 220 characters</span></label>
+      <textarea id="reel-caption" class="reel-caption-input" maxlength="220" rows="3" placeholder="Say something about this video…"></textarea>
+      <p class="setting-explainer">Signed-in Vchat users can see this reel unless either of you has blocked the other.</p>
+      <div class="reel-upload-status" id="reel-upload-status" role="status"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Cancel</button><button class="btn-primary" id="reel-publish" type="button">Post reel</button></div>
   </div>
 </div>
 

@@ -79,6 +79,22 @@ npm audit --omit=dev     # production dependency audit
 - One-to-one WebRTC voice/video calls with dynamic STUN/TURN configuration, call
   controls, logs, timeouts, and quality feedback
 
+### Reels
+
+- Authenticated MP4, MOV, and WebM uploads with configurable size/rate limits,
+  container-signature checks, protected storage, and failed-upload cleanup
+- A cursor-paginated, vertically snapping feed with muted in-view autoplay,
+  explicit play/sound controls, captions, likes, and owner-only deletion; Lite
+  mode and reduced-motion preferences disable autoplay
+- Block-aware visibility and protected video delivery with `private, no-store`
+  caching; generic realtime refresh notices do not expose Reel IDs
+- A desktop companion pane and an independently scrollable mobile chat/Reels
+  split, so opening a Reel owner's direct chat does not close the feed
+
+Reels currently share the transitional local media store. There is no object-store
+replication, transcoding ladder, malware/content-moderation pipeline, CDN, or DRM;
+those production-scale controls belong in the infrastructure phase.
+
 ### Web app
 
 - Responsive two-pane/mobile interface, light/dark themes, and Lite mode
@@ -118,7 +134,9 @@ Install from the Vchat menu where supported, or use the browser's **Install app*
 | `AUTH_RATE_LIMIT` | Authentication requests per 15 minutes | `20` |
 | `VCHAT_DATA_DIR` | Transitional database and media root | `./data` |
 | `VCHAT_MEDIA_DIR` | Protected media storage override | `$VCHAT_DATA_DIR/media` |
-| `MAX_UPLOAD_MB` | Maximum attachment size | `100` |
+| `MAX_UPLOAD_MB` | Maximum chat attachment size | `100` |
+| `REEL_MAX_MB` | Maximum Reel video size (clamped to 1–200 MB) | `50` |
+| `REEL_UPLOAD_LIMIT` | Reel upload attempts per client IP per hour (clamped to 1–500) | `20` |
 | `TWILIO_ACCOUNT_SID` | Twilio account SID | development transport |
 | `TWILIO_AUTH_TOKEN` | Twilio API secret | development transport |
 | `TWILIO_FROM` | Twilio sender number | development transport |
@@ -135,7 +153,8 @@ encrypted persistent storage until the database/object-storage phase replaces it
 `lib/messenger-store.js` is a transitional schema-v2 adapter. It keeps live state in
 one process and writes a mode-`0600` snapshot to `data/db.v2.json`. It intentionally
 never imports the legacy schema-v1 `data/db.json`; the approved migration policy is
-a secure reset. Protected files live under `data/media`.
+a secure reset. Protected attachments, profile photos, and Reel videos live under
+`data/media`; Reel metadata and like sets are serialized into the schema-v2 snapshot.
 
 This adapter is suitable for deterministic local development and phased feature
 work, not horizontal production scale. It has no multi-process consistency,

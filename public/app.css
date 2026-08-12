@@ -1151,3 +1151,212 @@ body.dark .row-icon.favorite { color: #f5b942; }
 .composer.read-only .send-btn,
 .composer.read-only .mic-btn { display: none; }
 .msg-input:disabled { color: var(--text-muted); cursor: not-allowed; opacity: 1; }
+
+/* ── Reels companion pane ───────────────────────────────────────────── */
+.reels-panel {
+  display: none;
+  width: min(390px, 32vw);
+  min-width: 320px;
+  flex: 0 0 auto;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: #07101d;
+  color: #fff;
+}
+body.reels-open .reels-panel { display: flex; }
+body.reels-open #btn-reels,
+body.reels-open #btn-reels-chat { color: var(--wa-green); background: rgba(18,140,126,.12); }
+.reels-head {
+  min-height: 59px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px 7px 16px;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+  background: #0b1f3a;
+}
+.reels-head > div:first-child { min-width: 0; }
+.reels-head strong { display: block; font-size: 17px; font-weight: 600; }
+.reels-head span { display: block; margin-top: 2px; color: rgba(255,255,255,.65); font-size: 11.5px; }
+.reels-head-actions { display: flex; align-items: center; flex: none; }
+.reels-head .hdr-btn { color: rgba(255,255,255,.84); }
+.reels-head .hdr-btn:hover { background: rgba(255,255,255,.12); }
+.reels-feed {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  background: #050a11;
+}
+.reel-card {
+  position: relative;
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  background: #050a11;
+}
+.reel-video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  background: #000;
+  cursor: pointer;
+}
+.reel-card.reel-error::before {
+  content: 'This Reel is unavailable';
+  position: absolute;
+  z-index: 2;
+  inset: 42% 20px auto;
+  color: rgba(255,255,255,.8);
+  text-align: center;
+}
+.reel-card.reel-error .reel-video { opacity: .35; }
+.reel-shade {
+  position: absolute;
+  inset: auto 0 0;
+  height: 48%;
+  pointer-events: none;
+  background: linear-gradient(transparent, rgba(0,0,0,.78));
+}
+.reel-meta {
+  position: absolute;
+  z-index: 2;
+  left: 14px;
+  right: 66px;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  text-shadow: 0 1px 3px rgba(0,0,0,.75);
+}
+.reel-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 100%;
+  margin-bottom: 8px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+.reel-owner .avatar { box-shadow: 0 0 0 2px rgba(255,255,255,.8); }
+.reel-caption { overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.42; white-space: pre-wrap; }
+.reel-date { display: block; margin-top: 5px; color: rgba(255,255,255,.68); font-size: 11px; }
+.reel-actions {
+  position: absolute;
+  z-index: 3;
+  right: 10px;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+}
+.reel-action {
+  width: 46px;
+  min-height: 46px;
+  display: grid;
+  place-items: center;
+  gap: 1px;
+  padding: 5px;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 50%;
+  background: rgba(0,0,0,.38);
+  color: #fff;
+  backdrop-filter: blur(6px);
+}
+.reel-action:hover { background: rgba(255,255,255,.18); }
+.reel-action:focus-visible,
+.reel-owner:focus-visible,
+.reels-head .hdr-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.reel-action:disabled { cursor: wait; opacity: .7; }
+.reel-action.on { color: #ff6b86; }
+.reel-action .icon { width: 21px; height: 21px; }
+.reel-action-count { font-size: 10px; line-height: 1; }
+.reel-play-state {
+  position: absolute;
+  z-index: 2;
+  inset: 50% auto auto 50%;
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  opacity: 0;
+  transform: translate(-50%,-50%) scale(.8);
+  transition: opacity .15s, transform .15s;
+  background: rgba(0,0,0,.48);
+  pointer-events: none;
+}
+.reel-card.paused .reel-play-state { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+.reels-empty,
+.reels-loading {
+  min-height: 100%;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  padding: 30px;
+  color: rgba(255,255,255,.72);
+  text-align: center;
+  line-height: 1.5;
+}
+.reels-empty strong { color: #fff; font-size: 18px; }
+.reels-empty button { justify-self: center; color: #fff; border: 1px solid rgba(255,255,255,.28); }
+.reel-upload-modal { width: min(94vw, 500px); }
+.reel-upload-preview { width: 100%; max-height: 45vh; display: block; object-fit: contain; border-radius: 10px; background: #050a11; }
+.reel-file-summary { margin: 8px 0 18px; color: var(--text-secondary); font-size: 12.5px; }
+.reel-caption-input { line-height: 1.45; }
+.reel-upload-status { min-height: 20px; margin-top: 8px; color: var(--danger); font-size: 13px; }
+
+@media (min-width: 901px) and (max-width: 1200px) {
+  body.reels-open .sidebar { display: none; }
+  .reels-panel { width: min(390px, 42vw); }
+}
+
+@media (max-width: 900px) {
+  .reels-panel {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    width: 100%;
+    min-width: 0;
+    border: 0;
+  }
+  body.reels-open.chat-open .chat-panel {
+    bottom: 44%;
+    height: auto;
+  }
+  body.reels-open.chat-open .reels-panel {
+    top: 56%;
+    z-index: 11;
+    border-top: 2px solid var(--wa-green);
+  }
+  body.reels-open.chat-open .reels-head {
+    min-height: 43px;
+    padding-block: 2px;
+  }
+  body.reels-open.chat-open .reels-head span { display: none; }
+  body.reels-open.chat-open .reel-video { object-fit: contain; }
+  body.reels-open.chat-open .reel-meta { right: 14px; bottom: 9px; }
+  body.reels-open.chat-open .reel-actions {
+    top: 8px;
+    right: 8px;
+    bottom: auto;
+    flex-direction: row;
+    gap: 5px;
+  }
+  body.reels-open.chat-open .reel-action { width: 38px; min-height: 38px; }
+}
+
+@media (max-height: 650px) and (max-width: 900px) {
+  body.reels-open.chat-open .chat-panel { bottom: 48%; }
+  body.reels-open.chat-open .reels-panel { top: 52%; }
+}
