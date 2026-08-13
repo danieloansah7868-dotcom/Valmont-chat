@@ -302,6 +302,10 @@ public/manifest.webmanifest
 public/sw.js               Static-shell-only service worker
 public/icons/              PWA icons
 test/                      Security and HTTP integration tests
+Dockerfile                 Single-node pilot image
+compose.pilot.yml          Persistent volume + healthcheck compose file
+.env.production.example    Server-only production environment template
+docs/operations.md         Pilot deploy, proxy, backup, and scaling notes
 ```
 
 ## Delivery roadmap

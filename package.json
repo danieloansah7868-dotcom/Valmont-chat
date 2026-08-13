@@ -7,7 +7,8 @@
     "start": "node server.js",
     "dev": "node server.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check server.js && node --check lib/http-auth.js && node --check lib/messenger.js && node --check lib/messenger-store.js && node --check lib/sms.js && node --check public/app.js && node --check public/sw.js"
+    "check": "node --check server.js && node --check lib/http-auth.js && node --check lib/messenger.js && node --check lib/messenger-store.js && node --check lib/sms.js && node --check public/app.js && node --check public/sw.js",
+    "pilot": "docker compose -f compose.pilot.yml up --build"
   },
   "keywords": [
     "chat",

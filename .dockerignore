@@ -1,0 +1,16 @@
+.git
+.github
+.arena
+node_modules
+data
+public/uploads
+*.log
+.env
+.env.*
+!.env.production.example
+docs
+test
+README.md
+compose.pilot.yml
+.dockerignore
+Dockerfile
