@@ -162,7 +162,10 @@ function formatMessage(text) {
     .replace(/(^|\s)_([^_\n]+)_(?=\s|[.,!?;:]|$)/g, '$1<em>$2</em>')
     .replace(/(^|\s)~([^~\n]+)~(?=\s|[.,!?;:]|$)/g, '$1<del>$2</del>')
     .replace(/(https?:\/\/[^\s<]+)/g, url => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`)
-    .replace(/(^|\s)(@[\p{L}\p{N}_.-]{2,40})/gu, '$1<span class="mention">$2</span>');
+    .replace(/(^|\s)(@[\p{L}\p{N}_.-]{2,40})/gu, (all, lead, handle) => {
+      const mine = me && handle.slice(1).toLowerCase() === String(me.handle || '').toLowerCase();
+      return `${lead}<span class="mention${mine ? ' me' : ''}" data-handle="${esc(handle.slice(1))}">${handle}</span>`;
+    });
   html = html.split('\n').map(line => {
     if (/^&gt;\s/.test(line)) return `<blockquote>${line.replace(/^&gt;\s?/, '')}</blockquote>`;
     if (/^[-•]\s/.test(line)) return `<div class="msg-list-item">• ${line.replace(/^[-•]\s?/, '')}</div>`;
@@ -770,7 +773,8 @@ function connect() {
       socket.emit('messages:read', { chatId: activeId });
     } else if (m.senderId !== me.id) {
       const c = chats.find(x => x.id === m.chatId);
-      if (!c?.muted) ping();
+      const mentioned = Array.isArray(m.mentions) && m.mentions.includes(me.id);
+      if (!m.silent && (!c?.muted || mentioned)) ping();
     }
     if (m.senderId !== me.id && document.hidden) {
       const c = chats.find(x => x.id === m.chatId);
@@ -854,10 +858,13 @@ function ping(force = false) {
 }
 
 function showMessageNotification(message, chat) {
+  if (message?.silent) return;
   if (!notificationPrefs.desktop || !document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
+  const mentioned = Array.isArray(message.mentions) && message.mentions.includes(me?.id);
+  if (chat?.muted && !mentioned) return;
   const privatePreview = chat?.advancedPrivacy || chat?.locked || !notificationPrefs.previews;
   const sender = message.sender?.username || chat?.name || 'Vchat';
-  const title = privatePreview ? 'New Vchat message' : (chat?.type === 'group' ? `${sender} · ${chat.name}` : sender);
+  const title = privatePreview ? 'New Vchat message' : (mentioned ? `${sender} mentioned you` : (chat?.type === 'group' ? `${sender} · ${chat.name}` : sender));
   const body = privatePreview ? 'Open Vchat to read it' : previewOf(message);
   try {
     const notice = new Notification(title, { body, icon: '/icons/icon-192.png', tag: `chat-${message.chatId}` });
@@ -1059,6 +1066,8 @@ function visibleChats() {
   if (filter === 'unread') list = list.filter(c => c.unread > 0 && !c.archived);
   else if (filter === 'favorites') list = list.filter(c => c.favorite && !c.archived);
   else if (filter === 'groups') list = list.filter(c => c.type === 'group' && !c.archived);
+  else if (filter === 'personal') list = list.filter(c => (c.type === 'dm' || c.type === 'saved') && !c.archived);
+  else if (filter === 'calls') list = list.filter(c => c.lastMessage?.type === 'call' && !c.archived);
   else if (filter === 'archived') list = list.filter(c => c.archived);
   else if (filter !== 'locked') list = list.filter(c => !c.archived);
 
@@ -1116,10 +1125,12 @@ function contactRow(u) {
 }
 
 function chatRow(c) {
-  const row = el('div', 'chat-row' + (c.id === activeId ? ' sel' : '') + (c.unread ? ' unread' : '') + (c.locked ? ' locked-chat-row' : ''));
+  const row = el('div', 'chat-row' + (c.id === activeId ? ' sel' : '') + (c.unread ? ' unread' : '') + (c.locked ? ' locked-chat-row' : '') + (c.type === 'saved' ? ' saved-row' : ''));
   const last = c.lastMessage;
   const isGroup = c.type === 'group';
-  const entity = c.type === 'dm'
+  const entity = c.type === 'saved'
+    ? { username: 'Saved Messages', avatar: '📌', id: c.id }
+    : c.type === 'dm'
     ? (users.find(u => u.id === c.peer?.id) || c.peer || { username: c.name, id: c.id })
     : { name: c.name, type: 'group', id: c.id };
 
@@ -1318,17 +1329,25 @@ function renderMessages() {
   const box = $('messages');
   const prevTop = box.scrollTop, prevH = box.scrollHeight;
   box.innerHTML = '';
+  updatePinBar();
 
   if (!messages.length) {
     const c = activeChat();
-    box.appendChild(el('div', 'system-msg', `<span>${c?.type === 'group'
+    const empty = c?.type === 'saved'
+      ? 'Saved Messages — send notes, links, and files to yourself.'
+      : c?.type === 'group'
       ? 'This is the beginning of the group. Say something!'
-      : 'No messages yet — send the first one 👋'}</span>`));
+      : 'No messages yet — send the first one 👋';
+    box.appendChild(el('div', 'system-msg', `<span>${empty}</span>`));
     return;
   }
 
+  const unreadStart = messages.find(m => m.senderId !== me?.id && !(m.readBy || []).includes(me?.id));
   let lastDay = '', prevSender = null, prevTs = 0;
   messages.forEach(m => {
+    if (unreadStart && m.id === unreadStart.id) {
+      box.appendChild(el('div', 'unread-divider', '<span>Unread messages</span>'));
+    }
     const day = dayLabel(m.timestamp);
     if (day !== lastDay) {
       box.appendChild(el('div', 'day-divider', `<span>${day}</span>`));
@@ -1633,11 +1652,12 @@ function updateSendBtn() {
   $('composer').classList.toggle('has-text', has);
 }
 
-function sendMessage() {
+function sendMessage(opts = {}) {
   const input = $('msg-input');
   const text = input.value.trim();
   if ((!text && !pendingFile) || !activeId) return;
   if (!canSendTo(activeChat())) return toast('Only group admins can send messages');
+  hideMentionSuggest();
 
   const payload = {
     chatId: activeId,
@@ -1646,6 +1666,7 @@ function sendMessage() {
     type: pendingFile ? (pendingFile.mimeType?.split('/')[0] || 'file') : 'text',
     replyTo,
     viewOnce: !!pendingFile && $('view-once-toggle').checked,
+    silent: opts.silent === true,
   };
   // Everything goes through the outbox, connection or not. A message is only
   // dropped from it once the server has confirmed it, so a send that dies
@@ -1667,6 +1688,7 @@ function onInput() {
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 100) + 'px';
   updateSendBtn();
+  updateMentionSuggest();
   if (!activeId) return;
   socket.emit('typing:start', { chatId: activeId });
   clearTimeout(typingTimers[activeId]);
@@ -2525,6 +2547,8 @@ function openDrawer() {
     }
     body.appendChild(members);
   }
+
+  renderSharedMedia(body, c);
 
   const actions = el('div', '');
   const mute = el('button', 'drawer-action', `${icon('mute')} ${c.muted ? 'Unmute notifications' : 'Mute notifications'}`);
@@ -4138,6 +4162,221 @@ async function verifyReturnedBoostPayment() {
   if (ok) openStoryBoosts();
 }
 
+
+// ── Hybrid WhatsApp + Telegram helpers ────────────────────────────────
+function openSavedMessages() {
+  socket.emit('chat:startDM', { targetUserId: me.id }, res => {
+    if (res?.error) return toast(res.error);
+    if (res?.chat) openChat(res.chat.id);
+  });
+}
+
+function hideMentionSuggest() {
+  const box = $('mention-suggest');
+  if (box) { box.hidden = true; box.innerHTML = ''; }
+}
+
+function mentionCandidates(query) {
+  const chat = activeChat();
+  if (!chat || (chat.type !== 'group' && chat.type !== 'saved')) return [];
+  const q = String(query || '').toLowerCase();
+  const people = (chat.members || []).map(id => users.find(u => u.id === id)).filter(Boolean);
+  const extras = chat.type === 'group' ? [{ id: 'all', username: 'all', handle: 'all', about: 'Notify everyone' }] : [];
+  return [...extras, ...people]
+    .filter(u => !q || (u.handle || '').includes(q) || (u.username || '').toLowerCase().includes(q))
+    .slice(0, 8);
+}
+
+function updateMentionSuggest() {
+  const input = $('msg-input');
+  const box = $('mention-suggest');
+  if (!input || !box) return;
+  const upto = input.value.slice(0, input.selectionStart || input.value.length);
+  const match = upto.match(/(^|\s)@([a-zA-Z0-9_]*)$/);
+  if (!match) return hideMentionSuggest();
+  const items = mentionCandidates(match[2]);
+  if (!items.length) return hideMentionSuggest();
+  box.hidden = false;
+  box.innerHTML = '';
+  items.forEach((u, index) => {
+    const btn = el('button', index === 0 ? 'on' : '', `${avatarHTML(u, 32)}<span>${esc(u.username)} <small>@${esc(u.handle || u.username)}</small></span>`);
+    btn.type = 'button';
+    btn.onclick = () => insertMention(u.handle || u.username);
+    box.appendChild(btn);
+  });
+}
+
+function insertMention(handle) {
+  const input = $('msg-input');
+  const start = input.selectionStart || input.value.length;
+  const upto = input.value.slice(0, start);
+  const rest = input.value.slice(start);
+  const next = upto.replace(/(^|\s)@([a-zA-Z0-9_]*)$/, `$1@${handle} `) + rest;
+  input.value = next;
+  hideMentionSuggest();
+  input.focus();
+  updateSendBtn();
+}
+
+function currentPinnedMessage() {
+  const now = Date.now();
+  return [...messages].reverse().find(m => m.pinnedUntil && m.pinnedUntil > now) || null;
+}
+
+function updatePinBar() {
+  const bar = $('pin-bar');
+  if (!bar) return;
+  const pinned = currentPinnedMessage();
+  if (!pinned) { bar.hidden = true; return; }
+  bar.hidden = false;
+  $('pin-bar-text').textContent = pinned.text || pinned.file?.name || 'Pinned message';
+  bar.onclick = () => jumpToMessage(pinned.id);
+}
+
+function jumpToMessage(id) {
+  const row = document.querySelector(`.msg-row[data-id="${CSS.escape(id)}"]`);
+  if (!row) return;
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  row.classList.add('search-hit');
+  setTimeout(() => row.classList.remove('search-hit'), 1200);
+}
+
+let inChatHits = [];
+let inChatHitIndex = -1;
+function toggleInChatSearch(on) {
+  const bar = $('inchat-search');
+  if (!bar) return;
+  bar.hidden = !on;
+  if (on) {
+    $('inchat-search-input').value = '';
+    $('inchat-search-count').textContent = '';
+    $('inchat-search-input').focus();
+  } else {
+    inChatHits = [];
+    document.querySelectorAll('.msg-row.search-hit').forEach(node => node.classList.remove('search-hit'));
+  }
+}
+
+function runInChatSearch(query) {
+  const q = String(query || '').trim().toLowerCase();
+  document.querySelectorAll('.msg-row.search-hit').forEach(node => node.classList.remove('search-hit'));
+  if (!q) { $('inchat-search-count').textContent = ''; inChatHits = []; return; }
+  inChatHits = messages.filter(m => String(m.text || '').toLowerCase().includes(q));
+  inChatHitIndex = inChatHits.length ? 0 : -1;
+  $('inchat-search-count').textContent = inChatHits.length ? `1 / ${inChatHits.length}` : '0';
+  if (inChatHits[0]) jumpToMessage(inChatHits[0].id);
+}
+
+function stepInChatSearch(dir) {
+  if (!inChatHits.length) return;
+  inChatHitIndex = (inChatHitIndex + dir + inChatHits.length) % inChatHits.length;
+  $('inchat-search-count').textContent = `${inChatHitIndex + 1} / ${inChatHits.length}`;
+  jumpToMessage(inChatHits[inChatHitIndex].id);
+}
+
+function openStarredMessages() {
+  socket.emit('messages:starred', {}, res => {
+    const box = $('starred-list');
+    box.innerHTML = '';
+    const items = res?.items || [];
+    if (!items.length) box.appendChild(el('div', 'empty-list', 'No starred messages yet.'));
+    items.forEach(({ chat, message }) => {
+      const row = el('div', 'hybrid-item', `<strong>${esc(chat.name)}</strong><span>${esc(message.text || previewOf(message))}</span><em>${dayLabel(message.timestamp)} · ${timeOf(message.timestamp)}</em>`);
+      row.onclick = () => { closeModal('modal-starred'); openChat(chat.id); setTimeout(() => jumpToMessage(message.id), 250); };
+      box.appendChild(row);
+    });
+    openModal('modal-starred');
+  });
+}
+
+function openCallHistory() {
+  socket.emit('calls:history', {}, res => {
+    const box = $('call-history-list');
+    box.innerHTML = '';
+    const items = res?.items || [];
+    if (!items.length) box.appendChild(el('div', 'empty-list', 'No calls yet. Start one from a chat header.'));
+    items.forEach(({ chat, message }) => {
+      const call = message.call || {};
+      const row = el('div', 'hybrid-item', `<strong>${esc(chat.name)}</strong><span>${esc(call.media === 'video' ? 'Video' : 'Voice')} · ${esc(call.outcome || 'call')}</span><em>${dayLabel(message.timestamp)} · ${timeOf(message.timestamp)}</em>`);
+      row.onclick = () => { closeModal('modal-calls'); openChat(chat.id); };
+      box.appendChild(row);
+    });
+    openModal('modal-calls');
+  });
+}
+
+function openMessageInfo(m) {
+  const body = $('message-info-body');
+  const readers = (m.readBy || []).map(id => users.find(u => u.id === id)?.username || 'Someone');
+  const delivered = (m.deliveredTo || []).map(id => users.find(u => u.id === id)?.username || 'Someone');
+  body.innerHTML = `
+    <div class="drawer-label">Sent</div><div class="drawer-value">${esc(dayLabel(m.timestamp))} · ${esc(timeOf(m.timestamp))}</div>
+    <div class="drawer-label" style="margin-top:14px">Delivered to</div><div class="drawer-value">${esc(delivered.join(', ') || 'Waiting')}</div>
+    <div class="drawer-label" style="margin-top:14px">Read by</div><div class="drawer-value">${esc(readers.join(', ') || 'Not yet')}</div>
+    ${m.silent ? '<p class="setting-explainer">Sent silently — no push sound.</p>' : ''}
+    ${m.mentions?.length ? `<p class="setting-explainer">Mentions: ${m.mentions.length}</p>` : ''}`;
+  openModal('modal-message-info');
+}
+
+function renderSharedMedia(container, chat) {
+  const media = messages.filter(m => m.file && /^(image|video)\//.test(m.file.mimeType || '') && m.file.url);
+  if (!media.length) return;
+  container.appendChild(el('div', 'drawer-label', 'Shared media'));
+  const grid = el('div', 'shared-media-grid');
+  media.slice(-12).reverse().forEach(m => {
+    const tag = (m.file.mimeType || '').startsWith('video/') ? 'video' : 'img';
+    const node = document.createElement(tag);
+    node.src = m.file.url;
+    if (tag === 'video') node.muted = true;
+    node.onclick = () => { if (tag === 'img') openLightbox(m.file.url, m.file.name); else jumpToMessage(m.id); };
+    grid.appendChild(node);
+  });
+  container.appendChild(grid);
+}
+
+function wireHybrid() {
+  $('inchat-search-close').onclick = () => toggleInChatSearch(false);
+  $('inchat-search-input').oninput = e => runInChatSearch(e.target.value);
+  $('inchat-search-prev').onclick = () => stepInChatSearch(-1);
+  $('inchat-search-next').onclick = () => stepInChatSearch(1);
+  document.querySelectorAll('#bottom-nav [data-nav]').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('#bottom-nav [data-nav]').forEach(b => b.classList.toggle('on', b === btn));
+      if (btn.dataset.nav === 'status') openStories();
+      else if (btn.dataset.nav === 'calls') openCallHistory();
+      else { closeChat(); setFilter('all'); }
+    };
+  });
+  document.addEventListener('click', e => {
+    const mention = e.target.closest?.('.mention[data-handle]');
+    if (!mention || !me) return;
+    const handle = mention.dataset.handle;
+    if (!handle || handle === 'all' || handle === me.handle) return;
+    const user = users.find(u => u.handle === handle);
+    if (!user) return toast(`@${handle} is not in your contacts yet`);
+    socket.emit('chat:startDM', { targetUserId: user.id }, res => res?.chat && openChat(res.chat.id));
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      if (!$('inchat-search').hidden) return toggleInChatSearch(false);
+      if (activeId && window.innerWidth <= 900) closeChat();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      $('search-input').focus();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && document.activeElement === $('msg-input')) {
+      e.preventDefault();
+      sendMessage({ silent: true });
+      toast('Sent silently');
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && activeId) {
+      e.preventDefault();
+      toggleInChatSearch(true);
+    }
+  });
+}
+
 // ── Chat wallpaper ─────────────────────────────────────────────────────
 const WP_KEY = 'vchat.wallpaper';
 const WALLPAPERS = [
@@ -4247,7 +4486,11 @@ function openWallpaper() {
 // ── Main menu ──────────────────────────────────────────────────────────
 function mainMenu(e) {
   showCtxMenu(e, [
+    { label: 'Message info', fn: () => openMessageInfo(m) },
     { label: 'New group', fn: openNewGroup },
+    { label: 'Saved Messages', fn: openSavedMessages },
+    { label: 'Starred messages', fn: openStarredMessages },
+    { label: 'Calls', fn: openCallHistory },
     { label: 'Chat wallpaper', fn: openWallpaper },
     { label: 'Status updates', fn: openStories },
     { label: document.body.classList.contains('reels-open') ? 'Close reels' : 'Reels · scroll while chatting', fn: toggleReels },
@@ -4922,7 +5165,7 @@ function wire() {
     saveWallpaper({ ...prev, dim });
     applyWallpaper();
   };
-  $('btn-chat-search').onclick = () => { $('search-input').focus(); if (window.innerWidth <= 900) closeChat(); };
+  $('btn-chat-search').onclick = () => toggleInChatSearch(true);
   $('peer-open').onclick = openDrawer;
   $('drawer-close').onclick = () => $('drawer').classList.remove('open');
   $('view-once-close').onclick = closeViewOnce;
@@ -4997,6 +5240,7 @@ function wire() {
   });
 
   buildEmojiPanel();
+  wireHybrid();
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────

@@ -57,6 +57,7 @@
   <symbol id="i-status" viewBox="0 0 24 24"><path d="M3.7 7.4A9.5 9.5 0 0 1 6.9 4.2L5.8 2.5A11.5 11.5 0 0 0 2 6.3l1.7 1.1zM16.6 3.7A9.5 9.5 0 0 1 19.8 7l1.7-1.1A11.5 11.5 0 0 0 17.7 2l-1.1 1.7zM20.3 16.6a9.5 9.5 0 0 1-3.3 3.2l1.1 1.7a11.5 11.5 0 0 0 3.8-3.8l-1.6-1.1zM7.4 20.3a9.5 9.5 0 0 1-3.2-3.3l-1.7 1.1A11.5 11.5 0 0 0 6.3 22l1.1-1.7zM12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></symbol>
   <symbol id="i-megaphone" viewBox="0 0 24 24"><path d="M3 10v4a2 2 0 0 0 2 2h1l2 5h3l-2-5h2l8 4V4l-8 4H5a2 2 0 0 0-2 2zm18-1v6h2V9h-2z"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M11 5v6H5v2h6v6h2v-6h6v-2h-6V5h-2z"/></symbol>
+  <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z"/></symbol>
   <symbol id="i-wallpaper" viewBox="0 0 24 24"><path d="M21 3H3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H3V5h18v14zM8.5 11.5 5 16h14l-4.5-6-3.5 4.5-2.5-3z"/></symbol>
 </svg>
 
@@ -169,13 +170,20 @@
       <div class="side-filters">
         <button class="chip on" data-filter="all">All</button>
         <button class="chip" data-filter="unread">Unread</button>
-        <button class="chip" data-filter="favorites">Favorites</button>
+        <button class="chip" data-filter="personal">Personal</button>
         <button class="chip" data-filter="groups">Groups</button>
+        <button class="chip" data-filter="favorites">Favorites</button>
+        <button class="chip" data-filter="calls">Calls</button>
         <button class="chip" data-filter="archived">Archived</button>
         <button class="chip locked-filter" id="locked-chats-filter" data-filter="locked" hidden>🔒 Locked <span id="locked-chat-count"></span></button>
       </div>
 
       <div class="chat-list" id="chat-list"></div>
+      <nav class="bottom-nav" id="bottom-nav" aria-label="Main">
+        <button type="button" class="on" data-nav="chats"><svg class="icon"><use href="#i-chat"/></svg>Chats</button>
+        <button type="button" data-nav="status"><svg class="icon"><use href="#i-status"/></svg>Status</button>
+        <button type="button" data-nav="calls"><svg class="icon"><use href="#i-phone"/></svg>Calls</button>
+      </nav>
     </aside>
 
     <!-- ── Intro (no chat selected) ── -->
@@ -215,6 +223,20 @@
 
       <div class="offline-bar" id="offline-bar"></div>
 
+      <div class="inchat-search" id="inchat-search" hidden>
+        <svg class="icon-sm"><use href="#i-search"/></svg>
+        <input id="inchat-search-input" type="search" placeholder="Search in this chat" autocomplete="off" />
+        <span id="inchat-search-count"></span>
+        <button class="hdr-btn" id="inchat-search-prev" type="button" title="Previous">↑</button>
+        <button class="hdr-btn" id="inchat-search-next" type="button" title="Next">↓</button>
+        <button class="hdr-btn" id="inchat-search-close" type="button" aria-label="Close search"><svg class="icon"><use href="#i-close"/></svg></button>
+      </div>
+
+      <button class="pin-bar" id="pin-bar" type="button" hidden>
+        <svg class="icon-sm"><use href="#i-pin"/></svg>
+        <span id="pin-bar-text"></span>
+      </button>
+
       <div class="messages" id="messages"></div>
 
       <button class="jump-btn" id="jump-btn"><svg class="icon"><use href="#i-chevron"/></svg><span class="n" id="jump-n" style="display:none"></span></button>
@@ -241,6 +263,7 @@
           <button class="comp-btn" id="btn-attach" title="Attach"><svg class="icon"><use href="#i-clip"/></svg></button>
           <div class="input-wrap">
             <textarea class="msg-input" id="msg-input" rows="1" placeholder="Type a message"></textarea>
+            <div class="mention-suggest" id="mention-suggest" hidden></div>
           </div>
           <button class="send-btn" id="btn-send" title="Send"><svg class="icon"><use href="#i-send"/></svg></button>
           <button class="mic-btn" id="btn-mic" title="Record voice note"><svg class="icon"><use href="#i-mic"/></svg></button>
@@ -724,6 +747,37 @@
       <button class="btn-text" id="rate-skip">Not now</button>
       <button class="btn-primary" id="rate-send" disabled>Submit</button>
     </div>
+  </div>
+</div>
+
+
+<div class="overlay" id="modal-calls">
+  <div class="modal">
+    <div class="modal-head">Calls</div>
+    <div class="modal-body">
+      <p class="setting-explainer">WhatsApp-style history of voice and video calls on this account.</p>
+      <div id="call-history-list" class="hybrid-list"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-starred">
+  <div class="modal">
+    <div class="modal-head">Starred messages</div>
+    <div class="modal-body">
+      <p class="setting-explainer">Messages you star stay here, like WhatsApp starred and Telegram saved-from-chat.</p>
+      <div id="starred-list" class="hybrid-list"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-message-info">
+  <div class="modal">
+    <div class="modal-head">Message info</div>
+    <div class="modal-body" id="message-info-body"></div>
+    <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
   </div>
 </div>
 
