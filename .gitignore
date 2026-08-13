@@ -4,12 +4,3 @@ public/uploads/*
 data/
 *.log
 .DS_Store
-.env
-.env.*
-!.env.production.example
-native/android/.gradle/
-native/android/build/
-native/android/app/build/
-native/android/local.properties
-native/desktop/node_modules/
-native/desktop/dist/
