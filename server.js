@@ -133,6 +133,7 @@ app.locals.isOriginAllowed = originAllowed;
 app.use((req, res, next) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
   if (req.path === '/api/story-ads/valmontpay/webhook') return next();
+  if (req.path === '/api/sms/twilio/inbound') return next();
   if (!originAllowed(req.get('origin'), req.get('host'))) {
     return sendJsonError(res, 403, 'Origin not allowed');
   }

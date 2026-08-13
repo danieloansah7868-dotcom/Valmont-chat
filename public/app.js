@@ -633,6 +633,7 @@ function connect() {
       me = res.user;
       chats = res.chats;
       users = res.users;
+      applyDeviceSettings(me.settings);
       await loadOutbox(me.id);
       localStorage.setItem('vchat.name', me.username);
       localStorage.setItem('vchat.avatar', me.avatar || '');
@@ -1313,6 +1314,7 @@ function updateHeaderForActive() {
   }
   updateCallButtons();
   updateSecretBanner();
+  updateTransportSwitch();
   renderChatList();
 }
 
@@ -1383,7 +1385,7 @@ function renderMessages() {
 function messageRow(m, grouped) {
   const out = m.senderId === me.id;
   const c = activeChat();
-  const row = el('div', `msg-row ${out ? 'out' : 'in'}${grouped ? ' grouped' : ''}${m.pending ? ' pending' : ''}${m.stuck ? ' stuck' : ''}${m.encryption ? ' secret-msg' : ''}${m.decryptError ? ' decrypt-error' : ''}`);
+  const row = el('div', `msg-row ${out ? 'out' : 'in'}${grouped ? ' grouped' : ''}${m.pending ? ' pending' : ''}${m.stuck ? ' stuck' : ''}${m.encryption ? ' secret-msg' : ''}${m.decryptError ? ' decrypt-error' : ''}${m.transport === 'sms' ? ' sms' : ' cloud'}`);
   row.dataset.id = m.id;
 
   let inner = '';
@@ -1685,6 +1687,7 @@ async function sendMessage(opts = {}) {
     replyTo,
     viewOnce: !!pendingFile && $('view-once-toggle').checked,
     silent: opts.silent === true,
+    transport: chat?.type === 'dm' && chat.transport === 'sms' ? 'sms' : 'cloud',
   };
   if (chat?.type === 'secret') {
     try {
@@ -1925,6 +1928,7 @@ function sendQueued(item) {
         replyTo: item.replyTo,
         viewOnce: item.viewOnce === true,
         silent: item.silent === true,
+        transport: item.transport || undefined,
         encryption: item.encryption || undefined,
         tempId: item.tempId,
         clientId: item.clientId,
@@ -2076,6 +2080,7 @@ function setLite(on) {
   if (activeId) renderMessages();
   if (document.body.classList.contains('reels-open')) renderReels(visibleReelId());
   toast(lite ? 'Lite mode on — media loads only when requested' : 'Lite mode off');
+  pushDeviceSettings();
 }
 
 function openLiteMode() {
@@ -3221,6 +3226,7 @@ function openNotifications() {
   $('notifications-save').onclick = () => {
     notificationPrefs = { ...NOTIFICATION_DEFAULTS, ...readNotificationDraft() };
     localStorage.setItem('vchat.notifications', JSON.stringify(notificationPrefs));
+    pushDeviceSettings();
     callToneStop();
     if (activeId) renderMessages();
     closeModal('modal-notifications');
@@ -4197,6 +4203,120 @@ async function verifyReturnedBoostPayment() {
 
 
 
+
+function collectDeviceSettings() {
+  return {
+    theme: document.body.classList.contains('dark') ? 'dark' : 'light',
+    lite: !!lite,
+    wallpaper: loadWallpaper(),
+    notifications: { ...notificationPrefs },
+  };
+}
+
+async function pushDeviceSettings() {
+  if (!me) return;
+  try {
+    const { ok, data } = await api('/api/account/settings', collectDeviceSettings(), { method: 'PUT' });
+    if (ok && data.settings) me.settings = data.settings;
+  } catch { /* offline — local values remain */ }
+}
+
+function applyDeviceSettings(settings) {
+  if (!settings) return;
+  const theme = settings.theme === 'dark' ? 'dark' : 'light';
+  document.body.classList.toggle('dark', theme === 'dark');
+  localStorage.setItem('vchat.theme', theme);
+  if (settings.wallpaper) {
+    saveWallpaper(settings.wallpaper);
+    applyWallpaper();
+  }
+  if (typeof settings.lite === 'boolean') {
+    lite = settings.lite;
+    localStorage.setItem('vchat.lite', lite ? '1' : '0');
+    document.body.classList.toggle('lite', lite);
+  }
+  if (settings.notifications) {
+    notificationPrefs = { ...NOTIFICATION_DEFAULTS, ...settings.notifications };
+    localStorage.setItem('vchat.notifications', JSON.stringify(notificationPrefs));
+  }
+}
+
+function updateTransportSwitch() {
+  const bar = $('transport-switch');
+  if (!bar) return;
+  const chat = activeChat();
+  const show = chat?.type === 'dm';
+  bar.hidden = !show;
+  if (!show) return;
+  const current = chat.transport === 'sms' ? 'sms' : 'cloud';
+  bar.querySelectorAll('[data-transport]').forEach(btn => {
+    btn.classList.toggle('on', btn.dataset.transport === current);
+  });
+}
+
+function setActiveTransport(transport) {
+  const chat = activeChat();
+  if (!chat || chat.type !== 'dm') return;
+  socket.emit('chat:setTransport', { chatId: chat.id, transport }, res => {
+    if (res?.error) return toast(res.error);
+    chat.transport = res.transport;
+    updateTransportSwitch();
+    toast(res.transport === 'sms' ? 'Sending as SMS' : 'Sending via VChat Cloud');
+  });
+}
+
+async function openBackup() {
+  const settings = me?.settings || collectDeviceSettings();
+  $('backup-last').textContent = settings.updatedAt
+    ? `${dayLabel(settings.updatedAt)} · ${timeOf(settings.updatedAt)}`
+    : 'Not yet backed up from this account';
+  $('backup-status').textContent = '';
+  openModal('modal-backup');
+}
+
+async function backupNow() {
+  $('backup-status').textContent = 'Saving theme, wallpaper, and settings to VChat Cloud…';
+  const { ok, data } = await api('/api/account/settings', collectDeviceSettings(), { method: 'PUT' });
+  if (!ok) {
+    $('backup-status').textContent = data.error || 'Backup failed';
+    return toast(data.error || 'Backup failed');
+  }
+  me.settings = data.settings;
+  $('backup-last').textContent = `${dayLabel(data.settings.updatedAt)} · ${timeOf(data.settings.updatedAt)}`;
+  $('backup-status').textContent = 'Cloud backup updated. Chat history was already in VChat Cloud.';
+  toast('Backup saved');
+}
+
+async function restoreBackup() {
+  const { ok, data } = await api('/api/account/settings');
+  if (!ok || !data.settings) return toast(data?.error || 'No cloud backup found');
+  applyDeviceSettings(data.settings);
+  me.settings = data.settings;
+  $('backup-last').textContent = `${dayLabel(data.settings.updatedAt)} · ${timeOf(data.settings.updatedAt)}`;
+  $('backup-status').textContent = 'Settings, theme, and wallpaper restored from VChat Cloud.';
+  toast('Restored from cloud backup');
+}
+
+async function downloadBackupFile() {
+  const pin = prompt('Enter your 6-digit two-step PIN to download a backup file');
+  if (pin == null) return;
+  const response = await fetch('/api/account/export', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ currentPin: pin }),
+    credentials: 'same-origin',
+  });
+  if (!response.ok) return toast('Could not download backup. Check your two-step PIN.');
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `vchat-backup-${me.id}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Backup file downloaded');
+}
+
 // ── Secret chats (device-held E2E) ─────────────────────────────────────
 const SECRET_DB_NAME = 'vchat-secret';
 const SECRET_DB_VERSION = 1;
@@ -4579,6 +4699,12 @@ function renderSharedMedia(container, chat) {
 }
 
 function wireHybrid() {
+  $('transport-switch').querySelectorAll('[data-transport]').forEach(btn => {
+    btn.onclick = () => setActiveTransport(btn.dataset.transport);
+  });
+  $('backup-now').onclick = backupNow;
+  $('backup-restore').onclick = restoreBackup;
+  $('backup-download').onclick = downloadBackupFile;
   $('secret-accept').onclick = acceptActiveSecretChat;
   $('secret-decline').onclick = declineActiveSecretChat;
   $('secret-ttl').onclick = () => activeChat() && chooseDisappearing(activeChat());
@@ -4665,6 +4791,7 @@ function setWallpaper(id, extra = {}) {
   saveWallpaper(next);
   applyWallpaper();
   renderWallpaperGrid();
+  pushDeviceSettings();
 }
 function renderWallpaperGrid() {
   const box = $('wp-grid');
@@ -4736,6 +4863,7 @@ function mainMenu(e) {
     { label: 'Message info', fn: () => openMessageInfo(m) },
     { label: 'New group', fn: openNewGroup },
     { label: 'Saved Messages', fn: openSavedMessages },
+    { label: 'VChat Backup', fn: openBackup },
     { label: 'New secret chat', fn: openNewChat },
     { label: 'Starred messages', fn: openStarredMessages },
     { label: 'Calls', fn: openCallHistory },
@@ -4829,6 +4957,7 @@ async function setFilter(f) {
 function toggleTheme() {
   document.body.classList.toggle('dark');
   localStorage.setItem('vchat.theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+  pushDeviceSettings();
 }
 
 // ── Calls (WebRTC) ─────────────────────────────────────────────────────

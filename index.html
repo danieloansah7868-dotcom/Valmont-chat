@@ -215,6 +215,10 @@
             <div class="peer-status" id="peer-status"></div>
           </div>
         </div>
+        <div class="transport-switch" id="transport-switch" hidden>
+          <button type="button" data-transport="cloud" class="on">Cloud</button>
+          <button type="button" data-transport="sms">SMS</button>
+        </div>
         <button class="hdr-btn reels-chat-button" id="btn-reels-chat" title="Reels beside chat" aria-label="Open reels" aria-controls="reels-panel" aria-expanded="false"><svg class="icon"><use href="#i-play"/></svg></button>
         <button class="hdr-btn" id="btn-call-video" title="Video call"><svg class="icon"><use href="#i-video"/></svg></button>
         <button class="hdr-btn" id="btn-call-voice" title="Voice call"><svg class="icon"><use href="#i-phone"/></svg></button>
@@ -790,6 +794,24 @@
   <div class="modal">
     <div class="modal-head">Message info</div>
     <div class="modal-body" id="message-info-body"></div>
+    <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-backup">
+  <div class="modal">
+    <div class="modal-head">VChat Backup</div>
+    <div class="modal-body">
+      <p class="setting-explainer">Like iCloud: your theme, wallpaper, notification choices, and lite mode follow this account. Chat history already lives in VChat Cloud. Secret-chat keys stay on this device.</p>
+      <div class="drawer-label">Last cloud backup</div>
+      <div class="drawer-value" id="backup-last">Never</div>
+      <div class="business-dashboard-actions" style="justify-content:flex-start;margin-top:16px">
+        <button class="btn-primary" id="backup-now" type="button">Back up now</button>
+        <button class="btn-text" id="backup-restore" type="button">Restore settings</button>
+        <button class="btn-text" id="backup-download" type="button">Download file</button>
+      </div>
+      <p class="capture-disclosure" id="backup-status"></p>
+    </div>
     <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
   </div>
 </div>
