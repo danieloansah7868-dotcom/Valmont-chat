@@ -1,35 +1,19 @@
 {
   "name": "vchat",
   "version": "1.0.0",
-  "description": "Vchat — secure staged real-time messaging with navy Cloud, orange SMS, and native Android/desktop shells",
+  "description": "VChat — Real-time messaging app with rooms, DMs, file sharing, and recycle bin",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js",
-    "test": "node --test test/*.test.js",
-    "check": "node --check server.js && node --check lib/http-auth.js && node --check lib/messenger.js && node --check lib/messenger-store.js && node --check lib/runtime-config.js && node --check lib/sms.js && node --check public/app.js && node --check public/sw.js && node --check scripts/backup-local.js && node --check scripts/restore-local.js && node --check scripts/check-runtime-config.js && node --check native/desktop/main.js && node --check native/desktop/preload.js",
-    "pilot": "docker compose -f compose.pilot.yml up --build"
+    "dev": "node server.js"
   },
-  "keywords": [
-    "chat",
-    "messaging",
-    "real-time",
-    "socketio"
-  ],
+  "keywords": ["chat", "messaging", "real-time", "socketio"],
   "license": "MIT",
-  "engines": {
-    "node": ">=20"
-  },
   "dependencies": {
-    "@simplewebauthn/server": "^13.2.2",
+    "cors": "^2.8.5",
     "express": "^4.19.2",
-    "express-rate-limit": "^8.6.2",
-    "helmet": "^8.3.0",
-    "multer": "^2.2.0",
+    "multer": "^1.4.5-lts.1",
     "socket.io": "^4.7.5",
-    "uuid": "^11.1.1"
-  },
-  "devDependencies": {
-    "socket.io-client": "^4.8.3"
+    "uuid": "^9.0.1"
   }
 }
