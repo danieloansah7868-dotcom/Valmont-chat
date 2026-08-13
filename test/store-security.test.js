@@ -12,7 +12,6 @@ process.env.VCHAT_DATA_DIR = dataDir;
 const store = require('../lib/messenger-store');
 
 test.after(async () => {
-  // Let the debounced persistence adapter finish before removing its test root.
   await new Promise(resolve => setTimeout(resolve, 350));
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
@@ -32,6 +31,49 @@ test('sessions are opaque, revocable, and persisted only as digests', async () =
 
   assert.equal(store.destroySession(token), true);
   assert.equal(store.userForSession(token), null);
+});
+
+test('persistence failures remain tracked and a later flush recovers pending state', () => {
+  store.flush();
+  const originalRename = fs.renameSync;
+  fs.renameSync = () => {
+    const error = new Error('simulated atomic rename failure');
+    error.code = 'EIO';
+    throw error;
+  };
+  try {
+    store.save();
+    assert.throws(() => store.flush(), /simulated atomic rename failure/);
+    const failed = store.persistenceStatus();
+    assert.equal(failed.ok, false);
+    assert.equal(failed.pending, true, 'failed bytes remain dirty for retry');
+    assert.equal(typeof failed.errorAt, 'number');
+    assert.throws(() => store.flush(), /simulated atomic rename failure/,
+      'a failed final flush cannot be reported as successful');
+  } finally {
+    fs.renameSync = originalRename;
+  }
+
+  assert.equal(store.flush(), true, 'restored storage commits the still-pending snapshot');
+  assert.deepEqual(store.persistenceStatus(), { ok: true, pending: false });
+});
+
+test('phone verification continuations are phone-bound, single-use, and invalidate older browser flows', () => {
+  const first = store.issueCode('+233240000090');
+  const firstVerified = store.verifyCode('+233240000090', first.code);
+  assert.equal(firstVerified.ok, true);
+  assert.equal(store.hasPhoneVerification('+233240000090', firstVerified.continuation), true);
+  assert.equal(store.hasPhoneVerification('+233240000091', firstVerified.continuation), false,
+    'a continuation cannot authorize a different submitted phone number');
+
+  const replacement = store.issueCode('+233240000090');
+  const replacementVerified = store.verifyCode('+233240000090', replacement.code);
+  assert.equal(replacementVerified.ok, true);
+  assert.equal(store.hasPhoneVerification('+233240000090', firstVerified.continuation), false,
+    'a newer successful browser flow invalidates the older continuation for that phone');
+  assert.equal(store.consumePhoneVerification('+233240000090', replacementVerified.continuation), true);
+  assert.equal(store.consumePhoneVerification('+233240000090', replacementVerified.continuation), false,
+    'registration continuation replay is rejected');
 });
 
 test('privacy, blocking, and group administration enforce authorization', () => {
@@ -76,6 +118,39 @@ test('privacy, blocking, and group administration enforce authorization', () => 
   assert.equal(store.canPerform(group, bob.id, 'sendMessages'), true);
 });
 
+test('reply snapshots and reactions are canonical, visible, and allowlisted', () => {
+  const alice = store.findUserByPhone('+233240000001');
+  const bob = store.findUserByPhone('+233240000002');
+  const eve = store.findUserByPhone('+233240000003');
+  const chat = store.createChat({
+    name: 'Canonical messages', type: 'group', members: [alice.id, bob.id], createdBy: alice.id,
+  });
+  const original = store.addMessage({ chatId: chat.id, senderId: alice.id, text: 'Stored truth', type: 'text' });
+  const snapshot = store.replySnapshot(chat.id, original.id, bob.id);
+  assert.deepEqual(snapshot, {
+    id: original.id, senderId: alice.id, senderName: 'Alice', text: 'Stored truth', preview: 'Stored truth',
+  });
+  assert.equal(store.replySnapshot(chat.id, original.id, eve.id), null,
+    'a non-member cannot obtain reply presentation metadata');
+
+  original.reactions = {
+    '👍': [bob.id, bob.id, 'missing-user'],
+    '<img src=x onerror=alert(1)>': [bob.id],
+  };
+  assert.deepEqual(store.outMessage(original, alice.id).reactions, { '👍': [bob.id] },
+    'stored legacy or hostile reaction keys are removed from projections');
+  assert.equal(store.toggleReaction(chat.id, original.id, bob.id, '<script>'), null);
+  assert.equal(store.toggleReaction(chat.id, original.id, eve.id, '❤️'), null);
+  assert.deepEqual(store.outMessage(store.toggleReaction(chat.id, original.id, bob.id, '❤️'), alice.id).reactions, {
+    '❤️': [bob.id],
+  });
+  assert.deepEqual(store.deleteMessage(chat.id, original.id, bob.id, false).storageNames, []);
+  assert.equal(store.replySnapshot(chat.id, original.id, bob.id), null,
+    'a participant cannot reply to a message hidden from their own history');
+  assert.equal(store.toggleReaction(chat.id, original.id, bob.id, '👍'), null,
+    'retaining a message ID cannot mutate reactions after local deletion');
+});
+
 test('attachments are one-use, chat-bound, and safely cloned when forwarded', () => {
   const alice = store.findUserByPhone('+233240000001');
   const bob = store.findUserByPhone('+233240000002');
@@ -109,9 +184,72 @@ test('attachments are one-use, chat-bound, and safely cloned when forwarded', ()
   assert.notEqual(forwarded[0].file.id, upload.id);
   assert.equal(store.getAttachment(forwarded[0].file.id, eve.id)?.chatId, target.id);
   assert.equal(store.getAttachment(forwarded[0].file.id, bob.id), null);
+  assert.deepEqual(store.attachmentUsage(alice.id), { bytes: 1234, count: 2, pending: 0 },
+    'forwarding shares protected bytes while tracking both authorization records');
+
+  const sourceDeletion = store.deleteMessage(source.id, message.id, alice.id, true);
+  assert.deepEqual(sourceDeletion.storageNames, [],
+    'deleting a source message preserves bytes still referenced by a forwarded copy');
+  assert.equal(store.getAttachment(upload.id, bob.id), null);
+  assert.equal(store.getAttachment(forwarded[0].file.id, eve.id)?.id, forwarded[0].file.id);
+  const finalDeletion = store.deleteMessage(target.id, forwarded[0].id, alice.id, true);
+  assert.deepEqual(finalDeletion.storageNames, ['opaque-storage-name.png'],
+    'the final authorization record returns the shared object for physical deletion');
+  assert.deepEqual(store.attachmentUsage(alice.id), { bytes: 0, count: 0, pending: 0 });
 
   assert.equal(store.setAdvancedPrivacy(source.id, alice.id, true)?.advancedPrivacy, true);
   assert.deepEqual(store.forwardMessage(source.id, message.id, alice.id, [target.id]), []);
+});
+
+test('attachment visibility and cleanup follow per-user clear, expiry, and abandoned-upload state', () => {
+  const alice = store.findUserByPhone('+233240000001');
+  const bob = store.findUserByPhone('+233240000002');
+  const chat = store.createChat({
+    name: 'Attachment lifecycle', type: 'group', members: [alice.id, bob.id], createdBy: alice.id,
+  });
+
+  const clearUpload = store.registerAttachment({
+    ownerId: alice.id, chatId: chat.id, storageName: 'clear-lifecycle.pdf',
+    name: 'clear.pdf', mime: 'application/pdf', size: 500,
+  });
+  const clearMessage = store.addMessage({
+    chatId: chat.id, senderId: alice.id,
+    file: store.validateAttachment(clearUpload.id, alice.id, chat.id), type: 'file',
+  });
+  assert.equal(store.getAttachment(clearUpload.id, bob.id)?.id, clearUpload.id);
+  assert.deepEqual(store.clearChat(alice.id, chat.id).storageNames, [],
+    'one participant clearing locally cannot delete bytes still visible to another participant');
+  assert.equal(store.getAttachment(clearUpload.id, alice.id), null,
+    'a cleared participant cannot retrieve old bytes by retaining an attachment ID');
+  assert.equal(store.getAttachment(clearUpload.id, bob.id)?.id, clearUpload.id);
+  assert.deepEqual(store.clearChat(bob.id, chat.id).storageNames, ['clear-lifecycle.pdf']);
+  assert.equal(store.getAttachment(clearUpload.id, bob.id), null);
+  assert.equal(clearMessage.file, null, 'the last clear detaches stale message authorization metadata');
+
+  const expiryUpload = store.registerAttachment({
+    ownerId: alice.id, chatId: chat.id, storageName: 'expired-lifecycle.png',
+    name: 'expired.png', mime: 'image/png', size: 750,
+  });
+  const expiring = store.addMessage({
+    chatId: chat.id, senderId: alice.id,
+    file: store.validateAttachment(expiryUpload.id, alice.id, chat.id), type: 'image',
+  });
+  expiring.expiresAt = Date.now() - 1;
+  const expired = store.pruneExpiredMessages().find(item => item.messageId === expiring.id);
+  assert.deepEqual(expired.storageNames, ['expired-lifecycle.png']);
+  assert.equal(store.getAttachment(expiryUpload.id, alice.id), null);
+
+  const abandoned = store.registerAttachment({
+    ownerId: alice.id, chatId: chat.id, storageName: 'abandoned-lifecycle.txt',
+    name: 'draft.txt', mime: 'text/plain', size: 250,
+  });
+  assert.equal(store.attachmentUsage(alice.id).pending, 1);
+  assert.deepEqual(
+    store.pruneAbandonedAttachments(Date.now() + (60 * 60 * 1000) + 1),
+    ['abandoned-lifecycle.txt'],
+  );
+  assert.equal(store.getAttachment(abandoned.id, alice.id), null);
+  assert.equal(store.attachmentUsage(alice.id).pending, 0);
 });
 
 test('business identity, chat locks, View Once, and Status saving enforce their privacy boundaries', () => {
@@ -202,6 +340,10 @@ test('business identity, chat locks, View Once, and Status saving enforce their 
   assert.equal(store.openViewOnceMessage(group.id, once.id, eve.id).attachment.id, upload.id,
     'another recipient retains an independent one-time opening');
   assert.equal(store.outMessage(once, alice.id).viewOnceOpenedCount, 2);
+  assert.deepEqual(store.finalizeViewOnceAttachment(group.id, once.id), ['view-once.png']);
+  assert.equal(once.file, null);
+  assert.equal(store.getAttachment(upload.id, eve.id, { allowViewOnce: true }), null,
+    'the final recipient consumption revokes metadata for the shared bytes');
 
   const noSave = store.createStory(alice.id, { type: 'text', text: 'Do not save', background: 'jade' });
   const savable = store.createStory(alice.id, {
@@ -322,6 +464,24 @@ test('stories enforce mutual-contact privacy and campaigns require review plus e
   assert.equal(store.confirmCampaignPayment('story-test-reference', { amount: 2499, currency: 'GHS' }), null);
   assert.equal(store.confirmCampaignPayment('story-test-reference', { amount: 2500, currency: 'USD' }), null);
   assert.ok(store.confirmCampaignPayment('story-test-reference', { amount: 2500, currency: 'GHS', providerId: 'pay-1' }));
+  assert.ok(store.confirmCampaignPayment('story-test-reference', { amount: 2500, currency: 'GHS', providerId: 'pay-1' }),
+    'provider verification retries are idempotent');
+  assert.equal(store.confirmCampaignPayment('story-test-reference', { amount: 2500, currency: 'GHS', providerId: 'different-charge' }), null,
+    'a second provider charge cannot overwrite a captured payment');
+  assert.equal(store.listPaymentLedger(campaign.id, outsider.id).length, 0, 'financial records are owner-private');
+  assert.equal(store.listPaymentLedger(campaign.id, alice.id).length, 1);
+  assert.equal(store.listPaymentLedger(campaign.id, alice.id)[0].kind, 'payment_captured');
+  const webhookDigest = 'a'.repeat(64);
+  const webhook = store.processValmontPayWebhook({
+    digest: webhookDigest, event: 'charge.success', status: 'success', reference: 'story-test-reference',
+    amount: 2500, currency: 'GHS', providerId: 'pay-1',
+  });
+  assert.equal(webhook.outcome, 'confirmed');
+  assert.equal(store.processValmontPayWebhook({ digest: webhookDigest }).duplicate, true,
+    'signed webhook delivery retries use the durable inbox digest');
+  assert.equal(store.getPaymentWebhookInbox().filter(entry => entry.digest === webhookDigest).length, 1);
+  assert.equal(store.listPaymentLedger(campaign.id, alice.id).length, 1,
+    'webhook and verification paths share one capture ledger entry');
 
   const eligible = store.listEligibleStoryAds(bob.id).find(item => item.id === campaign.id);
   assert.ok(eligible);
@@ -351,6 +511,23 @@ test('stories enforce mutual-contact privacy and campaigns require review plus e
   assert.equal(store.controlStoryCampaign(campaign.id, alice.id, 'resume'), null);
   assert.equal(store.reviewStoryCampaign(campaign.id, { approved: true, reviewerId: alice.id }), null, 'review decisions are final');
 
+  assert.ok(store.recordCampaignRefund(campaign.id, {
+    actorId: alice.id, amountMinor: 500, providerRefundId: 'refund-1', reason: 'Partial service credit',
+  }));
+  assert.ok(store.recordCampaignRefund(campaign.id, {
+    actorId: alice.id, amountMinor: 500, providerRefundId: 'refund-1', reason: 'Idempotent retry',
+  }), 'the provider refund identifier makes retries idempotent');
+  assert.equal(store.recordCampaignRefund(campaign.id, {
+    actorId: alice.id, amountMinor: 600, providerRefundId: 'refund-1', reason: 'Conflicting retry',
+  }), null);
+  assert.equal(store.recordCampaignRefund(campaign.id, {
+    actorId: alice.id, amountMinor: 2001, providerRefundId: 'refund-too-large', reason: 'Over-refund',
+  }), null, 'refund totals cannot exceed captured funds');
+  assert.equal(store.listStoryCampaigns(alice.id).find(item => item.id === campaign.id).paymentStatus,
+    'partially_refunded');
+  assert.equal(store.listPaymentLedger(campaign.id, alice.id).length, 2);
+  assert.deepEqual(store.listPaymentReconciliation().filter(issue => issue.campaignId === campaign.id), []);
+
   const latePayment = store.createStoryCampaign(alice.id, story.id, {
     type: 'text', text: 'Stopped before payment', objective: 'messages', cta: 'Send message',
     audience: 'broad', budgetGhs: 10, durationDays: 1, billingEmail: 'alice@example.com',
@@ -376,6 +553,10 @@ test('stories enforce mutual-contact privacy and campaigns require review plus e
   store.reviewStoryCampaign(pausedExpiry.id, {
     approved: true, waivePayment: true, reviewerId: alice.id, note: 'Test account credit',
   });
+  const creditEntries = store.listPaymentLedger(pausedExpiry.id, alice.id);
+  assert.equal(creditEntries.length, 1);
+  assert.equal(creditEntries[0].kind, 'account_credit_waiver');
+  assert.equal(creditEntries[0].reason, 'Test account credit');
   assert.equal(store.controlStoryCampaign(pausedExpiry.id, alice.id, 'pause').status, 'paused');
   const pausedEndAt = store.listStoryCampaigns(alice.id).find(item => item.id === pausedExpiry.id).endAt;
   assert.deepEqual(store.pruneExpiredStoryCampaigns(pausedEndAt + 1), ['paused-campaign.png']);
@@ -390,12 +571,14 @@ test('stories enforce mutual-contact privacy and campaigns require review plus e
     process.stdout.write(JSON.stringify({
       story: store.listStories(process.env.BOB_ID).flatMap(group => group.items).find(item => item.id === process.env.STORY_ID),
       campaign: store.listStoryCampaigns(process.env.ALICE_ID).find(item => item.id === process.env.CAMPAIGN_ID),
+      ledger: store.listPaymentLedger(process.env.CAMPAIGN_ID, process.env.ALICE_ID),
+      webhook: store.getPaymentWebhookInbox().find(entry => entry.digest === process.env.WEBHOOK_DIGEST),
     }));
   `], {
     cwd: path.join(__dirname, '..'),
     env: {
       ...process.env, VCHAT_DATA_DIR: dataDir, BOB_ID: bob.id, ALICE_ID: alice.id,
-      STORY_ID: story.id, CAMPAIGN_ID: campaign.id,
+      STORY_ID: story.id, CAMPAIGN_ID: campaign.id, WEBHOOK_DIGEST: webhookDigest,
     },
     encoding: 'utf8',
   });
@@ -404,6 +587,10 @@ test('stories enforce mutual-contact privacy and campaigns require review plus e
   assert.equal(restored.story.myReaction, '🔥');
   assert.equal(restored.campaign.status, 'stopped');
   assert.equal(restored.campaign.reviewer.id, alice.id);
+  assert.equal(restored.ledger.length, 2);
+  assert.equal(restored.ledger[0].providerId, 'pay-1');
+  assert.equal(restored.ledger[1].providerId, 'refund-1');
+  assert.equal(restored.webhook.event, 'charge.success');
 
   const restartMediaName = 'restart-expired-story.png';
   const restartMediaDir = path.join(dataDir, 'media');
@@ -449,6 +636,193 @@ test('stories enforce mutual-contact privacy and campaigns require review plus e
   rawStory.expiresAt = Date.now() - 1;
   assert.equal(store.pruneExpiredStories().some(item => item.id === story.id), true);
   assert.equal(store.getStory(story.id, alice.id), null);
+});
+
+test('protected media usage deduplicates bytes across every account-owned media class', () => {
+  const owner = store.upsertUserByPhone('+233240000098', { username: 'Quota Owner' });
+  const bob = store.findUserByPhone('+233240000002');
+  const chat = store.findOrCreateDM(owner.id, bob.id);
+
+  store.setProfilePhoto(owner.id, { storageName: 'quota-profile.png', mime: 'image/png', size: 11 });
+  const upload = store.registerAttachment({
+    ownerId: owner.id,
+    chatId: chat.id,
+    storageName: 'quota-attachment.png',
+    name: 'quota.png',
+    mime: 'image/png',
+    size: 13,
+  });
+  const file = store.validateAttachment(upload.id, owner.id, chat.id);
+  const message = store.addMessage({ chatId: chat.id, senderId: owner.id, type: 'image', file });
+  assert.ok(message?.id);
+  assert.equal(store.forwardMessage(chat.id, message.id, owner.id, [chat.id]).length, 1,
+    'forwarding creates another authorization record for the same protected object');
+
+  assert.ok(store.createReel(owner.id, {
+    storageName: 'quota-reel.mp4', mime: 'video/mp4', size: 17, caption: 'Quota',
+  }));
+  const story = store.createStory(owner.id, {
+    type: 'image', storageName: 'quota-story.png', mime: 'image/png', size: 19,
+  });
+  assert.ok(story?.id);
+  assert.ok(store.createStoryCampaign(owner.id, story.id, {
+    storageName: 'quota-campaign.png', type: 'image', mime: 'image/png', size: 19,
+    objective: 'profile_visits', cta: 'Visit profile', audience: 'broad',
+    budgetGhs: 25, durationDays: 3, billingEmail: 'quota@example.com', paymentProvider: 'valmontpay',
+  })?.id);
+
+  assert.deepEqual(store.protectedMediaUsage(owner.id), { bytes: 79, objects: 5 });
+  assert.deepEqual(store.protectedMediaUsage(owner.id, 'quota-profile.png'), { bytes: 68, objects: 4 },
+    'profile-photo replacement can exclude bytes that will be removed atomically');
+});
+
+test('service restart prunes fully opened View Once metadata and protected bytes', async () => {
+  const owner = store.upsertUserByPhone('+233240000096', { username: 'Restart Sender' });
+  const recipient = store.upsertUserByPhone('+233240000097', { username: 'Restart Recipient' });
+  const chat = store.findOrCreateDM(owner.id, recipient.id);
+  const mediaDir = path.join(dataDir, 'media');
+  const storageName = 'restart-consumed-view-once.png';
+  fs.mkdirSync(mediaDir, { recursive: true });
+  fs.writeFileSync(path.join(mediaDir, storageName), 'consumed protected bytes');
+  const upload = store.registerAttachment({
+    ownerId: owner.id, chatId: chat.id, storageName, name: 'once.png', mime: 'image/png', size: 24,
+  });
+  const file = store.validateAttachment(upload.id, owner.id, chat.id);
+  const message = store.addMessage({
+    chatId: chat.id, senderId: owner.id, type: 'image', file, viewOnce: true,
+  });
+  assert.ok(store.openViewOnceMessage(chat.id, message.id, recipient.id));
+  assert.equal(fs.existsSync(path.join(mediaDir, storageName)), true,
+    'issuing an in-memory transfer grant leaves the bytes available until transfer termination');
+  await new Promise(resolve => setTimeout(resolve, 350));
+
+  const child = spawnSync(process.execPath, ['-e', `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const http = require('node:http');
+    const express = require('express');
+    const app = express();
+    app.locals.isOriginAllowed = () => true;
+    require('./lib/messenger').attach(http.createServer(app), app);
+    setTimeout(() => {
+      const snapshot = JSON.parse(fs.readFileSync(process.env.DB_FILE, 'utf8'));
+      const message = snapshot.messages.flatMap(([, items]) => items)
+        .find(item => item.id === process.env.MESSAGE_ID);
+      process.stdout.write(JSON.stringify({
+        mediaExists: fs.existsSync(path.join(process.env.MEDIA_DIR, process.env.MEDIA_NAME)),
+        attachmentExists: snapshot.attachments.some(([id]) => id === process.env.ATTACHMENT_ID),
+        messageHasFile: Boolean(message?.file),
+      }));
+    }, 450);
+  `], {
+    cwd: path.join(__dirname, '..'),
+    env: {
+      ...process.env, VCHAT_DATA_DIR: dataDir, DB_FILE: store.DB_FILE, MEDIA_DIR: mediaDir,
+      MEDIA_NAME: storageName, MESSAGE_ID: message.id, ATTACHMENT_ID: upload.id,
+    },
+    encoding: 'utf8',
+  });
+  assert.equal(child.status, 0, child.stderr);
+  assert.deepEqual(JSON.parse(child.stdout), {
+    mediaExists: false, attachmentExists: false, messageHasFile: false,
+  });
+});
+
+test('account deletion durably tombstones identity, revokes access, redacts content, and protects shared media', () => {
+  const owner = store.upsertUserByPhone('+233240000095', { username: 'Delete Me', about: 'private deletion note' });
+  const peer = store.findUserByPhone('+233240000002');
+  const chat = store.findOrCreateDM(owner.id, peer.id);
+  const session = store.createSession(owner.id, { label: 'Deletion device' });
+  store.setTwoStepPin(owner.id, '953159');
+  store.setProfilePhoto(owner.id, { storageName: 'delete-profile.png', mime: 'image/png', size: 10 });
+
+  const shared = store.registerAttachment({
+    ownerId: owner.id, chatId: chat.id, storageName: 'delete-shared.png',
+    name: 'private.png', mime: 'image/png', size: 12,
+  });
+  store.registerAttachment({
+    ownerId: peer.id, chatId: chat.id, storageName: 'delete-shared.png',
+    name: 'peer-copy.png', mime: 'image/png', size: 12,
+  });
+  const sent = store.addMessage({
+    chatId: chat.id,
+    senderId: owner.id,
+    text: 'account deletion secret body',
+    type: 'image',
+    file: store.validateAttachment(shared.id, owner.id, chat.id),
+  });
+  const incoming = store.addMessage({ chatId: chat.id, senderId: peer.id, text: 'reply target', type: 'text' });
+  assert.ok(store.toggleReaction(chat.id, incoming.id, owner.id, '❤️'));
+  const reply = store.addMessage({
+    chatId: chat.id, senderId: peer.id, text: 'recipient reply', type: 'text',
+    replyTo: store.replySnapshot(chat.id, sent.id, peer.id),
+  });
+
+  const story = store.createStory(owner.id, {
+    type: 'image', storageName: 'delete-story.png', mime: 'image/png', size: 14, text: 'private Status',
+  });
+  const reel = store.createReel(owner.id, {
+    storageName: 'delete-reel.mp4', mime: 'video/mp4', size: 16, caption: 'private reel caption',
+  });
+  const campaign = store.createStoryCampaign(owner.id, story.id, {
+    storageName: 'delete-campaign.png', type: 'image', mime: 'image/png', size: 18,
+    text: 'private campaign creative', objective: 'profile_visits', cta: 'Visit profile',
+    audience: 'broad', budgetGhs: 25, durationDays: 3,
+    billingEmail: 'delete-me@example.com', paymentProvider: 'valmontpay',
+  });
+  assert.ok(reel?.id && campaign?.id);
+  const group = store.createChat({
+    name: 'Deletion admin handoff', type: 'group', members: [owner.id, peer.id], createdBy: owner.id,
+  });
+  store.reportUser(owner.id, peer.id, 'submitted abuse report', chat.id);
+  store.rateCall({
+    callId: 'delete-call', userId: owner.id, chatId: chat.id, media: 'audio', stars: 2,
+    tags: ['Audio was choppy'], note: 'private rating note', duration: 30,
+  });
+
+  const result = store.deleteAccount(owner.id, { requestedAt: 1_800_000_000_000 });
+  assert.equal(result.deletedAt, 1_800_000_000_000);
+  assert.equal(result.storageNames.includes('delete-shared.png'), false,
+    'bytes still referenced by another attachment must not be physically removed');
+  for (const name of ['delete-profile.png', 'delete-story.png', 'delete-reel.mp4', 'delete-campaign.png']) {
+    assert.equal(result.storageNames.includes(name), true, `${name} should be eligible for physical cleanup`);
+  }
+  assert.equal(store.userForSession(session), null);
+  assert.equal(store.findUserByPhone('+233240000095'), null);
+  assert.equal(store.getAllUsers(peer.id).some(user => user.id === owner.id), false);
+  assert.equal(store.exportAccountData(owner.id), null);
+  assert.equal(store.getChat(group.id).admins.has(peer.id), true, 'a surviving group member becomes admin');
+  assert.equal(store.getStory(story.id, peer.id), null);
+  assert.equal(store.getCallRatings({ userId: owner.id }).length, 0);
+
+  const redacted = store.getRawMessage(chat.id, sent.id);
+  assert.equal(redacted.deleted, true);
+  assert.equal(redacted.text, '');
+  assert.equal(redacted.file, null);
+  assert.equal(store.getRawMessage(chat.id, incoming.id).reactions['❤️'], undefined);
+  assert.deepEqual(store.getRawMessage(chat.id, reply.id).replyTo, {
+    ...store.getRawMessage(chat.id, reply.id).replyTo,
+    senderName: 'Deleted account', text: '', preview: 'Deleted message',
+  });
+  const retainedCampaign = store.listStoryCampaigns(owner.id).find(item => item.id === campaign.id);
+  assert.equal(retainedCampaign.billingEmail, '');
+  assert.equal(retainedCampaign.text, '');
+  assert.equal(retainedCampaign.mediaUrl, null);
+  assert.equal(retainedCampaign.status, 'stopped');
+
+  const tombstone = store.getUser(owner.id);
+  assert.equal(tombstone.username, 'Deleted account');
+  assert.equal(tombstone.phone, null);
+  assert.equal(tombstone.pinHash, null);
+  assert.equal(tombstone.chatLock.credentials.length, 0);
+  assert.equal(store.deleteAccount(owner.id), null, 'deletion is not applied twice');
+
+  store.flush();
+  const snapshot = fs.readFileSync(store.DB_FILE, 'utf8');
+  for (const secret of [
+    '+233240000095', 'account deletion secret body', 'private deletion note',
+    'private Status', 'private reel caption', 'private campaign creative', 'delete-me@example.com',
+  ]) assert.equal(snapshot.includes(secret), false, `${secret} must not survive in the durable snapshot`);
 });
 
 test('unique @handles are required for discovery and cannot collide', () => {
