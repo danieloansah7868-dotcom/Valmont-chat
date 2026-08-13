@@ -39,9 +39,9 @@ async function startServer(t, extraEnv = {}, seed = null) {
     STORY_AD_ADMIN_PHONES: '+233241234567',
     ...extraEnv,
   };
-  delete env.TWILIO_ACCOUNT_SID;
-  delete env.TWILIO_AUTH_TOKEN;
-  delete env.TWILIO_FROM;
+  for (const key of ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM']) {
+    if (!Object.hasOwn(extraEnv, key)) delete env[key];
+  }
   if (!Object.hasOwn(extraEnv, 'VALMONTPAY_SECRET_KEY')) delete env.VALMONTPAY_SECRET_KEY;
   if (!Object.hasOwn(extraEnv, 'VALMONTPAY_API_URL')) delete env.VALMONTPAY_API_URL;
   if (seed) await seed({ dataDir, env });
@@ -51,7 +51,7 @@ async function startServer(t, extraEnv = {}, seed = null) {
     const timer = setTimeout(() => reject(new Error(`server did not start: ${output}`)), 5000);
     const onData = chunk => {
       output += chunk;
-      if (output.includes('VChat is live')) {
+      if (output.includes('"event":"server_started"')) {
         clearTimeout(timer);
         resolve();
       }
@@ -64,11 +64,20 @@ async function startServer(t, extraEnv = {}, seed = null) {
     });
   });
   await ready;
-  t.after(() => {
+  t.after(async () => {
+    const exited = new Promise(resolve => {
+      if (child.exitCode != null || child.signalCode != null) return resolve();
+      child.once('exit', resolve);
+    });
     child.kill('SIGTERM');
+    await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 2000))]);
+    if (child.exitCode == null && child.signalCode == null) {
+      try { child.kill('SIGKILL'); } catch { /* already gone */ }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
-  return { base: `http://127.0.0.1:${port}`, dataDir };
+  return { base: `http://127.0.0.1:${port}`, dataDir, child, output: () => output };
 }
 
 function jsonRequest(url, body, headers = {}, method = 'POST') {
@@ -77,6 +86,18 @@ function jsonRequest(url, body, headers = {}, method = 'POST') {
     headers: { 'content-type': 'application/json', ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+}
+
+function responseCookie(response, name) {
+  const values = typeof response.headers.getSetCookie === 'function'
+    ? response.headers.getSetCookie()
+    : [response.headers.get('set-cookie') || ''];
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const value of values) {
+    const match = value.match(new RegExp(`(?:^|,\\s*)${escaped}=([^;,\\s]*)`));
+    if (match) return `${name}=${match[1]}`;
+  }
+  return null;
 }
 
 async function startValmontPayStub(t, secret) {
@@ -162,13 +183,57 @@ function socketEvent(socket, event, timeoutMs = 3000) {
   });
 }
 
+function socketRawAck(socket, event, payload, timeoutMs = 3000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timed out waiting for raw socket acknowledgement: ${event}`)), timeoutMs);
+    socket.emit(event, payload, result => {
+      clearTimeout(timer);
+      resolve(result);
+    });
+  });
+}
+
+function socketMissingPayloadAck(socket, event, timeoutMs = 3000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timed out waiting for missing-payload acknowledgement: ${event}`)), timeoutMs);
+    socket.emit(event, result => {
+      clearTimeout(timer);
+      resolve(result);
+    });
+  });
+}
+
+async function registerAccount(base, number, username) {
+  let response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number });
+  assert.equal(response.status, 200);
+  const request = await response.json();
+  response = await jsonRequest(`${base}/api/auth/verify`, { phone: request.phone, code: request.devCode });
+  assert.equal(response.status, 200);
+  const verificationCookie = responseCookie(response, 'vchat_verify');
+  response = await jsonRequest(`${base}/api/auth/register`, {
+    phone: request.phone, username, accountType: 'personal',
+  }, { cookie: verificationCookie });
+  assert.equal(response.status, 200);
+  return { cookie: responseCookie(response, 'vchat_session'), user: (await response.json()).user };
+}
+
 test('HTTP security boundary protects sessions, mutations, media, and legacy uploads', async t => {
   const { base, dataDir } = await startServer(t);
 
   let response = await fetch(`${base}/`);
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+  assert.match(response.headers.get('x-request-id'), /^[\w.:-]{8,128}$/);
   assert.equal(response.headers.get('cache-control'), 'no-cache');
+
+  response = await fetch(`${base}/livez`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true });
+  response = await fetch(`${base}/readyz`);
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).checks, { application: true, persistence: true });
+  response = await fetch(`${base}/metrics`);
+  assert.equal(response.status, 404, 'metrics stay unavailable unless an operator configures a token');
 
   response = await fetch(`${base}/manifest.webmanifest`);
   assert.equal(response.status, 200);
@@ -188,6 +253,8 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   response = await jsonRequest(`${base}/api/auth/verify`, { phone: request.phone, code: request.devCode });
   assert.equal(response.status, 200);
   assert.equal((await response.json()).needsProfile, true);
+  const verificationCookie = responseCookie(response, 'vchat_verify');
+  assert.ok(verificationCookie, 'new-account verification must bind profile completion to this browser');
 
   response = await jsonRequest(`${base}/api/auth/register`, {
     phone: request.phone,
@@ -198,7 +265,7 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
       name: 'HTTP Test Studio', category: 'technology', description: 'Public test purpose',
       website: 'https://studio.example', email: 'hello@studio.example', address: 'Accra',
     },
-  });
+  }, { cookie: verificationCookie });
   assert.equal(response.status, 200);
   const setCookie = response.headers.get('set-cookie');
   assert.match(setCookie, /^vchat_session=[^;]+/);
@@ -272,9 +339,10 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   const otherRequest = await response.json();
   response = await jsonRequest(`${base}/api/auth/verify`, { phone: otherRequest.phone, code: otherRequest.devCode });
   assert.equal(response.status, 200);
+  const otherVerificationCookie = responseCookie(response, 'vchat_verify');
   response = await jsonRequest(`${base}/api/auth/register`, {
-    phone: otherRequest.phone, username: 'Photo Viewer', avatar: 'V',
-  });
+    phone: otherRequest.phone, username: 'Photo Viewer', avatar: 'V', accountType: 'personal',
+  }, { cookie: otherVerificationCookie });
   assert.equal(response.status, 200);
   const otherCookie = response.headers.get('set-cookie').match(/^([^;]+)/)[1];
   const otherAccount = (await response.json()).user;
@@ -293,9 +361,6 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   response = await fetch(`${base}${photoAccount.photoUrl}`, { headers: { cookie: otherCookie } });
   assert.equal(response.status, 200, 'profile photos default to visible to everyone');
 
-  // Status posts are visible only to mutual contacts, media stays protected,
-  // realtime notices are identifier-free, and boosts cannot deliver until an
-  // authorized review plus verified payment or an explicit admin waiver.
   response = await fetch(`${base}/api/stories`);
   assert.equal(response.status, 401);
 
@@ -520,8 +585,6 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   response = await jsonRequest(`${base}/api/story-ads/valmontpay/webhook`, { event: 'charge.success', data: {} });
   assert.equal(response.status, 401, 'unsigned payment webhooks are rejected');
 
-  // Reels use their own authenticated, block-aware media boundary and remove
-  // rejected/deleted files from protected storage.
   response = await fetch(`${base}/api/reels`);
   assert.equal(response.status, 401);
   response = await fetch(`${base}/api/reels?cursor=not-valid`, { headers: { cookie } });
@@ -662,7 +725,6 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   response = await fetch(`${base}${firstReel.videoUrl}`, { headers: { cookie } });
   assert.equal(response.status, 404);
 
-  // Keep the second fixture reachable through the rest of the security test.
   response = await fetch(`${base}${secondReel.videoUrl}`, { headers: { cookie } });
   assert.equal(response.status, 200);
 
@@ -702,15 +764,13 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   response = await jsonRequest(`${base}/api/account/two-step`, { pin: '123456' }, { cookie }, 'DELETE');
   assert.equal(response.status, 200);
 
-  // A revoked device must lose its already-connected realtime channel and must
-  // not be able to reconnect using the old cookie.
   response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number: '241234567' });
   const secondLoginRequest = await response.json();
   response = await jsonRequest(`${base}/api/auth/verify`, {
     phone: secondLoginRequest.phone, code: secondLoginRequest.devCode,
   });
   assert.equal(response.status, 200);
-  const secondCookie = response.headers.get('set-cookie').match(/^([^;]+)/)[1];
+  const secondCookie = responseCookie(response, 'vchat_session');
   const liveSocket = socketClient(base, {
     transports: ['websocket'],
     extraHeaders: { Cookie: secondCookie, Origin: base },
@@ -750,18 +810,136 @@ test('HTTP security boundary protects sessions, mutations, media, and legacy upl
   assert.equal(response.status, 401);
 });
 
+test('registration continuations are browser-bound and realtime messages use canonical presentation data', async t => {
+  const { base } = await startServer(t);
+
+  let response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number: '501120001' });
+  const aliceRequest = await response.json();
+  response = await jsonRequest(`${base}/api/auth/verify`, {
+    phone: aliceRequest.phone, code: aliceRequest.devCode,
+  });
+  assert.equal(response.status, 200);
+  const aliceVerification = responseCookie(response, 'vchat_verify');
+  assert.ok(aliceVerification);
+
+  response = await jsonRequest(`${base}/api/auth/register`, {
+    phone: aliceRequest.phone, username: 'Canonical Alice', accountType: 'personal',
+  });
+  assert.equal(response.status, 401, 'an unrelated browser cannot finish a verified registration');
+  response = await jsonRequest(`${base}/api/auth/register`, {
+    phone: aliceRequest.phone, username: 'Canonical Alice',
+  }, { cookie: aliceVerification });
+  assert.equal(response.status, 400, 'new registrations require an intentional account-type selection');
+  response = await jsonRequest(`${base}/api/auth/register`, {
+    phone: aliceRequest.phone, username: 'Canonical Alice', accountType: 'PERSONAL',
+  }, { cookie: aliceVerification });
+  assert.equal(response.status, 400, 'account-type input is exact rather than silently defaulted');
+  response = await jsonRequest(`${base}/api/auth/register`, {
+    phone: aliceRequest.phone, username: 'Canonical Alice', avatar: 'A', accountType: 'personal',
+  }, { cookie: aliceVerification });
+  assert.equal(response.status, 200);
+  const aliceCookie = responseCookie(response, 'vchat_session');
+  const alice = (await response.json()).user;
+  response = await jsonRequest(`${base}/api/auth/register`, {
+    phone: aliceRequest.phone, username: 'Replay', accountType: 'business',
+    businessProfile: { name: 'Replay Ltd' },
+  }, { cookie: aliceVerification });
+  assert.equal(response.status, 401, 'a consumed continuation cannot create another account session');
+
+  response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number: '501120002' });
+  const bobFirstRequest = await response.json();
+  response = await jsonRequest(`${base}/api/auth/verify`, {
+    phone: bobFirstRequest.phone, code: bobFirstRequest.devCode,
+  });
+  const staleBobVerification = responseCookie(response, 'vchat_verify');
+  response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number: '501120002' });
+  const bobSecondRequest = await response.json();
+  response = await jsonRequest(`${base}/api/auth/verify`, {
+    phone: bobSecondRequest.phone, code: bobSecondRequest.devCode,
+  });
+  const bobVerification = responseCookie(response, 'vchat_verify');
+  response = await jsonRequest(`${base}/api/auth/register`, {
+    phone: bobSecondRequest.phone, username: 'Stale Bob', accountType: 'personal',
+  }, { cookie: staleBobVerification });
+  assert.equal(response.status, 401,
+    'a later successful verification invalidates an older browser continuation for the same phone');
+  response = await jsonRequest(`${base}/api/auth/register`, {
+    phone: bobSecondRequest.phone, username: 'Canonical Bob', avatar: 'B', accountType: 'business',
+    businessProfile: { name: 'Canonical Bob Studio', description: 'Canonical message testing' },
+  }, { cookie: bobVerification });
+  assert.equal(response.status, 200);
+  const bobCookie = responseCookie(response, 'vchat_session');
+  const bob = (await response.json()).user;
+  assert.equal(bob.accountType, 'business');
+
+  const aliceSocket = socketClient(base, {
+    transports: ['websocket'], extraHeaders: { Cookie: aliceCookie, Origin: base }, reconnection: false,
+  });
+  const bobSocket = socketClient(base, {
+    transports: ['websocket'], extraHeaders: { Cookie: bobCookie, Origin: base }, reconnection: false,
+  });
+  t.after(() => { aliceSocket.close(); bobSocket.close(); });
+  await Promise.all([socketEvent(aliceSocket, 'connect'), socketEvent(bobSocket, 'connect')]);
+  const chat = (await socketAck(aliceSocket, 'chat:startDM', { targetUserId: bob.id })).chat;
+  const original = (await socketAck(aliceSocket, 'message:send', {
+    chatId: chat.id, text: 'Server-owned original', type: 'system',
+    call: { outcome: 'forged' }, clientId: 'canonical-original',
+  })).message;
+  assert.equal(original.type, 'text');
+  assert.equal(original.call, null, 'a client cannot forge a call-log payload');
+
+  const reply = (await socketAck(bobSocket, 'message:send', {
+    chatId: chat.id,
+    text: 'Canonical reply',
+    type: 'call',
+    call: { outcome: 'answered', duration: 999999 },
+    replyTo: {
+      id: original.id, senderId: bob.id, senderName: '<script>', text: 'forged quote', preview: 'forged',
+    },
+    clientId: 'canonical-reply',
+  })).message;
+  assert.equal(reply.type, 'text');
+  assert.equal(reply.call, null);
+  assert.deepEqual(reply.replyTo, {
+    id: original.id,
+    senderId: alice.id,
+    senderName: 'Canonical Alice',
+    text: 'Server-owned original',
+    preview: 'Server-owned original',
+  });
+  await assert.rejects(
+    socketAck(bobSocket, 'message:send', {
+      chatId: chat.id, text: 'Reply to an invented message', replyTo: { id: crypto.randomUUID() },
+      clientId: 'canonical-invalid-reply',
+    }),
+    /message being replied to is unavailable/i,
+  );
+
+  const hostileUpdates = [];
+  const hostileListener = payload => hostileUpdates.push(payload);
+  aliceSocket.on('message:updated', hostileListener);
+  bobSocket.emit('message:react', { chatId: chat.id, messageId: original.id, emoji: '<img onerror=alert(1)>' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(hostileUpdates, [], 'non-allowlisted reaction keys are ignored');
+  const validUpdate = socketEvent(aliceSocket, 'message:updated');
+  bobSocket.emit('message:react', { chatId: chat.id, messageId: original.id, emoji: '❤️' });
+  const reacted = (await validUpdate)[0];
+  assert.deepEqual(reacted.reactions, { '❤️': [bob.id] });
+  aliceSocket.off('message:updated', hostileListener);
+});
 
 test('chat-lock PIN sessions and View Once media are enforced across HTTP and realtime boundaries', async t => {
-  const { base } = await startServer(t);
+  const { base, dataDir } = await startServer(t);
 
   async function register(number, username) {
     let response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number });
     const request = await response.json();
     response = await jsonRequest(`${base}/api/auth/verify`, { phone: request.phone, code: request.devCode });
     assert.equal(response.status, 200);
+    const verificationCookie = responseCookie(response, 'vchat_verify');
     response = await jsonRequest(`${base}/api/auth/register`, {
       phone: request.phone, username, avatar: username[0], accountType: 'personal',
-    });
+    }, { cookie: verificationCookie });
     assert.equal(response.status, 200);
     return {
       phone: request.phone,
@@ -777,7 +955,7 @@ test('chat-lock PIN sessions and View Once media are enforced across HTTP and re
     const request = await response.json();
     response = await jsonRequest(`${base}/api/auth/verify`, { phone: request.phone, code: request.devCode });
     assert.equal(response.status, 200);
-    return response.headers.get('set-cookie').match(/^([^;]+)/)[1];
+    return responseCookie(response, 'vchat_session');
   }
 
   const alice = await register('501110001', 'Lock Alice');
@@ -837,6 +1015,9 @@ test('chat-lock PIN sessions and View Once media are enforced across HTTP and re
   assert.equal(response.headers.get('x-view-once'), 'true');
   assert.match(response.headers.get('cache-control'), /no-store/);
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.deepEqual(fs.readdirSync(path.join(dataDir, 'media')), [],
+    'the final successful View Once transfer removes both metadata and protected bytes');
   response = await fetch(`${base}${grant.mediaUrl}`, { headers: { cookie: bob.cookie } });
   assert.equal(response.status, 404, 'the media capability itself is consumed by its first GET');
   response = await jsonRequest(
@@ -966,8 +1147,12 @@ test('chat-lock PIN sessions and View Once media are enforced across HTTP and re
   aliceSocket.emit('call:end', { callId: startedCall.callId });
   aliceSocket.emit('call:cancel', { callId: startedCall.callId });
   await new Promise(resolve => setTimeout(resolve, 100));
-  assert.deepEqual(blockedCallEvents, { signal: [], ended: [] },
-    'a relocked socket cannot signal or mutate a call whose chat it can no longer access');
+  assert.deepEqual(blockedCallEvents.signal, [],
+    'a relocked socket cannot signal a call whose chat it can no longer access');
+  assert.equal(blockedCallEvents.ended.length, 1,
+    'relocking must actively tear down an established call instead of only blocking future signaling');
+  assert.equal(blockedCallEvents.ended[0].callId, startedCall.callId);
+  assert.equal(blockedCallEvents.ended[0].reason, 'chat-relocked');
   bobSocket.off('call:signal', blockedCallListeners.signal);
   bobSocket.off('call:ended', blockedCallListeners.ended);
 
@@ -975,8 +1160,9 @@ test('chat-lock PIN sessions and View Once media are enforced across HTTP and re
     `${base}/api/account/chat-lock/unlock`, { pin: '246810' }, { cookie: alice.cookie, origin: base }, 'POST',
   );
   assert.equal(response.status, 200);
-  const endedEvent = socketEvent(aliceSocket, 'call:ended');
-  bobSocket.emit('call:end', { callId: startedCall.callId });
+  const restartedCall = await socketAck(aliceSocket, 'call:start', { chatId: chat.id, media: 'audio' });
+  const endedEvent = socketEvent(bobSocket, 'call:ended');
+  aliceSocket.emit('call:cancel', { callId: restartedCall.callId });
   const ended = (await endedEvent)[0];
   assert.equal(ended.chatId, chat.id);
   await new Promise(resolve => setTimeout(resolve, 100));
@@ -1020,6 +1206,136 @@ test('chat-lock PIN sessions and View Once media are enforced across HTTP and re
     'content-free removal notices remain deliverable after membership has ended');
 });
 
+test('group View Once grants remain independent until every delayed transfer terminates', async t => {
+  const { base, dataDir } = await startServer(t);
+
+  async function register(number, username) {
+    let response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number });
+    const request = await response.json();
+    response = await jsonRequest(`${base}/api/auth/verify`, { phone: request.phone, code: request.devCode });
+    const verificationCookie = responseCookie(response, 'vchat_verify');
+    response = await jsonRequest(`${base}/api/auth/register`, {
+      phone: request.phone, username, accountType: 'personal',
+    }, { cookie: verificationCookie });
+    assert.equal(response.status, 200);
+    return {
+      cookie: responseCookie(response, 'vchat_session'),
+      user: (await response.json()).user,
+    };
+  }
+
+  const alice = await register('501112001', 'Grant Alice');
+  const bob = await register('501112002', 'Grant Bob');
+  const eve = await register('501112003', 'Grant Eve');
+  const sockets = [alice, bob, eve].map(account => socketClient(base, {
+    transports: ['websocket'], extraHeaders: { Cookie: account.cookie, Origin: base }, reconnection: false,
+  }));
+  t.after(() => sockets.forEach(socket => socket.close()));
+  await Promise.all(sockets.map(socket => socketEvent(socket, 'connect')));
+  const [aliceSocket] = sockets;
+  const group = (await socketAck(aliceSocket, 'chat:createGroup', {
+    name: 'Delayed grants', members: [bob.user.id, eve.user.id],
+  })).chat;
+
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
+  const uploadForm = new FormData();
+  uploadForm.append('chatId', group.id);
+  uploadForm.append('file', new Blob([png], { type: 'image/png' }), 'delayed-once.png');
+  let response = await fetch(`${base}/api/messenger/upload`, {
+    method: 'POST', headers: { cookie: alice.cookie, origin: base }, body: uploadForm,
+  });
+  assert.equal(response.status, 201);
+  const attachment = await response.json();
+  const message = (await socketAck(aliceSocket, 'message:send', {
+    chatId: group.id, file: attachment, type: 'image', viewOnce: true,
+    clientId: 'delayed-view-once-group',
+  })).message;
+
+  async function openGrant(account) {
+    const opened = await jsonRequest(
+      `${base}/api/messenger/messages/${group.id}/${message.id}/view-once`, {},
+      { cookie: account.cookie, origin: base }, 'POST',
+    );
+    assert.equal(opened.status, 200);
+    return opened.json();
+  }
+  const [bobGrant, eveGrant] = await Promise.all([openGrant(bob), openGrant(eve)]);
+
+  response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number: '501112002' });
+  const secondBobRequest = await response.json();
+  response = await jsonRequest(`${base}/api/auth/verify`, {
+    phone: secondBobRequest.phone, code: secondBobRequest.devCode,
+  });
+  const secondBobCookie = responseCookie(response, 'vchat_session');
+  response = await fetch(`${base}${bobGrant.mediaUrl}`, { headers: { cookie: secondBobCookie } });
+  assert.equal(response.status, 404, 'a grant is bound to Bob’s issuing browser session');
+  response = await fetch(`${base}${bobGrant.mediaUrl}`, { headers: { cookie: alice.cookie } });
+  assert.equal(response.status, 404, 'another authenticated account cannot consume or cancel Bob’s grant');
+  response = await fetch(`${base}${eveGrant.mediaUrl}`, { headers: { cookie: eve.cookie } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(fs.readdirSync(path.join(dataDir, 'media')).length, 1,
+    'Eve’s completed transfer preserves bytes while Bob still holds a delayed grant');
+
+  response = await fetch(`${base}${bobGrant.mediaUrl}`, { headers: { cookie: bob.cookie } });
+  assert.equal(response.status, 200, 'Bob’s delayed grant remains valid after Eve finishes');
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.deepEqual(fs.readdirSync(path.join(dataDir, 'media')), [],
+    'the final terminated grant removes the shared metadata and protected bytes');
+
+  const relockUpload = new FormData();
+  relockUpload.append('chatId', group.id);
+  relockUpload.append('file', new Blob([png], { type: 'image/png' }), 'relocked-once.png');
+  response = await fetch(`${base}/api/messenger/upload`, {
+    method: 'POST', headers: { cookie: alice.cookie, origin: base }, body: relockUpload,
+  });
+  assert.equal(response.status, 201);
+  const relockAttachment = await response.json();
+  const relockMessage = (await socketAck(aliceSocket, 'message:send', {
+    chatId: group.id, file: relockAttachment, type: 'image', viewOnce: true,
+    clientId: 'relocked-view-once-group',
+  })).message;
+  response = await jsonRequest(
+    `${base}/api/account/chat-lock/pin`, { pin: '246810' }, { cookie: bob.cookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 200);
+  response = await jsonRequest(
+    `${base}/api/messenger/chats/${group.id}/lock`, { locked: true },
+    { cookie: bob.cookie, origin: base }, 'PUT',
+  );
+  assert.equal(response.status, 200);
+  const openRelockGrant = async account => {
+    const opened = await jsonRequest(
+      `${base}/api/messenger/messages/${group.id}/${relockMessage.id}/view-once`, {},
+      { cookie: account.cookie, origin: base }, 'POST',
+    );
+    assert.equal(opened.status, 200);
+    return opened.json();
+  };
+  const [bobRelockGrant, eveRelockGrant] = await Promise.all([
+    openRelockGrant(bob), openRelockGrant(eve),
+  ]);
+  response = await jsonRequest(
+    `${base}/api/account/chat-lock/lock`, {}, { cookie: bob.cookie, origin: base }, 'POST',
+  );
+  assert.equal(response.status, 200);
+  response = await fetch(`${base}${bobRelockGrant.mediaUrl}`, { headers: { cookie: bob.cookie } });
+  assert.equal(response.status, 404, 'relocking the issuing session terminates its outstanding media grant');
+  assert.equal(fs.readdirSync(path.join(dataDir, 'media')).length, 1,
+    'relocking Bob does not invalidate Eve’s independent transfer');
+  response = await fetch(`${base}${eveRelockGrant.mediaUrl}`, { headers: { cookie: eve.cookie } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.deepEqual(fs.readdirSync(path.join(dataDir, 'media')), [],
+    'the last active recipient transfer completes relock cleanup');
+});
+
 test('passkey registration refuses an eleventh credential before WebAuthn setup begins', async t => {
   const phone = '+233501119999';
   const { base } = await startServer(t, {}, ({ env }) => {
@@ -1047,7 +1363,7 @@ test('passkey registration refuses an eleventh credential before WebAuthn setup 
   const requested = await response.json();
   response = await jsonRequest(`${base}/api/auth/verify`, { phone: requested.phone, code: requested.devCode });
   assert.equal(response.status, 200);
-  const cookie = response.headers.get('set-cookie').match(/^([^;]+)/)[1];
+  const cookie = responseCookie(response, 'vchat_session');
 
   response = await jsonRequest(
     `${base}/api/account/chat-lock/unlock`, { pin: '246810' }, { cookie, origin: base }, 'POST',
@@ -1060,22 +1376,483 @@ test('passkey registration refuses an eleventh credential before WebAuthn setup 
   assert.match((await response.json()).error, /up to 10 chat-lock passkeys/i);
 });
 
-test('production authentication fails closed when real SMS delivery is not configured', async t => {
-  const { base } = await startServer(t, { NODE_ENV: 'production' });
-  const response = await jsonRequest(
-    `${base}/api/auth/request-code`,
-    { dialCode: '233', number: '501234567' },
+test('messenger uploads validate signatures and enforce account storage plus pending-upload quotas', async t => {
+  const { base, dataDir } = await startServer(t, {
+    MAX_ACCOUNT_STORAGE_MB: '10', MAX_PENDING_UPLOADS: '2', MAX_UPLOAD_MB: '20',
+    REEL_MAX_MB: '10', STORY_MAX_MB: '10',
+  });
+  let response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number: '501130001' });
+  const request = await response.json();
+  response = await jsonRequest(`${base}/api/auth/verify`, { phone: request.phone, code: request.devCode });
+  const verificationCookie = responseCookie(response, 'vchat_verify');
+  response = await jsonRequest(`${base}/api/auth/register`, {
+    phone: request.phone, username: 'Quota Tester', accountType: 'personal',
+  }, { cookie: verificationCookie });
+  assert.equal(response.status, 200);
+  const cookie = responseCookie(response, 'vchat_session');
+
+  async function uploadBytes(bytes, type, name) {
+    const form = new FormData();
+    form.append('chatId', 'general');
+    form.append('file', new Blob([bytes], { type }), name);
+    return fetch(`${base}/api/messenger/upload`, {
+      method: 'POST', headers: { cookie, origin: base }, body: form,
+    });
+  }
+
+  response = await uploadBytes(Buffer.from('<script>alert(1)</script>'), 'image/png', 'forged.png');
+  assert.equal(response.status, 415, 'multipart MIME declarations cannot turn text into an image');
+  assert.match((await response.json()).error, /contents do not match/i);
+
+  const largePng = Buffer.alloc(6 * 1024 * 1024);
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(largePng);
+  response = await uploadBytes(largePng, 'image/png', 'large-one.png');
+  assert.equal(response.status, 201);
+  response = await uploadBytes(largePng, 'image/png', 'large-two.png');
+  assert.equal(response.status, 429);
+  assert.match((await response.json()).error, /storage quota/i);
+
+  const quotaPng = Buffer.alloc(Math.floor(4.5 * 1024 * 1024));
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(quotaPng);
+  const photoForm = new FormData();
+  photoForm.append('photo', new Blob([quotaPng], { type: 'image/png' }), 'quota-profile.png');
+  response = await fetch(`${base}/api/account/profile-photo`, {
+    method: 'PUT', headers: { cookie, origin: base }, body: photoForm,
+  });
+  assert.equal(response.status, 429, 'attachment bytes count against profile-photo storage');
+
+  const fiveMbMp4 = Buffer.alloc(5 * 1024 * 1024);
+  fiveMbMp4.writeUInt32BE(24, 0);
+  fiveMbMp4.write('ftyp', 4, 'ascii');
+  fiveMbMp4.write('isom', 8, 'ascii');
+  const reelForm = new FormData();
+  reelForm.append('video', new Blob([fiveMbMp4], { type: 'video/mp4' }), 'quota-reel.mp4');
+  response = await fetch(`${base}/api/reels`, {
+    method: 'POST', headers: { cookie, origin: base }, body: reelForm,
+  });
+  assert.equal(response.status, 429, 'attachment bytes count against reel storage');
+
+  const storyForm = new FormData();
+  storyForm.append('type', 'video');
+  storyForm.append('media', new Blob([fiveMbMp4], { type: 'video/mp4' }), 'quota-story.mp4');
+  response = await fetch(`${base}/api/stories`, {
+    method: 'POST', headers: { cookie, origin: base }, body: storyForm,
+  });
+  assert.equal(response.status, 429, 'attachment bytes count against Story storage');
+
+  const smallPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
   );
+  response = await uploadBytes(smallPng, 'image/png', 'small.png');
+  assert.equal(response.status, 201);
+  const smallAttachment = await response.json();
+  response = await uploadBytes(smallPng, 'image/png', 'too-many-pending.png');
+  assert.equal(response.status, 429);
+  assert.match((await response.json()).error, /send or discard existing uploads/i);
+  response = await fetch(`${base}/api/messenger/upload/${smallAttachment.id}`, {
+    method: 'DELETE', headers: { cookie, origin: base },
+  });
+  assert.equal(response.status, 200, 'an uploader can discard unclaimed bytes to release pending quota');
+  response = await uploadBytes(smallPng, 'image/png', 'after-discard.png');
+  assert.equal(response.status, 201);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(fs.readdirSync(path.join(dataDir, 'media')).length, 2,
+    'rejected signatures and quota overflows do not leave protected orphan files');
+});
+
+test('account exports require two-step reauthentication and exclude credential material', async t => {
+  const { base } = await startServer(t);
+  const account = await registerAccount(base, '501130020', 'Data Export Tester');
+  let response = await jsonRequest(`${base}/api/account/two-step`, { pin: '482951' }, {
+    cookie: account.cookie, origin: base,
+  }, 'PUT');
+  assert.equal(response.status, 200);
+
+  response = await jsonRequest(`${base}/api/account/export`, { currentPin: '000000' }, {
+    cookie: account.cookie, origin: base,
+  });
+  assert.equal(response.status, 401);
+  response = await jsonRequest(`${base}/api/account/export`, { currentPin: '482951' }, {
+    cookie: account.cookie, origin: base,
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  assert.match(response.headers.get('content-disposition'), /^attachment; filename="vchat-account-[\w-]+\.json"$/);
+  const raw = await response.text();
+  const exported = JSON.parse(raw);
+  assert.equal(exported.exportVersion, 1);
+  assert.equal(exported.account.id, account.user.id);
+  assert.equal(exported.account.phone, '+233501130020');
+  assert.ok(exported.chats.some(item => item.chat.id === 'general'));
+  assert.ok(exported.sessions.every(session => Object.keys(session).sort().join(',')
+    === 'createdAt,expiresAt,id,label,lastUsedAt'));
+  assert.doesNotMatch(raw, /pinHash|passkeyChallenge|tokenDigest|storageName/i,
+    'credential hashes, challenges, internal media paths, and session digests are excluded');
+});
+
+test('every Socket.IO command rejects malformed payloads without terminating the process', async t => {
+  const { base, dataDir, child } = await startServer(t);
+  const account = await registerAccount(base, '501130009', 'Malformed Event Tester');
+  const socket = socketClient(base, {
+    transports: ['websocket'], extraHeaders: { Cookie: account.cookie, Origin: base }, reconnection: false,
+  });
+  t.after(() => socket.close());
+  await socketEvent(socket, 'connect');
+
+  const commands = [
+    'user:join', 'profile:update',
+    'message:send', 'message:edit', 'message:delete', 'message:react', 'message:star',
+    'message:pin', 'message:forward', 'messages:read', 'typing:start', 'typing:stop',
+    'chat:createGroup', 'chat:startDM', 'chat:open', 'chat:flag', 'chat:clear',
+    'chat:setDisappearing', 'chat:setAdvancedPrivacy', 'chat:createInvite',
+    'chat:revokeInvites', 'chat:joinInvite', 'group:update', 'group:setAdmin',
+    'group:removeMember', 'chat:leave', 'chat:addMembers', 'search:messages',
+    'call:start', 'call:accept', 'call:decline', 'call:cancel', 'call:end',
+    'call:signal', 'call:rate', 'call:ratings',
+  ];
+  const malformedPayloads = [undefined, null, [], 'not-an-object', 42];
+  for (const command of commands) {
+    const missing = await socketMissingPayloadAck(socket, command);
+    assert.match(missing?.error || '', /payload/i, `${command} rejects a missing payload`);
+    for (const payload of malformedPayloads) {
+      const result = await socketRawAck(socket, command, payload);
+      assert.match(result?.error || '', /payload/i, `${command} rejects ${JSON.stringify(payload)}`);
+      assert.equal(child.exitCode, null, `${command} must not terminate the Node process`);
+      assert.equal(socket.connected, true, `${command} must not disconnect the authenticated client`);
+    }
+  }
+
+  const sent = await socketAck(socket, 'message:send', {
+    chatId: 'general', text: 'Still alive and durably stored', clientId: 'after-malformed-events',
+  });
+  assert.equal(sent.message.text, 'Still alive and durably stored');
+  assert.equal((await fetch(`${base}/livez`)).status, 200);
+
+  const snapshot = JSON.parse(fs.readFileSync(path.join(dataDir, 'db.v2.json'), 'utf8'));
+  const stored = snapshot.messages.flatMap(([, messages]) => messages)
+    .find(message => message.clientId === 'after-malformed-events');
+  assert.equal(stored?.text, 'Still alive and durably stored');
+});
+
+test('message acknowledgement recovers idempotently after a persistence write failure', async t => {
+  const { base, dataDir, child } = await startServer(t);
+  const account = await registerAccount(base, '501130011', 'Persistence Recovery Tester');
+  const socket = socketClient(base, {
+    transports: ['websocket'], extraHeaders: { Cookie: account.cookie, Origin: base }, reconnection: false,
+  });
+  t.after(() => socket.close());
+  await socketEvent(socket, 'connect');
+
+  await new Promise(resolve => setTimeout(resolve, 350));
+  fs.chmodSync(dataDir, 0o500);
+  t.after(() => {
+    try { fs.chmodSync(dataDir, 0o700); } catch { /* test cleanup may already have run */ }
+  });
+
+  const announcements = [];
+  socket.on('message:new', message => {
+    if (message.clientId === 'persistence-retry-id') announcements.push(message);
+  });
+  const payload = {
+    chatId: 'general', text: 'Commit this exactly once', clientId: 'persistence-retry-id', tempId: 'retry-temp',
+  };
+  const failed = await socketRawAck(socket, 'message:send', payload);
+  assert.match(failed?.error || '', /storage.*unavailable/i);
+  assert.equal(failed?.retryable, true);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(announcements.length, 0, 'an uncommitted message is not published');
+  assert.equal(child.exitCode, null, 'a persistence failure does not crash the service');
+  assert.equal((await fetch(`${base}/livez`)).status, 200);
+  assert.equal((await fetch(`${base}/readyz`)).status, 503, 'tracked persistence errors fail readiness');
+
+  fs.chmodSync(dataDir, 0o700);
+  const recovered = await socketRawAck(socket, 'message:send', payload);
+  assert.equal(recovered?.duplicate, true, 'the retry reuses the in-memory idempotency record');
+  assert.equal(recovered?.message?.clientId, payload.clientId);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(announcements.length, 1, 'the recovered commit is published exactly once');
+  assert.equal((await fetch(`${base}/readyz`)).status, 200, 'a successful retry clears the persistence error');
+
+  const snapshot = JSON.parse(fs.readFileSync(path.join(dataDir, 'db.v2.json'), 'utf8'));
+  const copies = snapshot.messages.flatMap(([, messages]) => messages)
+    .filter(message => message.clientId === payload.clientId);
+  assert.equal(copies.length, 1, 'the durable snapshot contains one idempotent message');
+});
+
+test('Socket.IO enforces per-account event budgets before handlers execute', async t => {
+  const { base } = await startServer(t, { SOCKET_MESSAGE_RATE_LIMIT: '2' });
+  let response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number: '501130002' });
+  const request = await response.json();
+  response = await jsonRequest(`${base}/api/auth/verify`, { phone: request.phone, code: request.devCode });
+  const verificationCookie = responseCookie(response, 'vchat_verify');
+  response = await jsonRequest(`${base}/api/auth/register`, {
+    phone: request.phone, username: 'Realtime Rate Tester', accountType: 'personal',
+  }, { cookie: verificationCookie });
+  const cookie = responseCookie(response, 'vchat_session');
+  const socket = socketClient(base, {
+    transports: ['websocket'], extraHeaders: { Cookie: cookie, Origin: base }, reconnection: false,
+  });
+  t.after(() => socket.close());
+  await socketEvent(socket, 'connect');
+
+  await socketAck(socket, 'message:send', { chatId: 'general', text: 'One', clientId: 'rate-one' });
+  await socketAck(socket, 'message:send', { chatId: 'general', text: 'Two', clientId: 'rate-two' });
+  const limitedEvent = socketEvent(socket, 'rate-limit');
+  await assert.rejects(
+    socketAck(socket, 'message:send', { chatId: 'general', text: 'Three', clientId: 'rate-three' }),
+    /too many realtime actions/i,
+  );
+  assert.deepEqual((await limitedEvent)[0], { event: 'message:send', retryAfter: 60 });
+  response = await fetch(`${base}/api/messenger/messages/general`, { headers: { cookie } });
+  const sentTexts = (await response.json()).filter(message => message.sender.username === 'Realtime Rate Tester')
+    .map(message => message.text);
+  assert.deepEqual(sentTexts, ['One', 'Two'], 'the over-budget event never reaches its message handler');
+});
+
+test('operational metrics require a bearer token and expose bounded aggregate counters', async t => {
+  const { base } = await startServer(t, { METRICS_TOKEN: 'operator-test-token' });
+  let response = await fetch(`${base}/metrics`);
+  assert.equal(response.status, 401);
+  assert.equal(response.headers.get('www-authenticate'), 'Bearer');
+
+  response = await fetch(`${base}/metrics`, {
+    headers: { authorization: 'Bearer operator-test-token' },
+  });
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  assert.match(body, /vchat_http_requests_total \d+/);
+  assert.match(body, /vchat_http_responses_total\{status_class="4xx"\} 1/);
+  assert.match(body, /vchat_socket_connections 0/);
+  assert.match(body, /vchat_process_resident_memory_bytes \d+/);
+  assert.doesNotMatch(body, /operator-test-token/);
+});
+
+test('readiness fails when recoverable persistence falls below its free-space floor', async t => {
+  const { base } = await startServer(t, { READINESS_MIN_FREE_MB: '1000000000' });
+  const response = await fetch(`${base}/readyz`);
   assert.equal(response.status, 503);
-  const body = await response.json();
-  assert.match(body.error, /temporarily unavailable/i);
-  assert.equal(body.devCode, undefined);
+  assert.deepEqual(await response.json(), {
+    ok: false,
+    checks: { application: true, persistence: false },
+  });
+  assert.equal((await fetch(`${base}/livez`)).status, 200, 'liveness remains independent of disk readiness');
+});
+
+test('SIGTERM drains Socket.IO and HTTP, flushes pending state, and exits cleanly', async t => {
+  const running = await startServer(t, { SHUTDOWN_TIMEOUT_MS: '3000' });
+  assert.equal((await fetch(`${running.base}/readyz`)).status, 200);
+  const account = await registerAccount(running.base, '501130010', 'Before Shutdown');
+  const socket = socketClient(running.base, {
+    transports: ['websocket'], extraHeaders: { Cookie: account.cookie, Origin: running.base }, reconnection: false,
+  });
+  t.after(() => socket.close());
+  await socketEvent(socket, 'connect');
+  const updated = await socketAck(socket, 'profile:update', {
+    username: 'Pending Shutdown Profile', avatar: 'P', about: 'Must survive immediate SIGTERM',
+  });
+  assert.equal(updated.user.username, 'Pending Shutdown Profile');
+
+  const exited = new Promise(resolve => running.child.once('exit', (code, signal) => resolve({ code, signal })));
+  running.child.kill('SIGTERM');
+  const outcome = await exited;
+  assert.deepEqual(outcome, { code: 0, signal: null });
+  assert.match(running.output(), /"event":"graceful_shutdown_started"/);
+  assert.match(running.output(), /"event":"graceful_shutdown_complete"/);
+  const snapshot = JSON.parse(fs.readFileSync(path.join(running.dataDir, 'db.v2.json'), 'utf8'));
+  assert.equal(snapshot.users.find(user => user.id === account.user.id)?.username, 'Pending Shutdown Profile');
+});
+
+test('SIGTERM exits nonzero when the final persistence flush fails', async t => {
+  const running = await startServer(t, { SHUTDOWN_TIMEOUT_MS: '3000' });
+  const account = await registerAccount(running.base, '501130012', 'Final Flush Failure Tester');
+  const socket = socketClient(running.base, {
+    transports: ['websocket'], extraHeaders: { Cookie: account.cookie, Origin: running.base }, reconnection: false,
+  });
+  t.after(() => socket.close());
+  await socketEvent(socket, 'connect');
+  await new Promise(resolve => setTimeout(resolve, 350));
+
+  fs.chmodSync(running.dataDir, 0o500);
+  t.after(() => {
+    try { fs.chmodSync(running.dataDir, 0o700); } catch { /* test cleanup may already have run */ }
+  });
+  const updated = await socketAck(socket, 'profile:update', {
+    username: 'Cannot Be Flushed', avatar: 'C', about: 'Force the final fsync boundary to fail',
+  });
+  assert.equal(updated.user.username, 'Cannot Be Flushed');
+
+  const exited = new Promise(resolve => running.child.once('exit', (code, signal) => resolve({ code, signal })));
+  running.child.kill('SIGTERM');
+  const outcome = await exited;
+  fs.chmodSync(running.dataDir, 0o700);
+  assert.deepEqual(outcome, { code: 1, signal: null });
+  assert.match(running.output(), /"event":"graceful_shutdown_persistence_failed"/);
+  assert.doesNotMatch(running.output(), /"event":"graceful_shutdown_complete"/);
+});
+
+test('startup fails closed instead of replacing corrupt or unsupported snapshots with an empty store', () => {
+  const cases = [
+    ['corrupt JSON', '{"schemaVersion":2,"users":'],
+    ['unsupported schema', JSON.stringify({ schemaVersion: 999, users: [] })],
+  ];
+  for (const [label, contents] of cases) {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vchat-invalid-store-'));
+    const snapshotPath = path.join(dataDir, 'db.v2.json');
+    fs.writeFileSync(snapshotPath, contents, { mode: 0o600 });
+    const result = spawnSync(process.execPath, ['server.js'], {
+      cwd: root,
+      env: { ...process.env, NODE_ENV: 'test', PORT: '0', VCHAT_DATA_DIR: dataDir },
+      encoding: 'utf8',
+      timeout: 5000,
+    });
+    assert.notEqual(result.status, 0, `${label} must block startup`);
+    assert.match(result.stderr, /\[store\] load failed:/);
+    assert.equal(fs.readFileSync(snapshotPath, 'utf8'), contents, `${label} must remain untouched for recovery`);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('production startup fails before loading local state when critical services are not configured', async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'vchat-unsafe-production-'));
+  const dataDir = path.join(parent, 'must-not-be-created');
+  const env = { ...process.env, NODE_ENV: 'production', VCHAT_DATA_DIR: dataDir, PORT: '0' };
+  for (const key of [
+    'PUBLIC_APP_URL', 'TRUST_PROXY', 'PASSKEY_ORIGIN', 'PASSKEY_RP_ID',
+    'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM', 'TURN_URLS', 'TURN_SECRET',
+    'ALLOW_TRANSITIONAL_LOCAL_STORAGE',
+  ]) delete env[key];
+  const result = spawnSync(process.execPath, ['server.js'], {
+    cwd: root,
+    env,
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /runtime_configuration_rejected/);
+  assert.match(result.stderr, /JSON\/local-media/);
+  assert.equal(fs.existsSync(dataDir), false, 'configuration rejection must happen before local persistence initializes');
+  fs.rmSync(parent, { recursive: true, force: true });
+});
+
+test('an explicitly configured single-node production pilot boots with secure headers and readiness', async t => {
+  const { base, output } = await startServer(t, {
+    NODE_ENV: 'production',
+    PUBLIC_APP_URL: 'https://chat.example.com',
+    TRUST_PROXY: 'loopback',
+    PASSKEY_ORIGIN: 'https://chat.example.com',
+    PASSKEY_RP_ID: 'example.com',
+    TWILIO_ACCOUNT_SID: `AC${'0123456789abcdef'.repeat(2)}`,
+    TWILIO_AUTH_TOKEN: '0123456789abcdef0123456789abcdef',
+    TWILIO_FROM: '+15550000000',
+    TURN_URLS: 'turns:turn.example.com:5349',
+    TURN_SECRET: '0123456789abcdef0123456789abcdef',
+    ALLOW_TRANSITIONAL_LOCAL_STORAGE: 'true',
+    WEB_CONCURRENCY: '1',
+    METRICS_TOKEN: 'test-operator-token-at-least-32-bytes',
+  });
+  let response = await fetch(`${base}/readyz`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('strict-transport-security'), 'max-age=31536000; includeSubDomains');
+  response = await fetch(`${base}/metrics`, {
+    headers: { authorization: 'Bearer test-operator-token-at-least-32-bytes' },
+  });
+  assert.equal(response.status, 200);
+  response = await jsonRequest(`${base}/api/not-real`, {}, { origin: base });
+  assert.equal(response.status, 403, 'production mutations cannot trust a matching attacker-controlled Host header');
+  response = await jsonRequest(`${base}/api/not-real`, {}, { origin: 'https://chat.example.com' });
+  assert.equal(response.status, 404, 'the configured canonical origin reaches normal routing');
+  assert.match(output(), /TRANSITIONAL OVERRIDE ACTIVE/);
+  assert.match(output(), /"persistence":"transitional-local-override"/);
+});
+
+test('disabled paid boost workloads cannot create, bill, activate, or deliver campaigns', async t => {
+  const secret = 'disabled-feature-provider-secret';
+  const provider = await startValmontPayStub(t, secret);
+  const { base } = await startServer(t, {
+    ENABLE_PAID_STORY_BOOSTS: 'false',
+    VALMONTPAY_SECRET_KEY: secret,
+    VALMONTPAY_API_URL: provider.base,
+    PUBLIC_APP_URL: 'https://chat.example.com',
+  });
+
+  let response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number: '241234567' });
+  const request = await response.json();
+  response = await jsonRequest(`${base}/api/auth/verify`, { phone: request.phone, code: request.devCode });
+  const verificationCookie = responseCookie(response, 'vchat_verify');
+  response = await jsonRequest(`${base}/api/auth/register`, {
+    phone: request.phone,
+    username: 'Disabled Boost Tester',
+    avatar: 'D',
+    accountType: 'personal',
+  }, { cookie: verificationCookie });
+  assert.equal(response.status, 200);
+  const cookie = responseCookie(response, 'vchat_session');
+
+  response = await fetch(`${base}/api/stories`, { headers: { cookie } });
+  assert.equal(response.status, 200);
+  let stories = await response.json();
+  assert.equal(stories.paymentConfigured, false);
+  assert.deepEqual(stories.ads.map(ad => ad.id), ['house-vchat']);
+
+  const boost = new FormData();
+  for (const [key, value] of Object.entries({
+    type: 'text', text: 'Publish normally, never create this campaign', background: 'jade', boost: 'true',
+    objective: 'profile_visits', cta: 'Visit profile', adAudience: 'broad',
+    budgetGhs: '25', durationDays: '3', billingEmail: 'disabled@example.com',
+  })) boost.append(key, value);
+  response = await fetch(`${base}/api/stories`, {
+    method: 'POST', headers: { cookie, origin: base }, body: boost,
+  });
+  assert.equal(response.status, 201, 'the normal Status remains available when paid workloads are off');
+  const created = await response.json();
+  assert.equal(created.campaign, null);
+  assert.equal(created.payment, null);
+  assert.match(created.boostError, /paid boosts are not enabled/i);
+
+  response = await fetch(`${base}/api/story-ads/campaigns`, { headers: { cookie } });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).campaigns, []);
+
+  response = await jsonRequest(`${base}/api/story-ads/nonexistent/payment/initialize`, {}, { cookie, origin: base });
+  assert.equal(response.status, 503);
+  response = await fetch(`${base}/api/story-ads/payment/verify?reference=disabled-ref`, { headers: { cookie } });
+  assert.equal(response.status, 503);
+
+  const webhookBody = Buffer.from(JSON.stringify({
+    event: 'charge.success', data: { reference: 'disabled-ref', status: 'success', amount: 25, currency: 'GHS' },
+  }));
+  response = await fetch(`${base}/api/story-ads/valmontpay/webhook`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-valmontpay-signature': crypto.createHmac('sha256', secret).update(webhookBody).digest('hex'),
+    },
+    body: webhookBody,
+  });
+  assert.equal(response.status, 503);
+
+  for (const event of ['impression', 'click']) {
+    response = await jsonRequest(`${base}/api/story-ads/nonexistent/${event}`, {}, { cookie, origin: base });
+    assert.equal(response.status, 503);
+  }
+  response = await jsonRequest(`${base}/api/story-ads/house-vchat/impression`, {}, { cookie, origin: base });
+  assert.equal(response.status, 200, 'the non-paid Vchat company placement remains operational');
+  response = await jsonRequest(`${base}/api/story-ads/nonexistent/control`, { action: 'resume' }, { cookie, origin: base }, 'PUT');
+  assert.equal(response.status, 503);
+  response = await jsonRequest(`${base}/api/story-ads/nonexistent/review`, { decision: 'approve' }, { cookie, origin: base }, 'PUT');
+  assert.equal(response.status, 503);
+
+  response = await fetch(`${base}/api/stories`, { headers: { cookie } });
+  stories = await response.json();
+  assert.deepEqual(stories.ads.map(ad => ad.id), ['house-vchat']);
+  assert.equal(provider.requests.length, 0, 'the disabled deployment never contacts ValmontPay');
 });
 
 test('ValmontPay checkout uses the tenant contract and verifies major-unit GHS payments', async t => {
   const secret = 'test-valmontpay-secret';
   const provider = await startValmontPayStub(t, secret);
-  const { base } = await startServer(t, {
+  const { base, dataDir } = await startServer(t, {
     VALMONTPAY_SECRET_KEY: secret,
     VALMONTPAY_API_URL: provider.base,
     PUBLIC_APP_URL: 'https://chat.example.com',
@@ -1085,12 +1862,15 @@ test('ValmontPay checkout uses the tenant contract and verifies major-unit GHS p
   const request = await response.json();
   response = await jsonRequest(`${base}/api/auth/verify`, { phone: request.phone, code: request.devCode });
   assert.equal(response.status, 200);
+  const verificationCookie = responseCookie(response, 'vchat_verify');
   response = await jsonRequest(`${base}/api/auth/register`, {
     phone: request.phone,
     username: 'ValmontPay Tester',
     avatar: 'V',
-  });
-  const cookie = response.headers.get('set-cookie').match(/^([^;]+)/)[1];
+    accountType: 'personal',
+  }, { cookie: verificationCookie });
+  assert.equal(response.status, 200);
+  const cookie = responseCookie(response, 'vchat_session');
 
   const boost = new FormData();
   for (const [key, value] of Object.entries({
@@ -1137,17 +1917,46 @@ test('ValmontPay checkout uses the tenant contract and verifies major-unit GHS p
       gateway_reference: created.payment.reference,
     },
   }));
-  response = await fetch(`${base}/api/story-ads/valmontpay/webhook`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-valmontpay-signature': crypto.createHmac('sha256', secret).update(webhookBody).digest('hex'),
-    },
-    body: webhookBody,
+  const webhookHeaders = {
+    'content-type': 'application/json',
+    'x-valmontpay-signature': crypto.createHmac('sha256', secret).update(webhookBody).digest('hex'),
+  };
+  await new Promise(resolve => setTimeout(resolve, 350));
+  fs.chmodSync(dataDir, 0o500);
+  t.after(() => {
+    try { fs.chmodSync(dataDir, 0o700); } catch { /* cleanup may already have run */ }
   });
-  assert.equal(response.status, 200);
+  response = await fetch(`${base}/api/story-ads/valmontpay/webhook`, {
+    method: 'POST', headers: webhookHeaders, body: webhookBody,
+  });
+  assert.equal(response.status, 503, 'a webhook is never acknowledged before its durable commit');
+  assert.equal((await fetch(`${base}/readyz`)).status, 503);
+  fs.chmodSync(dataDir, 0o700);
+  response = await fetch(`${base}/api/story-ads/valmontpay/webhook`, {
+    method: 'POST', headers: webhookHeaders, body: webhookBody,
+  });
+  assert.equal(response.status, 200, 'the provider retry commits the in-memory idempotency record');
+  assert.equal((await fetch(`${base}/readyz`)).status, 200);
+  response = await fetch(`${base}/api/story-ads/valmontpay/webhook`, {
+    method: 'POST', headers: webhookHeaders, body: webhookBody,
+  });
+  assert.equal(response.status, 200, 'later provider retries are idempotently acknowledged');
   response = await fetch(`${base}/api/story-ads/campaigns`, { headers: { cookie } });
   assert.equal((await response.json()).campaigns[0].paymentStatus, 'paid');
+  response = await fetch(`${base}/api/story-ads/${created.campaign.id}/payment-ledger`, { headers: { cookie } });
+  assert.equal(response.status, 200);
+  const ledger = (await response.json()).entries;
+  assert.equal(ledger.length, 1);
+  assert.equal(ledger[0].kind, 'payment_captured');
+  assert.equal(ledger[0].amountMinor, 2500);
+  const outsider = await registerAccount(base, '501234568', 'Payment Ledger Outsider');
+  response = await fetch(`${base}/api/story-ads/${created.campaign.id}/payment-ledger`, {
+    headers: { cookie: outsider.cookie },
+  });
+  assert.equal(response.status, 404, 'another account cannot discover a campaign financial ledger');
+  const durablePayment = JSON.parse(fs.readFileSync(path.join(dataDir, 'db.v2.json'), 'utf8'));
+  assert.equal(durablePayment.paymentWebhookInbox.length, 1, 'the webhook is durable before its 200 response');
+  assert.equal(durablePayment.paymentLedger.length, 1, 'provider retries append only one capture');
 
   response = await fetch(
     `${base}/api/story-ads/valmontpay/return?ref=${encodeURIComponent(created.payment.reference)}&status=success&merchant=vchat`,
@@ -1166,60 +1975,44 @@ test('ValmontPay checkout uses the tenant contract and verifies major-unit GHS p
   assert.equal(verified.campaign.status, 'pending_review');
   const verification = provider.requests.find(entry => entry.url.startsWith('/api/transaction/verify/'));
   assert.equal(verification.authorization, `Bearer ${secret}`);
-});
 
-test('friends are found by unique @username rather than phone number', async t => {
-  const { base } = await startServer(t);
-
-  async function register(number, username, handle) {
-    let response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number });
-    const request = await response.json();
-    response = await jsonRequest(`${base}/api/auth/verify`, { phone: request.phone, code: request.devCode });
-    assert.equal(response.status, 200);
-    response = await jsonRequest(`${base}/api/auth/register`, {
-      phone: request.phone, username, handle, avatar: username[0],
-    });
-    assert.equal(response.status, 200);
-    return {
-      cookie: response.headers.get('set-cookie').match(/^([^;]+)/)[1],
-      user: (await response.json()).user,
-    };
-  }
-
-  const alice = await register('501220001', 'Alice Finder', 'alice_finder');
-  const bob = await register('501220002', 'Bob Finder', 'bob_finder');
-  assert.equal(alice.user.handle, 'alice_finder');
-  assert.equal(alice.user.phone, '+233501220001');
-  assert.equal(bob.user.phone, '+233501220002');
-
-  let response = await jsonRequest(`${base}/api/auth/request-code`, { dialCode: '233', number: '501220003' });
-  const third = await response.json();
-  response = await jsonRequest(`${base}/api/auth/verify`, { phone: third.phone, code: third.devCode });
+  const admin = await registerAccount(base, '241234567', 'Payments Administrator');
+  response = await fetch(`${base}/api/story-ads/reconciliation`, { headers: { cookie: outsider.cookie } });
+  assert.equal(response.status, 403);
+  response = await fetch(`${base}/api/story-ads/reconciliation`, { headers: { cookie: admin.cookie } });
   assert.equal(response.status, 200);
-  response = await jsonRequest(`${base}/api/auth/register`, {
-    phone: third.phone, username: 'Copy', handle: 'alice_finder', avatar: 'C',
-  });
-  assert.equal(response.status, 409);
-  assert.match((await response.json()).error, /already taken/i);
-
-  response = await jsonRequest(`${base}/api/auth/register`, {
-    phone: third.phone, username: 'Bad Handle', handle: 'ab', avatar: 'B',
-  });
-  assert.equal(response.status, 400);
-
-  response = await fetch(`${base}/api/messenger/users/search?q=bob_f`, { headers: { cookie: alice.cookie } });
+  assert.deepEqual((await response.json()).issues, []);
+  const refund = {
+    amountMinor: 500,
+    providerRefundId: 'vp-refund-contract-1',
+    reason: 'Refund completed by finance in ValmontPay',
+  };
+  response = await jsonRequest(
+    `${base}/api/story-ads/${created.campaign.id}/refunds`, refund,
+    { cookie: admin.cookie, origin: base },
+  );
   assert.equal(response.status, 200);
-  const hits = await response.json();
-  assert.equal(hits.some(user => user.handle === 'bob_finder' && user.id === bob.user.id), true);
-  assert.equal(hits.every(user => user.phone === undefined), true);
-
-  const aliceSocket = socketClient(base, {
-    transports: ['websocket'], extraHeaders: { Cookie: alice.cookie, Origin: base }, reconnection: false,
+  const refundResult = await response.json();
+  assert.equal(refundResult.externallyProcessed, true);
+  assert.equal(refundResult.campaign.paymentStatus, 'partially_refunded');
+  response = await jsonRequest(
+    `${base}/api/story-ads/${created.campaign.id}/refunds`, refund,
+    { cookie: admin.cookie, origin: base },
+  );
+  assert.equal(response.status, 200, 'repeating the same completed refund is idempotent');
+  response = await jsonRequest(`${base}/api/story-ads/${created.campaign.id}/refunds`, {
+    ...refund, amountMinor: 2500,
+  }, { cookie: admin.cookie, origin: base });
+  assert.equal(response.status, 409, 'a conflicting or excessive refund cannot alter the ledger');
+  response = await fetch(`${base}/api/story-ads/${created.campaign.id}/payment-ledger`, {
+    headers: { cookie: admin.cookie },
   });
-  t.after(() => aliceSocket.close());
-  await socketEvent(aliceSocket, 'connect');
-  const lookedUp = await socketAck(aliceSocket, 'users:lookup', { query: '@bob_finder' });
-  assert.equal(lookedUp.some(user => user.id === bob.user.id && user.handle === 'bob_finder'), true);
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).entries.map(entry => entry.kind), [
+    'payment_captured', 'payment_refunded',
+  ]);
+  const refundSnapshot = JSON.parse(fs.readFileSync(path.join(dataDir, 'db.v2.json'), 'utf8'));
+  assert.equal(refundSnapshot.paymentLedger.length, 2, 'refund acknowledgement is a durable boundary');
 });
 
 test('ValmontPay webhooks require an HMAC-SHA256 over the exact raw request bytes', async t => {

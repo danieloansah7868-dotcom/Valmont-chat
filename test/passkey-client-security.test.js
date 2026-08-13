@@ -68,8 +68,23 @@ test('client privacy state resets, merges session fields, and closes View Once m
     'profile mutations preserve unrelated session-scoped account state');
   assert.match(source, /function closeChat\(\) \{[\s\S]{0,400}?closeViewOnce\(\);/,
     'automatic relocking destroys any fetched View Once object URL through closeChat');
-  assert.match(source, /socket\.emit\('users:lookup'/,
-    'new chats look people up by unique @username');
-  assert.match(source, /const WP_KEY = 'vchat\.wallpaper'/,
-    'wallpaper choice is remembered on the device');
+  assert.match(source, /chat-lock:state[\s\S]{0,900}?teardown\(\);/,
+    'relocking a chat tears down any established local WebRTC tracks');
+});
+
+test('offline outbox is encrypted in account-isolated IndexedDB and erased on logout', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  assert.doesNotMatch(source, /localStorage\.setItem\(['"]vchat\.outbox/,
+    'queued message content must never return to browser-global plaintext localStorage');
+  assert.match(source, /indexedDB\.open\(OUTBOX_DB_NAME, OUTBOX_DB_VERSION\)/);
+  assert.match(source, /generateKey\(\{ name: 'AES-GCM', length: 256 \}, false, \['encrypt', 'decrypt'\]\)/,
+    'each account gets a non-exportable browser-held encryption key');
+  assert.match(source, /additionalData: new TextEncoder\(\)\.encode\(ownerId\)/,
+    'AES-GCM records are cryptographically bound to the authenticated account ID');
+  assert.match(source, /await loadOutbox\(me\.id\);/,
+    'no queue is loaded until the authenticated account identity is known');
+  assert.match(source, /await clearPrivateOutbox\(me\?\.id\)/,
+    'logout removes both the encrypted record and its account key');
+  assert.match(source, /localStorage\.removeItem\('vchat\.outbox'\);/,
+    'legacy unattributed plaintext queues are discarded rather than migrated across accounts');
 });

@@ -620,7 +620,7 @@ function connect() {
   socket = io({ transports: ['websocket', 'polling'], withCredentials: true });
 
   socket.on('connect', () => {
-    socket.emit('user:join', {}, (res) => {
+    socket.emit('user:join', {}, async (res) => {
       $('login-btn').disabled = false;
       if (!res || res.error) {
         $('code-err').textContent = res?.error || 'Could not join';
@@ -629,6 +629,7 @@ function connect() {
       me = res.user;
       chats = res.chats;
       users = res.users;
+      await loadOutbox(me.id);
       localStorage.setItem('vchat.name', me.username);
       localStorage.setItem('vchat.avatar', me.avatar || '');
       $('login').style.display = 'none';
@@ -706,6 +707,7 @@ function connect() {
     me = { ...me, ...user };
     renderChatLockState();
     if (!chatLockIsUnlocked() && activeChat()?.locked) closeChat();
+    teardown();
   });
   socket.on('chats:refresh', () => {});
   socket.on('users:list', list => {
@@ -1679,31 +1681,108 @@ function onInput() {
  * socket comes back. Ten seconds of signal is enough to empty a day of
  * writing.
  */
-const OUTBOX_KEY = 'vchat.outbox';
-// A send is given this long to be acknowledged before we assume the phone lost
-// signal mid-flight. Short enough to notice a dead bundle, long enough that a
-// slow 2G round trip is not mistaken for failure.
+const OUTBOX_DB_NAME = 'vchat-outbox';
+const OUTBOX_DB_VERSION = 1;
 const SEND_TIMEOUT_MS = 12000;
-// Waits between retries. A phone that has run out of data gets a few quick
-// tries, then we back off instead of burning battery on a dead radio.
 const RETRY_BACKOFF_MS = [3000, 8000, 20000, 60000];
 let outbox = [];
+let outboxOwnerId = null;
 let flushing = false;
 let retryTimer = null;
-let inflight = null;     // resolver of the send we are currently waiting on
+let inflight = null;
 let flushAgain = false;
 
-function loadOutbox() {
-  try { outbox = JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); }
-  catch { outbox = []; }
-  if (!Array.isArray(outbox)) outbox = [];
-  // Nothing is mid-flight after a reload, however it ended.
-  for (const i of outbox) i.sending = false;
+function openOutboxDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(OUTBOX_DB_NAME, OUTBOX_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains('queues')) db.createObjectStore('queues');
+      if (!db.objectStoreNames.contains('keys')) db.createObjectStore('keys');
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
 }
 
-function saveOutbox() {
-  try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox)); }
-  catch { /* storage full or blocked — the queue stays in memory */ }
+async function outboxKey(ownerId) {
+  const db = await openOutboxDb();
+  const existing = await new Promise((resolve, reject) => {
+    const tx = db.transaction('keys', 'readonly');
+    const req = tx.objectStore('keys').get(ownerId);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+  if (existing) return existing;
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction('keys', 'readwrite');
+    const req = tx.objectStore('keys').put(key, ownerId);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+  return key;
+}
+
+async function loadOutbox(ownerId) {
+  outboxOwnerId = ownerId || null;
+  outbox = [];
+  if (!ownerId || !window.indexedDB || !window.crypto?.subtle) return;
+  try {
+    const db = await openOutboxDb();
+    const record = await new Promise((resolve, reject) => {
+      const tx = db.transaction('queues', 'readonly');
+      const req = tx.objectStore('queues').get(ownerId);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+    if (!record) return;
+    const key = await outboxKey(ownerId);
+    const plain = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: record.iv, additionalData: new TextEncoder().encode(ownerId) },
+      key,
+      record.ciphertext,
+    );
+    outbox = JSON.parse(new TextDecoder().decode(plain));
+    if (!Array.isArray(outbox)) outbox = [];
+    for (const item of outbox) item.sending = false;
+  } catch { outbox = []; }
+}
+
+async function saveOutbox() {
+  if (!outboxOwnerId || !window.indexedDB || !window.crypto?.subtle) return;
+  try {
+    const key = await outboxKey(outboxOwnerId);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(outboxOwnerId) },
+      key,
+      new TextEncoder().encode(JSON.stringify(outbox)),
+    );
+    const db = await openOutboxDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('queues', 'readwrite');
+      const req = tx.objectStore('queues').put({ iv, ciphertext }, outboxOwnerId);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } catch { /* storage blocked — the queue stays in memory */ }
+}
+
+async function clearPrivateOutbox(ownerId) {
+  outbox = [];
+  outboxOwnerId = null;
+  if (!ownerId || !window.indexedDB) return;
+  try {
+    const db = await openOutboxDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(['queues', 'keys'], 'readwrite');
+      tx.objectStore('queues').delete(ownerId);
+      tx.objectStore('keys').delete(ownerId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch { /* ignore */ }
 }
 
 function online() { return !!socket && socket.connected; }
@@ -3649,7 +3728,7 @@ function renderCurrentStory() {
 
   if (isAd) {
     api(`/api/story-ads/${encodeURIComponent(item.id)}/impression`, {}).catch(() => {});
-  } else if (!item.mine) {
+    } else if (!item.mine) {
     api(`/api/stories/${encodeURIComponent(item.id)}/view`, {}).then(({ ok, data }) => {
       if (ok && storySequence[storyIndex]?.id === item.id) Object.assign(item, data.story || {}, { seen: true });
     }).catch(() => {});
@@ -4185,6 +4264,8 @@ function mainMenu(e) {
     { sep: true },
     { label: 'Log out', danger: true, fn: async () => {
       localStorage.removeItem('vchat.token');
+      localStorage.removeItem('vchat.outbox');
+      await clearPrivateOutbox(me?.id);
       try { await api('/api/auth/logout', {}); } catch { /* offline */ }
       location.reload();
     } },
@@ -4919,7 +5000,6 @@ function wire() {
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────
-loadOutbox();
 document.body.classList.toggle('lite', lite);
 // The browser tells us before the socket does.
 window.addEventListener('online', () => flushOutbox());
