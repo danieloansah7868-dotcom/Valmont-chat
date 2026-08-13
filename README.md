@@ -11,8 +11,9 @@ Socket.IO, WebRTC, and a framework-free browser client.
 
 Meta AI and general WhatsApp Business/commerce features are intentionally out of
 scope. Status advertising and user-initiated boosted Status posts are the explicit
-advertising exception. The device target is an installable responsive PWA rather
-than separate native apps.
+advertising exception. The website remains installable as a PWA. A real Android
+APK, desktop window, and iOS WebView shell live under `native/` so VChat can ship
+as an application, not only as a browser tab.
 
 ## Run locally
 
@@ -203,6 +204,8 @@ refund, and operational controls appropriate to the deployment are in place.
   and media-preview controls; browser alerts work while Vchat is open
 - Received media remains in protected chats; explicit saves use the browser's
   Downloads location because a web PWA cannot write to the device gallery
+- Direct-message **Cloud | SMS** switch: Cloud bubbles are navy, SMS bubbles are
+  orange. SMS still leaves through Twilio on the server
 - Installable manifest, maskable icons, deferred install prompt, and an app-shell
   service worker
 - The worker deliberately never caches account, message, Socket.IO, or protected
@@ -210,15 +213,26 @@ refund, and operational controls appropriate to the deployment are in place.
 - Hardened CSP and Helmet headers, same-origin mutation checks, Socket.IO origin
   checks, request-size limits, and API/auth rate limiting
 
-## PWA behavior
+## PWA vs a real app
 
 The service worker caches only the static shell. It can reopen the sign-in/chat
 shell while offline, but messages still require the server and are not copied into
 Cache Storage. Messages composed while disconnected remain in the existing local
 outbox and retry when the socket reconnects.
 
-Install from the Vchat menu where supported, or use the browser's **Install app** /
-**Add to Home Screen** command.
+**Add to Home Screen** is still a website. A real app is an APK, desktop installer,
+or iOS archive:
+
+- Android: open `native/android` in Android Studio, set `vchat.server.url`, build
+  an APK. Play Store listing needs a Google Play developer account.
+- Desktop: `cd native/desktop && npm install && VCHAT_SERVER_URL=https://your-host npm start`
+- iOS: drop `native/ios` into an Xcode app on a Mac. App Store listing needs a
+  paid Apple Developer account.
+
+The native shells are full-screen WebViews of your hosted VChat origin. They add
+`VChatNative/1.0` to the user agent so the site hides the PWA install prompt.
+They do not become iMessage, WhatsApp's native stack, or the phone Messages app.
+In-app guide: `/native-app.html` or **Menu → Get the VChat app**.
 
 ## Configuration
 

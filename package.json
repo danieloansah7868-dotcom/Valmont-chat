@@ -1,13 +1,13 @@
 {
   "name": "vchat",
   "version": "1.0.0",
-  "description": "Vchat — secure staged real-time messaging and calling PWA",
+  "description": "Vchat — secure staged real-time messaging with navy Cloud, orange SMS, and native Android/desktop shells",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check server.js && node --check lib/http-auth.js && node --check lib/messenger.js && node --check lib/messenger-store.js && node --check lib/runtime-config.js && node --check lib/sms.js && node --check public/app.js && node --check public/sw.js && node --check scripts/backup-local.js && node --check scripts/restore-local.js && node --check scripts/check-runtime-config.js",
+    "check": "node --check server.js && node --check lib/http-auth.js && node --check lib/messenger.js && node --check lib/messenger-store.js && node --check lib/runtime-config.js && node --check lib/sms.js && node --check public/app.js && node --check public/sw.js && node --check scripts/backup-local.js && node --check scripts/restore-local.js && node --check scripts/check-runtime-config.js && node --check native/desktop/main.js && node --check native/desktop/preload.js",
     "pilot": "docker compose -f compose.pilot.yml up --build"
   },
   "keywords": [

@@ -1129,7 +1129,7 @@ function contactRow(u) {
 }
 
 function chatRow(c) {
-  const row = el('div', 'chat-row' + (c.id === activeId ? ' sel' : '') + (c.unread ? ' unread' : '') + (c.locked ? ' locked-chat-row' : '') + (c.type === 'saved' ? ' saved-row' : '') + (c.type === 'secret' ? ' secret-row' : ''));
+  const row = el('div', 'chat-row' + (c.id === activeId ? ' sel' : '') + (c.unread ? ' unread' : '') + (c.locked ? ' locked-chat-row' : '') + (c.type === 'saved' ? ' saved-row' : '') + (c.type === 'secret' ? ' secret-row' : '') + (c.transport === 'sms' ? ' sms-row' : ''));
   const last = c.lastMessage;
   const isGroup = c.type === 'group';
   const entity = c.type === 'saved'
@@ -1160,6 +1160,7 @@ function chatRow(c) {
       <div class="row-bottom">
         <div class="row-preview">${typingActive ? '' : prefix} ${previewText}</div>
         <div class="row-badges">
+          ${c.transport === 'sms' ? '<span class="sms-pill">SMS</span>' : (c.type === 'dm' ? '<span class="cloud-pill">Cloud</span>' : '')}
           ${c.favorite ? `<span class="row-icon favorite">${icon('star', 'icon-sm')}</span>` : ''}
           ${c.pinned ? `<span class="row-icon">${icon('pin', 'icon-sm')}</span>` : ''}
           ${c.muted ? `<span class="row-icon">${icon('mute', 'icon-sm')}</span>` : ''}
@@ -3162,10 +3163,41 @@ window.addEventListener('beforeinstallprompt', event => {
   installPrompt = event;
 });
 async function installApp() {
-  if (!installPrompt) return toast('Use your browser menu to install VChat');
+  if (isNativeApp()) return toast('You are already in the VChat app');
+  if (!installPrompt) return toast('Use your browser menu to Add to Home Screen, or open Get the VChat app');
   installPrompt.prompt();
   await installPrompt.userChoice;
   installPrompt = null;
+}
+
+function isNativeApp() {
+  const ua = navigator.userAgent || '';
+  return /VChatNative/i.test(ua)
+    || window.Capacitor?.isNativePlatform?.() === true
+    || window.vchatNative === true;
+}
+
+function applyNativeShell() {
+  const native = isNativeApp();
+  document.body.classList.toggle('native', native);
+  document.documentElement.classList.toggle('native', native);
+  if (native) {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', '#0b1f3a');
+  }
+}
+
+function openGetApp() {
+  applyNativeShell();
+  const status = $('get-app-status');
+  if (status) {
+    status.textContent = isNativeApp()
+      ? 'This window is already the native VChat shell. Cloud is navy. SMS is orange.'
+      : 'The native shell still talks to your VChat server. It does not replace Twilio, Apple iMessage, or a carrier SMS stack.';
+  }
+  const pwa = $('get-app-pwa');
+  if (pwa) pwa.hidden = isNativeApp();
+  openModal('modal-get-app');
 }
 
 // ── Notification, ringtone and media preferences (per linked device) ──
@@ -4249,9 +4281,15 @@ function updateTransportSwitch() {
   bar.hidden = !show;
   if (!show) return;
   const current = chat.transport === 'sms' ? 'sms' : 'cloud';
+  const panel = $('chat-panel');
+  if (panel) panel.dataset.transport = current;
   bar.querySelectorAll('[data-transport]').forEach(btn => {
     btn.classList.toggle('on', btn.dataset.transport === current);
+    btn.setAttribute('aria-pressed', String(btn.dataset.transport === current));
   });
+  if (canSendTo(chat)) {
+    $('msg-input').placeholder = current === 'sms' ? 'Text message (SMS)' : 'Type a message';
+  }
 }
 
 function setActiveTransport(transport) {
@@ -4702,6 +4740,11 @@ function wireHybrid() {
   $('transport-switch').querySelectorAll('[data-transport]').forEach(btn => {
     btn.onclick = () => setActiveTransport(btn.dataset.transport);
   });
+  $('login-get-app')?.addEventListener('click', openGetApp);
+  $('get-app-pwa')?.addEventListener('click', () => {
+    closeModal('modal-get-app');
+    installApp();
+  });
   $('backup-now').onclick = backupNow;
   $('backup-restore').onclick = restoreBackup;
   $('backup-download').onclick = downloadBackupFile;
@@ -4876,7 +4919,7 @@ function mainMenu(e) {
     { label: 'Notifications & media', fn: openNotifications },
     { label: 'Archived', fn: () => setFilter('archived') },
     { label: 'Call quality', fn: openCallQuality },
-    { label: 'Install app', fn: installApp },
+    { label: isNativeApp() ? 'You are in the VChat app' : 'Get the VChat app', fn: openGetApp },
     { label: lite ? 'Lite mode: on' : 'Lite mode: off', fn: openLiteMode },
     { sep: true },
     { label: document.body.classList.contains('dark') ? 'Light mode' : 'Dark mode', fn: toggleTheme },
@@ -5641,6 +5684,7 @@ window.addEventListener('beforeunload', closeViewOnce);
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 }
+applyNativeShell();
 applyWallpaper();
 initLogin();
 wire();

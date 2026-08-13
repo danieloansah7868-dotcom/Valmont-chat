@@ -83,6 +83,7 @@
       <button class="btn-primary" id="btn-send-code">Next</button>
       <div class="login-err" id="login-err"></div>
       <p class="login-hint">We never share your number. Friends find you by @username, not your phone number.</p>
+      <button type="button" class="login-get-app" id="login-get-app">Get the real VChat app instead of a browser tab</button>
     </section>
 
     <!-- Step 2 — verification code -->
@@ -794,6 +795,39 @@
   <div class="modal">
     <div class="modal-head">Message info</div>
     <div class="modal-body" id="message-info-body"></div>
+    <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-get-app">
+  <div class="modal settings-modal">
+    <div class="modal-head">Get the VChat app</div>
+    <div class="modal-body">
+      <p class="setting-explainer">A PWA is still a website pinned to your home screen. A real app is an Android or desktop program with its own icon, no browser chrome, and phone camera/mic permissions.</p>
+      <div class="get-app-grid">
+        <article class="get-app-card navy">
+          <h3>Cloud · navy</h3>
+          <p>VChat Cloud messages use navy bubbles and travel over the internet, like iMessage. Works in groups, secret chats, and on every signed-in device.</p>
+        </article>
+        <article class="get-app-card orange">
+          <h3>SMS · orange</h3>
+          <p>SMS messages use orange bubbles and leave through Twilio as a real text. That is not your phone’s Messages app, and it is not free carrier SMS on this device.</p>
+        </article>
+        <article class="get-app-card">
+          <h3>Android app</h3>
+          <p>Open <code>native/android</code> in Android Studio, set your VChat server URL, and build an APK. Install it like WhatsApp. Play Store listing needs a Google Play developer account.</p>
+        </article>
+        <article class="get-app-card">
+          <h3>Desktop app</h3>
+          <p>The Electron shell in <code>native/desktop</code> is a real Windows / macOS / Linux window, not a browser tab. iOS needs a Mac, Xcode, and an Apple Developer account — sources are in <code>native/ios</code>.</p>
+        </article>
+      </div>
+      <p class="capture-disclosure" id="get-app-status">The native shell still talks to your VChat server. It does not replace Twilio, Apple iMessage, or a carrier SMS stack.</p>
+      <div class="business-dashboard-actions" style="justify-content:flex-start;margin-top:12px">
+        <button class="btn-primary" id="get-app-pwa" type="button">Install browser app</button>
+        <a class="btn-text" id="get-app-guide" href="/native-app.html">Build guide</a>
+      </div>
+    </div>
     <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
   </div>
 </div>

@@ -52,12 +52,20 @@ test('SMS transport is limited to one-to-one chats and tagged on the message', (
 
 test('client has Cloud/SMS switch and a full settings backup surface', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.css'), 'utf8');
   const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
   assert.match(html, /id="transport-switch"/);
   assert.match(html, /data-transport="sms"/);
   assert.match(html, /id="modal-backup"/);
+  assert.match(html, /id="modal-get-app"/);
   assert.match(source, /function collectDeviceSettings/);
   assert.match(source, /function applyDeviceSettings/);
+  assert.match(source, /function isNativeApp/);
+  assert.match(source, /function openGetApp/);
   assert.match(source, /chat:setTransport/);
   assert.match(source, /\/api\/account\/settings/);
+  assert.match(css, /button\.on\[data-transport="cloud"\][^}]+var\(--brand-navy\)/);
+  assert.match(css, /button\.on\[data-transport="sms"\][^}]+var\(--brand-gold\)/);
+  assert.doesNotMatch(css, /#0a84ff/);
+  assert.doesNotMatch(css, /#34c759/);
 });
