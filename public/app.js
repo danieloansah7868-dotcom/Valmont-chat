@@ -18,13 +18,71 @@ let searchQuery = '';
 let typingUsers = new Map();   // chatId -> Map(userId -> {name, timer})
 const typingTimers = {};
 let unseen = 0;
+let reels = [];
+let reelsCursor = null;
+let reelsLoading = false;
+let reelsReloadPending = false;
+let reelsExhausted = false;
+let reelsObserver = null;
+let reelsRefreshTimer = null;
+let reelMaxBytes = 50 * 1024 * 1024;
+let reelUploadFile = null;
+let reelUploadPreviewUrl = null;
+let reelUploadAbort = null;
+let reelUploadCleanup = null;
+let storyGroups = [];
+let storyAds = [];
+let storySequence = [];
+let storyIndex = -1;
+let storyPlayback = null;
+let storiesLoading = false;
+let storiesRefreshTimer = null;
+let storyMaxBytes = 30 * 1024 * 1024;
+let storyReactions = ['❤️', '😂', '😮', '😢', '👏', '🔥'];
+let storyFile = null;
+let storyPreviewUrl = null;
+let storyBackground = 'jade';
+let storyPublishing = false;
+let storyUploadRequest = null;
+let storyPaymentConfigured = false;
+let storyAdAdmin = false;
+let registrationPhotoFile = null;
+let registrationPhotoPreviewUrl = null;
+let viewOnceObjectUrl = null;
+let chatLockCredentials = [];
 
 const AVATARS = ['😀','😎','🦊','🐼','🐯','🦁','🐸','🐵','🦄','🐙','🌟','🚀','🔥','🍀','🎧','⚽','🎸','🌺','🍕','🐨'];
+const NOTIFICATION_DEFAULTS = {
+  desktop: false,
+  previews: true,
+  messageSounds: true,
+  messageTone: 'chime',
+  callSounds: true,
+  ringtone: 'classic',
+  mediaVisibility: 'show',
+};
+let notificationPrefs = { ...NOTIFICATION_DEFAULTS };
+try {
+  notificationPrefs = { ...NOTIFICATION_DEFAULTS, ...JSON.parse(localStorage.getItem('vchat.notifications') || '{}') };
+} catch { /* corrupted local settings fall back safely */ }
+
 const EMOJI_GROUPS = {
-  'Smileys': ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩','😘','😗','😚','😙','😋','😛','😜','🤪','😝','🤗','🤭','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','😮','😯','😴','🥱','😌','😔','😪','🤤','😷','🤒','🤕','🤧','🥳','🥸','😎','🤓','🧐','😕','😟','🙁','😮‍💨','😢','😭','😤','😠','😡','🤬','😱','😨','😰','😥'],
-  'Gestures': ['👍','👎','👌','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','👇','☝️','✋','🤚','🖐️','🖖','👋','🤝','🙏','💪','🦾','👏','🙌','👐','🤲','✍️','💅'],
-  'Hearts': ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💯','💥','💫','⭐','🌟','✨','🔥','🎉','🎊','🎁'],
-  'Objects': ['📱','💻','⌨️','🖥️','🖨️','📷','🎥','📺','⏰','⏱️','📅','📌','📎','📁','📊','📈','💰','💳','🔑','🔒','📚','✏️','🖊️','📝','☕','🍵','🍕','🍔','🍟','🌮','🍎','🍌','⚽','🏀','🎮','🎧','🎸','🚗','✈️','🏠'],
+  'Smileys & emotion': ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','🫠','😉','😊','😇','🥰','😍','🤩','😘','😗','☺️','😚','😙','🥲','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🫢','🫣','🤫','🤔','🫡','🤐','🤨','😐','😑','😶','🫥','😏','😒','🙄','😬','😮‍💨','🤥','🫨','🙂‍↔️','🙂‍↕️','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🤧','🥵','🥶','🥴','😵','🤯','🤠','🥳','🥸','😎','🤓','🧐','😕','🫤','😟','🙁','☹️','😮','😯','😲','😳','🥺','🥹','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣','😞','😓','😩','😫','🥱','😤','😡','😠','🤬','😈','👿','💀','☠️','💩','🤡','👹','👺','👻','👽','🤖','😺','😸','😹','😻','😼','😽','🙀','😿','😾','❤️','🧡','💛','💚','💙','🩵','💜','🖤','🩶','🤍','🤎','💔','❤️‍🔥','❤️‍🩹','❣️','💕','💞','💓','💗','💖','💘','💝'],
+  'People & gestures': ['👋','🤚','🖐️','✋','🖖','🫱','🫲','🫳','🫴','🫷','🫸','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','🫵','👍','👎','✊','👊','🤛','🤜','👏','🙌','🫶','👐','🤲','🤝','🙏','✍️','💅','🤳','💪','🦾','🦿','🦵','🦶','👂','👃','🧠','🫀','🫁','🦷','👀','👁️','👅','👄','🫦','👶','🧒','👦','👧','🧑','👱','👨','🧔','👩','🧓','👴','👵','🙍','🙎','🙅','🙆','💁','🙋','🧏','🙇','🤦','🤷','👮','👷','💂','🕵️','👩‍⚕️','👩‍🌾','👩‍🍳','👩‍🎓','👩‍🎤','👩‍🏫','👩‍🏭','👩‍💻','👩‍💼','👩‍🔧','👩‍🔬','👩‍🎨','👩‍🚒','👩‍✈️','👩‍🚀','👩‍⚖️','🦸','🦹','🥷','🧙','🧚','🧛','🧜','🧝','🧞','🧟','💆','💇','🚶','🧍','🧎','🏃','💃','🕺','🕴️','👯','🧖','🧗','🤺','🏇','⛷️','🏂','🏌️','🏄','🚣','🏊','⛹️','🏋️','🚴','🤸','🤼','🤽','🤾','🤹','🧘','🛀','🛌','👭','👫','👬','💏','💑','👪'],
+  'Animals & nature': ['🐵','🐒','🦍','🦧','🐶','🐕','🦮','🐩','🐺','🦊','🦝','🐱','🐈','🦁','🐯','🐅','🐆','🐴','🫎','🫏','🐎','🦄','🦓','🦌','🦬','🐮','🐂','🐃','🐄','🐷','🐖','🐗','🐽','🐏','🐑','🐐','🐪','🐫','🦙','🦒','🐘','🦣','🦏','🦛','🐭','🐁','🐀','🐹','🐰','🐇','🐿️','🦫','🦔','🦇','🐻','🐨','🐼','🦥','🦦','🦨','🦘','🦡','🐾','🦃','🐔','🐓','🐣','🐤','🐥','🐦','🐧','🕊️','🦅','🦆','🦢','🦉','🦤','🪶','🦩','🦚','🦜','🪽','🐦‍⬛','🪿','🐦‍🔥','🐸','🐊','🐢','🦎','🐍','🐲','🐉','🦕','🦖','🐳','🐋','🐬','🦭','🐟','🐠','🐡','🦈','🐙','🐚','🪸','🪼','🐌','🦋','🐛','🐜','🐝','🪲','🐞','🦗','🪳','🕷️','🦂','🦟','🪰','🪱','🦠','💐','🌸','💮','🪷','🌹','🥀','🌺','🌻','🌼','🌷','🪻','🌱','🪴','🌲','🌳','🌴','🌵','🌾','🌿','☘️','🍀','🍁','🍂','🍃','🍄','🪨','🌍','🌎','🌏','🌙','☀️','⭐','🌟','✨','⚡','🔥','🌈','☁️','❄️','☔','💧','🌊'],
+  'Food & drink': ['🍏','🍎','🍐','🍊','🍋','🍋‍🟩','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🫛','🥬','🥒','🌶️','🫑','🌽','🥕','🫒','🧄','🧅','🥔','🍠','🫘','🌰','🥜','🍞','🥐','🥖','🫓','🥨','🥯','🥞','🧇','🧀','🍖','🍗','🥩','🥓','🍔','🍟','🍕','🌭','🥪','🌮','🌯','🫔','🥙','🧆','🥚','🍳','🥘','🍲','🫕','🥣','🥗','🍿','🧈','🧂','🥫','🍱','🍘','🍙','🍚','🍛','🍜','🍝','🍢','🍣','🍤','🍥','🥮','🍡','🥟','🥠','🥡','🦀','🦞','🦐','🦑','🦪','🍦','🍧','🍨','🍩','🍪','🎂','🍰','🧁','🥧','🍫','🍬','🍭','🍮','🍯','🍼','🥛','☕','🫖','🍵','🧃','🥤','🧋','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧉','🍾','🧊','🥄','🍴','🥢','🥡'],
+  'Activities': ['⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🥏','🎱','🪀','🏓','🏸','🏒','🏑','🥍','🏏','🪃','🥅','⛳','🪁','🏹','🎣','🤿','🥊','🥋','🎽','🛹','🛼','🛷','⛸️','🥌','🎿','⛷️','🏂','🪂','🏋️','🤼','🤸','⛹️','🤺','🤾','🏌️','🏇','🧘','🏄','🏊','🤽','🚣','🧗','🚵','🚴','🏆','🥇','🥈','🥉','🏅','🎖️','🏵️','🎗️','🎫','🎟️','🎪','🤹','🎭','🩰','🎨','🎬','🎤','🎧','🎼','🎹','🥁','🪘','🎷','🎺','🪗','🎸','🪕','🎻','🪈','🎲','♟️','🎯','🎳','🎮','🎰','🧩'],
+  'Travel & places': ['🚗','🚕','🚙','🚌','🚎','🏎️','🚓','🚑','🚒','🚐','🛻','🚚','🚛','🚜','🦯','🦽','🛴','🚲','🛵','🏍️','🛺','🚨','🚔','🚍','🚘','🚖','🚡','🚠','🚟','🚃','🚋','🚞','🚝','🚄','🚅','🚈','🚂','🚆','🚇','🚊','🚉','✈️','🛫','🛬','🛩️','💺','🛰️','🚀','🛸','🚁','🛶','⛵','🚤','🛥️','🛳️','⛴️','🚢','⚓','🛟','⛽','🚧','🚦','🗺️','🗿','🗽','🗼','🏰','🏯','🏟️','🎡','🎢','🎠','⛲','⛱️','🏖️','🏝️','🏜️','🌋','⛰️','🏕️','⛺','🛖','🏠','🏡','🏢','🏥','🏦','🏨','🏫','🏛️','⛪','🕌','🛕','🕍','🌅','🌄','🌠','🎇','🌇','🌆','🏙️','🌃'],
+  'Objects': ['⌚','📱','📲','💻','⌨️','🖥️','🖨️','🖱️','🕹️','💽','💾','💿','📀','🧮','🎥','🎞️','📽️','🎬','📺','📷','📸','📹','📼','🔍','🔎','🕯️','💡','🔦','🏮','🪔','📔','📕','📖','📗','📘','📙','📚','📓','📒','📃','📜','📄','📰','🗞️','📑','🔖','🏷️','💰','🪙','💴','💵','💶','💷','💸','💳','🧾','💹','✉️','📧','📨','📩','📤','📥','📦','📫','📮','📝','💼','📁','📅','📆','📇','📈','📉','📊','📋','📌','📍','📎','🖇️','📏','📐','✂️','🗃️','🗄️','🗑️','🔒','🔓','🔏','🔐','🔑','🗝️','🔨','🪓','⛏️','⚒️','🛠️','🗡️','⚔️','🔧','🪛','🔩','⚙️','🧱','⛓️','🧲','🔬','🔭','📡','💉','🩸','💊','🩹','🩺','🚪','🪑','🚽','🚿','🛁','🧹','🧺','🧻','🪣','🧼','🫧','🪥','🧽','🛒','🎁','🎈'],
+  'Symbols': ['❤️','💯','💢','💥','💫','💦','💨','🕳️','💬','👁️‍🗨️','🗨️','🗯️','💭','💤','✅','❌','❓','❗','‼️','⁉️','⭕','🚫','⛔','📛','🔞','📵','⚠️','🚸','🔱','⚜️','🔰','♻️','✳️','❇️','©️','®️','™️','🆕','🆓','🆙','🆒','🆗','🆘','🅰️','🅱️','🆎','🅾️','🧿','♾️','♀️','♂️','⚧️','✖️','➕','➖','➗','🟰','〰️','➰','✔️','☑️','🔘','🔴','🟠','🟡','🟢','🔵','🟣','🟤','⚫','⚪','🟥','🟧','🟨','🟩','🟦','🟪','🟫','⬛','⬜','◼️','◻️','🔈','🔉','🔊','🔇','📣','📢','🔔','🔕','🎵','🎶','💲','💱','➿','🔚','🔙','🔛','🔝','🔜'],
+  'Flags': ['🏁','🚩','🎌','🏴','🏳️','🏳️‍🌈','🏳️‍⚧️','🇬🇭','🇳🇬','🇨🇮','🇹🇬','🇧🇯','🇧🇫','🇸🇳','🇬🇲','🇸🇱','🇱🇷','🇬🇳','🇲🇱','🇳🇪','🇨🇲','🇰🇪','🇺🇬','🇹🇿','🇿🇦','🇪🇬','🇲🇦','🇪🇹','🇷🇼','🇿🇼','🇬🇧','🇺🇸','🇨🇦','🇲🇽','🇧🇷','🇦🇷','🇫🇷','🇩🇪','🇮🇹','🇪🇸','🇵🇹','🇳🇱','🇧🇪','🇨🇭','🇸🇪','🇳🇴','🇩🇰','🇫🇮','🇵🇱','🇺🇦','🇹🇷','🇸🇦','🇦🇪','🇮🇱','🇮🇳','🇵🇰','🇧🇩','🇱🇰','🇨🇳','🇯🇵','🇰🇷','🇸🇬','🇲🇾','🇮🇩','🇵🇭','🇹🇭','🇻🇳','🇦🇺','🇳🇿','🇺🇳'],
+};
+const EMOJI_CATEGORY_ICONS = ['😊','👋','🐻','🍕','⚽','✈️','💡','✅','🏳️'];
+const EMOJI_SEARCH_TERMS = {
+  love: ['❤️','🧡','💛','💚','💙','💜','💕','😍','🥰'], happy: ['😀','😃','😄','😁','😊','🥳'], sad: ['😢','😭','😞','💔'], laugh: ['😂','🤣','😹'],
+  yes: ['✅','👍','👌','🙌'], no: ['❌','👎','🚫','⛔'], thanks: ['🙏','❤️','🫶'], celebration: ['🎉','🎊','🥳','🎂','🥂'], fire: ['🔥','❤️‍🔥'], music: ['🎵','🎶','🎧','🎤','🎸'],
+  work: ['💼','💻','📊','🛠️'], money: ['💰','💵','💳','🪙'], phone: ['📱','☎️'], photo: ['📷','📸'], video: ['🎥','📹'], food: ['🍕','🍔','🍲','🍎'],
+  animal: ['🐶','🐱','🦁','🐼','🐻'], travel: ['✈️','🚗','🚆','🚀'], sport: ['⚽','🏀','🏈','🎾'], ghana: ['🇬🇭'], flag: ['🏁','🚩','🇬🇭','🇳🇬','🇬🇧','🇺🇸'], lock: ['🔒','🔐','🔑'], star: ['⭐','🌟','✨'],
 };
 
 // ── Tiny DOM helpers ───────────────────────────────────────────────────
@@ -88,8 +146,32 @@ function colorFor(id) {
 }
 const isEmojiOnly = t => t && /^[\p{Emoji_Presentation}\p{Extended_Pictographic}\u200d\ufe0f\s]+$/u.test(t) && [...t.replace(/\s/g, '')].length <= 6;
 
-function linkify(text) {
-  return esc(text).replace(/(https?:\/\/[^\s<]+)/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
+function formatMessage(text) {
+  const blocks = [];
+  let source = String(text || '').replace(/```([\s\S]*?)```/g, (_match, code) => {
+    blocks.push(`<pre class="msg-code">${esc(code.trim())}</pre>`);
+    return `\u0000BLOCK${blocks.length - 1}\u0000`;
+  });
+  source = source.replace(/`([^`\n]+)`/g, (_match, code) => {
+    blocks.push(`<code>${esc(code)}</code>`);
+    return `\u0000BLOCK${blocks.length - 1}\u0000`;
+  });
+  let html = esc(source);
+  html = html
+    .replace(/(^|\s)\*([^*\n]+)\*(?=\s|[.,!?;:]|$)/g, '$1<strong>$2</strong>')
+    .replace(/(^|\s)_([^_\n]+)_(?=\s|[.,!?;:]|$)/g, '$1<em>$2</em>')
+    .replace(/(^|\s)~([^~\n]+)~(?=\s|[.,!?;:]|$)/g, '$1<del>$2</del>')
+    .replace(/(https?:\/\/[^\s<]+)/g, url => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`)
+    .replace(/(^|\s)(@[\p{L}\p{N}_.-]{2,40})/gu, (all, lead, handle) => {
+      const mine = me && handle.slice(1).toLowerCase() === String(me.handle || '').toLowerCase();
+      return `${lead}<span class="mention${mine ? ' me' : ''}" data-handle="${esc(handle.slice(1))}">${handle}</span>`;
+    });
+  html = html.split('\n').map(line => {
+    if (/^&gt;\s/.test(line)) return `<blockquote>${line.replace(/^&gt;\s?/, '')}</blockquote>`;
+    if (/^[-•]\s/.test(line)) return `<div class="msg-list-item">• ${line.replace(/^[-•]\s?/, '')}</div>`;
+    return line;
+  }).join('<br>');
+  return html.replace(/\u0000BLOCK(\d+)\u0000/g, (_match, index) => blocks[Number(index)] || '');
 }
 
 /** Replace the node with `id` by a freshly rendered avatar, keeping id + extra classes. */
@@ -108,10 +190,13 @@ function avatarHTML(entity, size = 40, showPresence = false) {
   const isUser = entity && 'username' in entity;
   const name = isUser ? entity.username : (entity?.name || '?');
   const emoji = entity?.avatar;
+  const photoUrl = entity?.photoUrl;
   const bg = entity?.color || colorFor(entity?.id || name);
-  const inner = emoji ? esc(emoji) : (entity?.type === 'group' ? icon('group', 'icon') : esc(initials(name)));
+  const inner = photoUrl
+    ? `<img class="avatar-photo" src="${esc(photoUrl)}" alt="" loading="lazy">`
+    : (emoji ? esc(emoji) : (entity?.type === 'group' ? icon('group', 'icon') : esc(initials(name))));
   const dot = showPresence ? `<span class="presence ${entity?.status === 'online' ? 'on' : ''}"></span>` : '';
-  return `<div class="avatar sz-${size}" style="background:${emoji ? 'var(--panel-alt)' : bg}">${inner}${dot}</div>`;
+  return `<div class="avatar sz-${size}" style="background:${photoUrl || emoji ? 'var(--panel-alt)' : bg}">${inner}${dot}</div>`;
 }
 
 function tickHTML(status) {
@@ -141,6 +226,7 @@ function previewOf(m) {
     if (t.startsWith('audio/')) return '🎵 Audio';
     return '📄 ' + m.file.name;
   }
+  if (m.encryption && !m.text) return m.decryptError ? '🔒 Unable to decrypt on this device' : '🔒 Encrypted message';
   return m.text;
 }
 
@@ -213,15 +299,17 @@ function showStep(id) {
   ['step-phone', 'step-code', 'step-profile'].forEach(s => { $(s).hidden = s !== id; });
 }
 
-async function api(path, body) {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+async function api(path, body, options = {}) {
+  const method = options.method || (body === undefined ? 'GET' : 'POST');
+  const init = { method, credentials: 'same-origin', headers: {} };
+  if (body !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, init);
   let data = {};
   try { data = await res.json(); } catch { /* empty body */ }
-  return { ok: res.ok, data };
+  return { ok: res.ok, status: res.status, data };
 }
 
 function initLogin() {
@@ -245,6 +333,43 @@ function initLogin() {
   const savedName = localStorage.getItem('vchat.name');
   if (savedName) $('name-input').value = savedName;
 
+  const accountTypeInputs = [...document.querySelectorAll('input[name="register-account-type"]')];
+  const updateAccountType = () => {
+    const business = accountTypeInputs.find(input => input.checked)?.value === 'business';
+    $('business-register-fields').hidden = !business;
+    accountTypeInputs.forEach(input => input.closest('.account-type-card')?.classList.toggle('selected', input.checked));
+  };
+  accountTypeInputs.forEach(input => input.onchange = updateAccountType);
+  updateAccountType();
+
+  const resetRegistrationPhoto = () => {
+    if (registrationPhotoPreviewUrl) URL.revokeObjectURL(registrationPhotoPreviewUrl);
+    registrationPhotoPreviewUrl = null;
+    registrationPhotoFile = null;
+    $('registration-photo-input').value = '';
+    $('registration-photo-preview').innerHTML = icon('photo');
+    $('registration-photo-name').textContent = 'You can replace or remove it later.';
+    $('registration-photo-remove').hidden = true;
+  };
+  const chooseRegistrationPhoto = () => $('registration-photo-input').click();
+  $('registration-photo-choose').onclick = chooseRegistrationPhoto;
+  $('registration-photo-button').onclick = chooseRegistrationPhoto;
+  $('registration-photo-remove').onclick = resetRegistrationPhoto;
+  $('registration-photo-input').onchange = event => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/i.test(file.type) || file.size > 5 * 1024 * 1024) {
+      resetRegistrationPhoto();
+      return toast('Choose a JPEG, PNG, or WebP image up to 5 MB');
+    }
+    if (registrationPhotoPreviewUrl) URL.revokeObjectURL(registrationPhotoPreviewUrl);
+    registrationPhotoFile = file;
+    registrationPhotoPreviewUrl = URL.createObjectURL(file);
+    $('registration-photo-preview').innerHTML = `<img src="${esc(registrationPhotoPreviewUrl)}" alt="Selected profile photo">`;
+    $('registration-photo-name').textContent = `${file.name} · ${fileSize(file.size)}`;
+    $('registration-photo-remove').hidden = false;
+  };
+
   const savedPhone = localStorage.getItem('vchat.phone');
   if (savedPhone) {
     const match = DIAL_CODES.filter(d => savedPhone.startsWith('+' + d[1]))
@@ -262,31 +387,22 @@ function initLogin() {
   initCodeBoxes();
 
   $('login-btn').onclick = submitProfile;
-  $('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('handle-input').focus(); });
+  $('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitProfile(); });
   $('handle-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitProfile(); });
   $('handle-input').addEventListener('input', () => {
-    $('handle-input').value = $('handle-input').value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20);
-    $('profile-err').textContent = '';
+    $('handle-input').value = $('handle-input').value.toLowerCase().replace(/[^a-z0-9_]/g, '');
   });
-  $('name-input').addEventListener('input', () => {
-    const h = $('handle-input');
-    if (h.dataset.touched) return;
-    const fromName = $('name-input').value.toLowerCase().replace(/[^a-z0-9_]+/g, '').replace(/^[^a-z]+/, '').slice(0, 20);
-    h.value = fromName;
-  });
-  $('handle-input').addEventListener('focus', () => { $('handle-input').dataset.touched = '1'; });
 
   $('phone-input').focus();
   restoreSession();
 }
 
-/** Silently resume an existing session so you are not asked to verify twice. */
+/** Silently resume the server-held HttpOnly session cookie. */
 async function restoreSession() {
-  const token = localStorage.getItem('vchat.token');
-  if (!token) return;
-  const { ok, data } = await api('/api/auth/session', { token });
-  if (ok && data.user) connect(token);
-  else localStorage.removeItem('vchat.token');
+  // Remove pre-security-release bearer tokens; they are intentionally invalid.
+  localStorage.removeItem('vchat.token');
+  const { ok, data } = await api('/api/auth/session');
+  if (ok && data.user) connect();
 }
 
 // ── Step 1: request a code ─────────────────────────────────────────────
@@ -312,7 +428,6 @@ async function requestCode(resend) {
   authPhone = data.phone;
   $('code-target').textContent = data.phone;
   localStorage.setItem('vchat.phone', data.phone);
-  if (data.username) $('name-input').value = data.username;
 
   // Dev mode: no SMS provider configured, so surface the code in the UI.
   const dev = $('dev-code');
@@ -415,65 +530,117 @@ async function submitCode() {
     $('name-input').focus();
     return;
   }
+  if (data.needsTwoStep) {
+    const pin = prompt('Enter your 6-digit two-step verification PIN');
+    if (!pin) return;
+    const result = await api('/api/auth/two-step', { phone: authPhone, pin });
+    if (!result.ok) {
+      $('code-err').textContent = result.data.error || 'Incorrect PIN';
+      return;
+    }
+    finishAuth(result.data);
+    return;
+  }
 
   finishAuth(data);
 }
 
 // ── Step 3: name + avatar for first-time numbers ───────────────────────
+function normalizeHandleInput(value) {
+  return String(value || '').trim().replace(/^@+/, '').toLowerCase();
+}
+
 async function submitProfile() {
   const username = $('name-input').value.trim();
-  const handle = $('handle-input').value.trim();
+  const handle = normalizeHandleInput($('handle-input').value);
+  const accountType = document.querySelector('input[name="register-account-type"]:checked')?.value === 'business'
+    ? 'business' : 'personal';
+  const businessName = $('business-name-input').value.trim();
   if (username.length < 2) { $('profile-err').textContent = 'Please enter at least 2 characters for your name'; return; }
   if (!/^[a-z][a-z0-9_]{2,19}$/.test(handle)) {
     $('profile-err').textContent = 'Username must be 3–20 characters, start with a letter, and use only letters, numbers or _';
+    $('handle-input').focus();
+    return;
+  }
+  if (accountType === 'business' && businessName.length < 2) {
+    $('profile-err').textContent = 'Please enter a public business name';
+    $('business-name-input').focus();
     return;
   }
   $('profile-err').textContent = '';
   $('login-btn').disabled = true;
 
+  // Registration creates the HttpOnly session first. Only then can the
+  // optional profile image use the authenticated protected-media route.
   const { ok, data } = await api('/api/auth/register', {
-    phone: authPhone, username, handle, avatar: pickedAvatar,
+    phone: authPhone,
+    username,
+    handle,
+    avatar: pickedAvatar,
+    accountType,
+    businessProfile: accountType === 'business' ? {
+      name: businessName,
+      category: $('business-category-input').value,
+      description: $('business-description-input').value.trim(),
+    } : undefined,
   });
-  $('login-btn').disabled = false;
 
-  if (!ok) { $('profile-err').textContent = data.error || 'Could not create your account'; return; }
+  if (!ok) {
+    $('login-btn').disabled = false;
+    $('profile-err').textContent = data.error || 'Could not create your profile';
+    return;
+  }
+
+  if (registrationPhotoFile) {
+    try {
+      const form = new FormData();
+      form.append('photo', registrationPhotoFile, registrationPhotoFile.name);
+      const response = await fetch('/api/account/profile-photo', {
+        method: 'PUT', credentials: 'same-origin', body: form,
+      });
+      const photoData = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(photoData.error || 'Profile photo upload failed');
+      data.user = photoData.user || data.user;
+    } catch (error) {
+      toast(`${error.message}. Your account was created and you can add it later.`);
+    }
+  }
+  $('login-btn').disabled = false;
+  if (registrationPhotoPreviewUrl) URL.revokeObjectURL(registrationPhotoPreviewUrl);
+  registrationPhotoPreviewUrl = null;
+  registrationPhotoFile = null;
   finishAuth(data);
 }
 
-function finishAuth({ token, user }) {
-  localStorage.setItem('vchat.token', token);
+function finishAuth({ user }) {
   localStorage.setItem('vchat.name', user.username);
   localStorage.setItem('vchat.avatar', user.avatar || '');
-  connect(token);
+  connect();
 }
 
 // ── Socket ─────────────────────────────────────────────────────────────
-function connect(token) {
+function connect() {
   if (socket) socket.close();
-  socket = io({ transports: ['websocket', 'polling'], auth: { token } });
+  socket = io({ transports: ['websocket', 'polling'], withCredentials: true });
 
   socket.on('connect', () => {
-    socket.emit('user:join', { token }, (res) => {
+    socket.emit('user:join', {}, async (res) => {
       $('login-btn').disabled = false;
       if (!res || res.error) {
-        if (res?.signedOut) {           // token no longer valid → back to step 1
-          localStorage.removeItem('vchat.token');
-          socket.close();
-          showStep('step-phone');
-          $('login-err').textContent = 'Your session expired. Please sign in again.';
-          return;
-        }
         $('code-err').textContent = res?.error || 'Could not join';
         return;
       }
       me = res.user;
       chats = res.chats;
       users = res.users;
+      applyDeviceSettings(me.settings);
+      await loadOutbox(me.id);
       localStorage.setItem('vchat.name', me.username);
       localStorage.setItem('vchat.avatar', me.avatar || '');
       $('login').style.display = 'none';
       document.body.classList.add('ready');
       renderMe();
+      renderChatLockState();
       renderChatList();
       if (!activeId && window.innerWidth > 900) {
         const first = chats[0];
@@ -481,7 +648,43 @@ function connect(token) {
       }
       updateOfflineBar();
       flushOutbox();
+      refreshIceServers();
+      verifyReturnedBoostPayment().catch(() => {});
+      const invite = new URLSearchParams(location.search).get('invite');
+      if (invite) {
+        socket.emit('chat:joinInvite', { code: invite }, result => {
+          if (result?.chat) {
+            history.replaceState({}, '', location.pathname);
+            openChat(result.chat.id);
+            toast(`Joined ${result.chat.name}`);
+          } else toast(result?.error || 'Invite link is invalid');
+        });
+      }
     });
+  });
+
+  socket.on('session:revoked', () => {
+    socket.close();
+    closeModal('modal-reel-upload');
+    closeModal('modal-story-compose');
+    closeStories();
+    closeReels();
+    reels = [];
+    $('reels-feed').innerHTML = '';
+    $('login').style.display = '';
+    document.body.classList.remove('ready');
+    showStep('step-phone');
+    $('login-err').textContent = 'This device was signed out from your account.';
+  });
+
+  socket.on('connect_error', error => {
+    if (/Authentication required/i.test(error?.message || '')) {
+      socket.close();
+      $('login').style.display = '';
+      document.body.classList.remove('ready');
+      showStep('step-phone');
+      $('login-err').textContent = 'Your session expired. Please sign in again.';
+    }
   });
 
   socket.on('disconnect', () => {
@@ -492,9 +695,24 @@ function connect(token) {
   });
 
   socket.on('chats:list', list => {
-    chats = list;
-    if (activeId && chats.some(c => c.id === activeId)) updateHeaderForActive();
-    else renderChatList();
+    const previousActive = activeChat();
+    chats = Array.isArray(list) ? list : [];
+    if (activeId && chats.some(c => c.id === activeId)) {
+      updateHeaderForActive();
+      renderChatList();
+    } else if (activeId && previousActive?.locked) {
+      // Automatic relocking must remove already-rendered content as well as
+      // hiding the row; leaving a stale thread in the DOM would leak it.
+      closeChat();
+      toast('Locked chats were hidden');
+    } else renderChatList();
+  });
+  socket.on('chat-lock:state', user => {
+    if (!user || user.id !== me?.id) return;
+    me = { ...me, ...user };
+    renderChatLockState();
+    if (!chatLockIsUnlocked() && activeChat()?.locked) closeChat();
+    teardown();
   });
   socket.on('chats:refresh', () => {});
   socket.on('users:list', list => {
@@ -503,6 +721,20 @@ function connect(token) {
     refreshDrawerIfOpen();
   });
   socket.on('presence:update', () => {});
+  socket.on('reels:changed', () => {
+    if (!document.body.classList.contains('reels-open')) return;
+    clearTimeout(reelsRefreshTimer);
+    reelsRefreshTimer = setTimeout(() => loadReels(true, true), 350);
+  });
+  socket.on('stories:changed', () => {
+    if (!$('stories-screen').classList.contains('open')) {
+      $('story-notice').hidden = false;
+      return;
+    }
+    if (!$('story-viewer').hidden) return;
+    clearTimeout(storiesRefreshTimer);
+    storiesRefreshTimer = setTimeout(() => loadStories({ quiet: true }), 350);
+  });
 
   socket.on('call:incoming', onCallIncoming);
   socket.on('call:accepted', onCallAccepted);
@@ -525,7 +757,8 @@ function connect(token) {
     if (activeId === chatId) { messages = []; renderMessages(); }
   });
 
-  socket.on('message:new', m => {
+  socket.on('message:new', async m => {
+    m = await hydrateSecretMessage(m);
     // Our own message coming back: the queued copy has served its purpose,
     // whether or not we ever saw the acknowledgement.
     if (m.senderId === me.id && m.clientId) {
@@ -543,9 +776,17 @@ function connect(token) {
       socket.emit('messages:read', { chatId: activeId });
     } else if (m.senderId !== me.id) {
       const c = chats.find(x => x.id === m.chatId);
-      if (!c?.muted) ping();
+      const mentioned = Array.isArray(m.mentions) && m.mentions.includes(me.id);
+      if (!m.silent && (!c?.muted || mentioned)) ping();
     }
-    if (m.senderId !== me.id && document.hidden) notifyTitle();
+    if (m.senderId !== me.id && document.hidden) {
+      const c = chats.find(x => x.id === m.chatId);
+      if (!c?.muted) {
+        if (m.chatId === activeId) ping();
+        showMessageNotification(m, c);
+      }
+      notifyTitle();
+    }
   });
 
   socket.on('message:updated', m => {
@@ -594,24 +835,79 @@ function connect(token) {
 
 // ── Notification helpers ───────────────────────────────────────────────
 let audioCtx = null;
-function ping() {
+let activeCallNotification = null;
+function ping(force = false) {
+  if (!force && !notificationPrefs.messageSounds) return;
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.connect(g); g.connect(audioCtx.destination);
-    o.frequency.value = 880; o.type = 'sine';
-    g.gain.setValueAtTime(0.0001, audioCtx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.06, audioCtx.currentTime + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.25);
-    o.start(); o.stop(audioCtx.currentTime + 0.26);
+    audioCtx.resume?.();
+    const tones = {
+      chime: [880, 1175],
+      soft: [520, 660],
+      bright: [990, 1320],
+    };
+    const notes = tones[notificationPrefs.messageTone] || tones.chime;
+    notes.forEach((frequency, index) => {
+      const start = audioCtx.currentTime + index * 0.13;
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.connect(g); g.connect(audioCtx.destination);
+      o.frequency.value = frequency; o.type = notificationPrefs.messageTone === 'soft' ? 'sine' : 'triangle';
+      g.gain.setValueAtTime(0.0001, start);
+      g.gain.exponentialRampToValueAtTime(0.045, start + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.2);
+      o.start(start); o.stop(start + 0.21);
+    });
   } catch (_) {}
 }
+
+function showMessageNotification(message, chat) {
+  if (message?.silent) return;
+  if (!notificationPrefs.desktop || !document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
+  const mentioned = Array.isArray(message.mentions) && message.mentions.includes(me?.id);
+  if (chat?.muted && !mentioned) return;
+  const privatePreview = chat?.advancedPrivacy || chat?.locked || chat?.type === 'secret' || !notificationPrefs.previews;
+  const sender = message.sender?.username || chat?.name || 'Vchat';
+  const title = privatePreview ? 'New Vchat message' : (mentioned ? `${sender} mentioned you` : (chat?.type === 'group' ? `${sender} · ${chat.name}` : sender));
+  const body = privatePreview ? 'Open Vchat to read it' : previewOf(message);
+  try {
+    const notice = new Notification(title, { body, icon: '/icons/icon-192.png', tag: `chat-${message.chatId}` });
+    notice.onclick = () => { window.focus(); openChat(message.chatId); notice.close(); };
+  } catch { /* browser or OS declined the notification */ }
+}
+
+function showCallNotification(from, media) {
+  if (!notificationPrefs.desktop || !document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    activeCallNotification?.close();
+    activeCallNotification = new Notification(`Incoming ${media === 'video' ? 'video' : 'voice'} call`, {
+      body: notificationPrefs.previews ? (from?.username || 'Vchat contact') : 'Open Vchat to answer',
+      icon: '/icons/icon-192.png', tag: 'vchat-incoming-call', requireInteraction: true,
+    });
+    activeCallNotification.onclick = () => { window.focus(); activeCallNotification?.close(); };
+  } catch { /* unsupported notification options */ }
+}
+function closeCallNotification() {
+  activeCallNotification?.close();
+  activeCallNotification = null;
+}
+
 function notifyTitle() {
   unseen++;
   document.title = `(${unseen}) VChat`;
 }
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) { unseen = 0; document.title = 'VChat'; }
+  if (document.hidden) {
+    pauseReelVideos();
+    if (!$('view-once-viewer').hidden) closeViewOnce();
+  }
+  else {
+    unseen = 0;
+    document.title = 'VChat';
+    if (document.body.classList.contains('reels-open') && reelAutoplayEnabled()) {
+      const current = $('reels-feed')?.querySelector(`[data-id="${visibleReelId() || ''}"] video`);
+      current?.play().catch(() => {});
+    }
+  }
 });
 
 // ── Me / profile ───────────────────────────────────────────────────────
@@ -620,55 +916,164 @@ function renderMe() {
   if (node) { node.title = 'Profile'; node.onclick = openProfile; }
 }
 
+let profileModalCleanup = null;
 function openProfile() {
-  const pv = setAvatar('profile-avatar', me, 140);
-  if (pv) pv.style.margin = '8px auto 20px';
+  profileModalCleanup?.();
+  setAvatar('profile-avatar', me, 140);
   let picked = me.avatar;
+  let photoFile = null;
+  let photoAction = 'keep';
+  let previewUrl = null;
+
+  const clearPreview = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = null;
+  };
+  const cleanup = () => {
+    clearPreview();
+    photoFile = null;
+    if ($('profile-photo-input')) $('profile-photo-input').value = '';
+    if (profileModalCleanup === cleanup) profileModalCleanup = null;
+  };
+  profileModalCleanup = cleanup;
+
+  const showPhotoPreview = url => {
+    const node = $('profile-avatar');
+    node.innerHTML = `<img class="avatar-photo" src="${esc(url)}" alt="Profile photo preview">`;
+    node.style.background = 'var(--panel-alt)';
+  };
+
   buildAvatarPicker($('profile-avatar-picker'), me.avatar, a => {
     picked = a;
+    clearPreview();
+    photoFile = null;
+    photoAction = me.photoUrl ? 'remove' : 'keep';
     const node = $('profile-avatar');
     node.textContent = a;
     node.style.background = 'var(--panel-alt)';
+    $('profile-photo-remove').hidden = true;
   });
+
   $('profile-name').value = me.username;
-  const handleBox = $('profile-handle');
-  if (handleBox) {
-    handleBox.value = me.handle || '';
-    handleBox.oninput = () => {
-      handleBox.value = handleBox.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20);
-    };
-  }
+  $('profile-handle').value = me.handle || '';
   $('profile-about').value = me.about || '';
-  const phoneRow = $('profile-phone');
-  if (phoneRow) phoneRow.textContent = me.phone || 'Not linked';
-  $('profile-save').onclick = () => {
-    socket.emit('profile:update', {
-      username: $('profile-name').value.trim(),
-      handle: handleBox ? handleBox.value.trim() : me.handle,
-      avatar: picked,
-      about: $('profile-about').value.trim(),
-    }, res => {
-      if (res?.error) return toast(res.error);
-      if (!res?.user) return toast('Could not update profile');
-      me = res.user;
+  $('profile-photo-input').value = '';
+  $('profile-photo-remove').hidden = !me.photoUrl;
+  $('profile-phone').textContent = me.phone || 'Not linked';
+
+  $('profile-photo-choose').onclick = () => $('profile-photo-input').click();
+  $('profile-photo-input').onchange = () => {
+    const file = $('profile-photo-input').files?.[0];
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/i.test(file.type) || file.size > 5 * 1024 * 1024) {
+      $('profile-photo-input').value = '';
+      return toast('Choose a JPEG, PNG, or WebP image up to 5 MB');
+    }
+    clearPreview();
+    previewUrl = URL.createObjectURL(file);
+    photoFile = file;
+    photoAction = 'upload';
+    showPhotoPreview(previewUrl);
+    $('profile-photo-remove').hidden = false;
+  };
+  $('profile-photo-remove').onclick = () => {
+    clearPreview();
+    photoFile = null;
+    photoAction = 'remove';
+    const node = $('profile-avatar');
+    node.textContent = picked || initials(me.username);
+    node.style.background = 'var(--panel-alt)';
+    $('profile-photo-remove').hidden = true;
+  };
+  $('profile-name-emoji').onclick = event => {
+    const input = $('profile-name');
+    const emojis = ['😊','❤️','✨','🔥','👑','🌟','🎵','🌺','🦋','🚀','⚽','🎮'];
+    showCtxMenu(event, emojis.map(emoji => ({ label: emoji, fn: () => {
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? start;
+      input.setRangeText(emoji, start, end, 'end');
+      input.focus();
+    } })));
+  };
+
+  $('profile-save').onclick = async () => {
+    const name = $('profile-name').value.trim();
+    const handle = normalizeHandleInput($('profile-handle').value);
+    if (name.length < 2) return toast('Your name must be at least 2 characters');
+    if (!/^[a-z][a-z0-9_]{2,19}$/.test(handle)) {
+      return toast('Username must be 3–20 characters, start with a letter, and use only letters, numbers or _');
+    }
+    const button = $('profile-save');
+    button.disabled = true;
+    const profileResult = await new Promise(resolve => {
+      const timer = setTimeout(() => resolve({ error: 'Profile update timed out. Check your connection.' }), 10000);
+      socket.emit('profile:update', {
+        username: name,
+        handle,
+        avatar: picked,
+        about: $('profile-about').value.trim(),
+      }, result => {
+        clearTimeout(timer);
+        resolve(result);
+      });
+    });
+    if (profileResult?.error || !profileResult?.user) {
+      button.disabled = false;
+      return toast(profileResult?.error || 'Could not update profile');
+    }
+
+    const applyLocalProfile = user => {
+      // Profile responses are merged defensively so unrelated session-scoped
+      // state (notably a temporary chat-lock unlock) cannot be discarded.
+      me = { ...me, ...(user || {}) };
       localStorage.setItem('vchat.name', me.username);
-      localStorage.setItem('vchat.handle', me.handle || '');
       localStorage.setItem('vchat.avatar', me.avatar || '');
       renderMe();
-      closeModal('modal-profile');
-      toast('Profile updated');
-    });
+    };
+    // Text/avatar details have committed even if the independent media request
+    // below fails. Reflect that partial success instead of leaving stale UI.
+    applyLocalProfile(profileResult.user);
+
+    try {
+      if (photoAction === 'upload' && photoFile) {
+        const form = new FormData();
+        form.append('photo', photoFile, photoFile.name);
+        const response = await fetch('/api/account/profile-photo', {
+          method: 'PUT', credentials: 'same-origin', body: form,
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'the photo could not be uploaded');
+        applyLocalProfile(data.user);
+      } else if (photoAction === 'remove') {
+        const result = await api('/api/account/profile-photo', {}, { method: 'DELETE' });
+        if (!result.ok) throw new Error(result.data.error || 'the photo could not be removed');
+        applyLocalProfile(result.data.user);
+      }
+    } catch (error) {
+      button.disabled = false;
+      return toast(`Profile details saved, but ${error.message}`);
+    }
+
+    button.disabled = false;
+    closeModal('modal-profile');
+    toast('Profile updated');
   };
   openModal('modal-profile');
 }
 
 // ── Chat list ──────────────────────────────────────────────────────────
 function visibleChats() {
-  let list = chats.slice();
-  if (filter === 'unread') list = list.filter(c => c.unread > 0);
-  else if (filter === 'groups') list = list.filter(c => c.type === 'group');
+  // Even during an unlocked session, locked chats live only behind the
+  // dedicated filter so names and previews never bleed into normal lists.
+  let list = filter === 'locked' ? chats.filter(c => c.locked) : chats.filter(c => !c.locked);
+  if (filter === 'unread') list = list.filter(c => c.unread > 0 && !c.archived);
+  else if (filter === 'favorites') list = list.filter(c => c.favorite && !c.archived);
+  else if (filter === 'groups') list = list.filter(c => c.type === 'group' && !c.archived);
+  else if (filter === 'personal') list = list.filter(c => (c.type === 'dm' || c.type === 'saved' || c.type === 'secret') && !c.archived);
+  else if (filter === 'calls') list = list.filter(c => c.lastMessage?.type === 'call' && !c.archived);
+  else if (filter === 'secret') list = list.filter(c => c.type === 'secret' && !c.archived);
   else if (filter === 'archived') list = list.filter(c => c.archived);
-  else list = list.filter(c => !c.archived);
+  else if (filter !== 'locked') list = list.filter(c => !c.archived);
 
   if (searchQuery) {
     const q = searchQuery.toLowerCase();
@@ -699,7 +1104,7 @@ function renderChatList() {
   if (!list.length && !box.children.length) {
     box.appendChild(el('div', 'empty-list',
       searchQuery ? 'No chats found.<br>Try a different search.'
-                  : 'No conversations yet.<br>Tap the new-chat icon to start one.'));
+                  : (filter === 'locked' ? 'No locked chats on this account.' : 'No conversations yet.<br>Tap the new-chat icon to start one.')));
     return;
   }
 
@@ -708,11 +1113,12 @@ function renderChatList() {
 
 function contactRow(u) {
   const row = el('div', 'chat-row');
+  const handleBit = u.handle ? `<span class="user-handle">@${esc(u.handle)}</span> · ` : '';
   row.innerHTML = `
     ${avatarHTML(u, 49, true)}
     <div class="body">
       <div class="row-top"><div class="row-name">${esc(u.username)}</div></div>
-      <div class="row-bottom"><div class="row-preview">${u.handle ? '@' + esc(u.handle) : esc(u.about || 'Hey there! I am using VChat.')}</div></div>
+      <div class="row-bottom"><div class="row-preview">${handleBit}${esc(u.about || 'Hey there! I am using VChat.')}</div></div>
     </div>`;
   row.onclick = () => {
     socket.emit('chat:startDM', { targetUserId: u.id }, res => {
@@ -723,10 +1129,12 @@ function contactRow(u) {
 }
 
 function chatRow(c) {
-  const row = el('div', 'chat-row' + (c.id === activeId ? ' sel' : '') + (c.unread ? ' unread' : ''));
+  const row = el('div', 'chat-row' + (c.id === activeId ? ' sel' : '') + (c.unread ? ' unread' : '') + (c.locked ? ' locked-chat-row' : '') + (c.type === 'saved' ? ' saved-row' : '') + (c.type === 'secret' ? ' secret-row' : '') + (c.transport === 'sms' ? ' sms-row' : ''));
   const last = c.lastMessage;
   const isGroup = c.type === 'group';
-  const entity = c.type === 'dm'
+  const entity = c.type === 'saved'
+    ? { username: 'Saved Messages', avatar: '📌', id: c.id }
+    : c.type === 'dm'
     ? (users.find(u => u.id === c.peer?.id) || c.peer || { username: c.name, id: c.id })
     : { name: c.name, type: 'group', id: c.id };
 
@@ -752,6 +1160,8 @@ function chatRow(c) {
       <div class="row-bottom">
         <div class="row-preview">${typingActive ? '' : prefix} ${previewText}</div>
         <div class="row-badges">
+          ${c.transport === 'sms' ? '<span class="sms-pill">SMS</span>' : (c.type === 'dm' ? '<span class="cloud-pill">Cloud</span>' : '')}
+          ${c.favorite ? `<span class="row-icon favorite">${icon('star', 'icon-sm')}</span>` : ''}
           ${c.pinned ? `<span class="row-icon">${icon('pin', 'icon-sm')}</span>` : ''}
           ${c.muted ? `<span class="row-icon">${icon('mute', 'icon-sm')}</span>` : ''}
           ${c.unread ? `<span class="unread-badge">${c.unread}</span>` : ''}
@@ -771,6 +1181,11 @@ function chatContextMenu(e, c) {
     { label: c.archived ? 'Unarchive chat' : 'Archive chat', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'archived', value: !c.archived }) },
     { label: c.muted ? 'Unmute notifications' : 'Mute notifications', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'muted', value: !c.muted }) },
     { label: c.pinned ? 'Unpin chat' : 'Pin chat', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'pinned', value: !c.pinned }) },
+    { label: c.favorite ? 'Remove from Favorites' : 'Add to Favorites', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'favorite', value: !c.favorite }) },
+    { label: c.unread ? 'Mark as read' : 'Mark as unread', fn: () => c.unread
+      ? socket.emit('messages:read', { chatId: c.id })
+      : socket.emit('chat:flag', { chatId: c.id, flag: 'manualUnread', value: true }) },
+    { label: c.locked ? 'Remove chat lock' : 'Lock and hide chat', fn: () => toggleChatLock(c) },
     { sep: true },
     { label: 'Clear messages', fn: () => { if (confirm(`Clear all messages in "${c.name}"?`)) socket.emit('chat:clear', { chatId: c.id }); } },
   ];
@@ -815,6 +1230,22 @@ window.addEventListener('resize', hideCtx);
 
 // ── Open / close chat ──────────────────────────────────────────────────
 function activeChat() { return chats.find(c => c.id === activeId) || null; }
+function canSendTo(chat) {
+  if (!chat || chat.type !== 'group' || chat.permissions?.sendMessages !== 'admins') return true;
+  return (chat.admins || []).includes(me.id);
+}
+function updateComposerPermissions(chat) {
+  const allowed = canSendTo(chat);
+  $('composer').classList.toggle('read-only', !allowed);
+  $('msg-input').disabled = !allowed;
+  $('msg-input').placeholder = allowed ? 'Type a message' : 'Only group admins can send messages';
+  for (const id of ['btn-emoji', 'btn-attach', 'btn-send', 'btn-mic']) $(id).disabled = !allowed;
+  if (!allowed) {
+    $('attach-menu').classList.remove('show');
+    $('emoji-panel').classList.remove('show');
+    clearPendingFile();
+  }
+}
 
 function openChat(chatId) {
   activeId = chatId;
@@ -830,10 +1261,11 @@ function openChat(chatId) {
   messages = pendingFor(chatId);
   renderMessages();
 
-  socket.emit('chat:open', { chatId }, res => {
+  socket.emit('chat:open', { chatId }, async res => {
     if (res?.error) return toast(res.error);
     if (activeId !== chatId) return;
     messages = [...(res.messages || []), ...pendingFor(chatId)];
+    await hydrateSecretThread();
     renderMessages();
     scrollBottom(true);
     $('msg-input').focus();
@@ -841,6 +1273,9 @@ function openChat(chatId) {
 }
 
 function closeChat() {
+  // Relocking or leaving a thread must also destroy any already-fetched
+  // View Once object URL so protected media cannot remain over the hidden chat.
+  if (!$('view-once-viewer').hidden) closeViewOnce();
   activeId = null;
   messages = [];
   $('chat-panel').style.display = 'none';
@@ -858,23 +1293,29 @@ function setPeerStatus(text, typing) {
 function updateHeaderForActive() {
   const c = activeChat();
   if (!c) return;
-  const entity = c.type === 'dm' ? (c.peer || { username: c.name }) : { name: c.name, type: 'group' };
-  setAvatar('peer-avatar', entity, 40, c.type === 'dm');
-  $('peer-name').textContent = c.name;
+  updateComposerPermissions(c);
+  const entity = (c.type === 'dm' || c.type === 'secret') ? (c.peer || { username: c.name }) : { name: c.name, type: 'group' };
+  setAvatar('peer-avatar', entity, 40, c.type === 'dm' || c.type === 'secret');
+  $('peer-name').textContent = c.type === 'secret' ? `🔒 ${c.name}` : c.name;
 
   const typing = typingUsers.get(c.id);
   if (typing && typing.size) {
     const names = [...typing.values()].map(t => t.name);
     setPeerStatus(c.type === 'group' ? `${names.join(', ')} ${names.length > 1 ? 'are' : 'is'} typing…` : 'typing…', true);
+  } else if (c.type === 'secret') {
+    const ttl = c.disappearingSeconds || 0;
+    const ttlLabel = ttl === 0 ? 'off' : ttl < 60 ? `${ttl}s` : ttl < 3600 ? `${Math.round(ttl / 60)}m` : `${Math.round(ttl / 3600)}h`;
+    setPeerStatus(c.secret?.state === 'ready' ? `Secret chat · self-destruct ${ttlLabel}` : 'Waiting to be accepted');
   } else if (c.type === 'dm') {
     const peer = users.find(u => u.id === c.peer?.id) || c.peer;
-    const seen = lastSeenText(peer);
-    setPeerStatus(peer?.handle ? `@${peer.handle}${seen ? ' · ' + seen : ''}` : seen);
+    setPeerStatus(lastSeenText(peer));
   } else {
     const names = c.members.map(id => (id === me.id ? 'You' : users.find(u => u.id === id)?.username)).filter(Boolean);
     setPeerStatus(names.join(', '));
   }
   updateCallButtons();
+  updateSecretBanner();
+  updateTransportSwitch();
   renderChatList();
 }
 
@@ -900,17 +1341,28 @@ function renderMessages() {
   const box = $('messages');
   const prevTop = box.scrollTop, prevH = box.scrollHeight;
   box.innerHTML = '';
+  updatePinBar();
+  updateSecretBanner();
 
   if (!messages.length) {
     const c = activeChat();
-    box.appendChild(el('div', 'system-msg', `<span>${c?.type === 'group'
+    const empty = c?.type === 'saved'
+      ? 'Saved Messages — send notes, links, and files to yourself.'
+      : c?.type === 'secret'
+      ? 'Secret chat — messages are encrypted on this device. The server only keeps ciphertext.'
+      : c?.type === 'group'
       ? 'This is the beginning of the group. Say something!'
-      : 'No messages yet — send the first one 👋'}</span>`));
+      : 'No messages yet — send the first one 👋';
+    box.appendChild(el('div', 'system-msg', `<span>${empty}</span>`));
     return;
   }
 
+  const unreadStart = messages.find(m => m.senderId !== me?.id && !(m.readBy || []).includes(me?.id));
   let lastDay = '', prevSender = null, prevTs = 0;
   messages.forEach(m => {
+    if (unreadStart && m.id === unreadStart.id) {
+      box.appendChild(el('div', 'unread-divider', '<span>Unread messages</span>'));
+    }
     const day = dayLabel(m.timestamp);
     if (day !== lastDay) {
       box.appendChild(el('div', 'day-divider', `<span>${day}</span>`));
@@ -934,7 +1386,7 @@ function renderMessages() {
 function messageRow(m, grouped) {
   const out = m.senderId === me.id;
   const c = activeChat();
-  const row = el('div', `msg-row ${out ? 'out' : 'in'}${grouped ? ' grouped' : ''}${m.pending ? ' pending' : ''}${m.stuck ? ' stuck' : ''}`);
+  const row = el('div', `msg-row ${out ? 'out' : 'in'}${grouped ? ' grouped' : ''}${m.pending ? ' pending' : ''}${m.stuck ? ' stuck' : ''}${m.encryption ? ' secret-msg' : ''}${m.decryptError ? ' decrypt-error' : ''}${m.transport === 'sms' ? ' sms' : ' cloud'}`);
   row.dataset.id = m.id;
 
   let inner = '';
@@ -954,11 +1406,24 @@ function messageRow(m, grouped) {
           <div class="rq-text">${esc(m.replyTo.text || m.replyTo.preview || 'Attachment')}</div>
         </div></div>`;
     }
-    if (m.file) {
-      const t = m.file.mimeType || '';
+    if (m.viewOnce) {
+      const mediaKind = /video/i.test(m.file?.mimeType || m.type || '') ? 'video' : 'photo';
+      const openedCount = Number(m.viewOnceOpenedCount) || 0;
+      const state = out
+        ? (openedCount ? `${openedCount} recipient${openedCount === 1 ? '' : 's'} opened` : (m.pending ? 'Sending…' : 'Sent'))
+        : (m.viewOnceOpened ? 'Opened' : `Tap to view ${mediaKind}`);
+      const canOpen = !out && !m.pending && !m.viewOnceOpened;
+      inner += `<button class="view-once-card" type="button"${canOpen ? ` data-view-once="${esc(m.id)}"` : ' disabled'}>
+        <span class="once-mark">1</span><span><strong>View once ${mediaKind}</strong><small>${esc(state)}</small></span>
+      </button>`;
+    } else if (m.file) {
+      const t = m.file.mimeType || m.file.type || '';
+      const protectedControls = c?.advancedPrivacy
+        ? ' controlslist="nodownload noremoteplayback" disableremoteplayback'
+        : '';
       if (t.startsWith('image/')) {
         // In lite mode a photo costs nothing until it is actually wanted.
-        inner += (lite && !shownPhotos.has(m.file.url))
+        inner += ((lite || notificationPrefs.mediaVisibility === 'tap') && !shownPhotos.has(m.file.url))
           ? `<button class="photo-hold" data-load="${esc(m.file.url)}">
                <span class="ph-icon">${icon('photo', 'icon-sm')}</span>
                <span class="ph-label">Tap to load photo</span>
@@ -967,24 +1432,26 @@ function messageRow(m, grouped) {
           : `<img class="photo" src="${esc(m.file.url)}" alt="${esc(m.file.name)}" data-photo="${esc(m.file.url)}" data-name="${esc(m.file.name)}" />`;
       } else if (t.startsWith('video/')) {
         // preload="none" in lite mode: metadata alone can be hundreds of KB.
-        inner += `<video class="clip" src="${esc(m.file.url)}" controls preload="${lite ? 'none' : 'metadata'}"></video>`;
+        inner += `<video class="clip" src="${esc(m.file.url)}" controls${protectedControls}${c?.advancedPrivacy ? ' disablepictureinpicture' : ''} preload="${lite ? 'none' : 'metadata'}"></video>`;
       } else if (m.file.voice) {
         inner += voiceHTML(m.file);
       } else if (t.startsWith('audio/')) {
-        inner += `<audio src="${esc(m.file.url)}" controls preload="metadata"></audio>`;
+        inner += `<audio src="${esc(m.file.url)}" controls${protectedControls} preload="metadata"></audio>`;
       } else {
-        inner += `<a class="file-card" href="${esc(m.file.url)}" target="_blank" rel="noopener" download>
+        inner += `<a class="file-card" href="${esc(m.file.url)}" target="_blank" rel="noopener"${c?.advancedPrivacy ? '' : ' download'}>
           <span class="fc-icon">${icon('doc', 'icon-sm')}</span>
-          <span><span class="fc-name">${esc(m.file.name)}</span><br><span class="fc-meta">${fileSize(m.file.size)} · ${esc((m.file.name.split('.').pop() || 'file'))}</span></span>
+          <span><span class="fc-name">${esc(m.file.name)}</span><br><span class="fc-meta">${fileSize(m.file.size)} · ${esc((m.file.name.split('.').pop() || 'file'))}${c?.advancedPrivacy ? ' · protected chat' : ''}</span></span>
         </a>`;
       }
     }
-    if (m.text) inner += `<div class="txt">${linkify(m.text)}</div>`;
+    if (m.forwarded) inner += '<div class="forwarded">↪ Forwarded</div>';
+    if (m.pinnedUntil && m.pinnedUntil > Date.now()) inner += '<div class="pinned-label">📌 Pinned</div>';
+    if (m.text) inner += `<div class="txt">${formatMessage(m.text)}</div>`;
   }
 
   const emojiOnly = !m.file && !m.deleted && isEmojiOnly(m.text);
   if (m.stuck) inner += `<div class="stuck-note">${icon('clock', 'icon-sm')} Waiting for a connection</div>`;
-  inner += `<span class="meta-line">${m.editedAt ? 'edited ' : ''}${timeOf(m.timestamp)} ${out ? tickHTML(m.status || 'sent') : ''}</span>`;
+  inner += `<span class="meta-line">${m.starred ? '★ ' : ''}${m.expiresAt ? '◷ ' : ''}${m.editedAt ? 'edited ' : ''}${timeOf(m.timestamp)} ${out ? tickHTML(m.status || 'sent') : ''}</span>`;
 
   const reactions = Object.entries(m.reactions || {});
   const reactHTML = reactions.length
@@ -1008,6 +1475,7 @@ function messageRow(m, grouped) {
   row.oncontextmenu = e => { e.preventDefault(); messageMenu(e, m); };
 
   bubble.querySelectorAll('[data-voice]').forEach(wireVoice);
+  bubble.querySelector('[data-view-once]')?.addEventListener('click', () => openViewOnce(m));
   bubble.querySelector('[data-photo]')?.addEventListener('click', ev => {
     openLightbox(ev.target.dataset.photo, ev.target.dataset.name);
   });
@@ -1049,14 +1517,89 @@ function messageMenu(e, m) {
   }
 
   const out = m.senderId === me.id;
+  const protectedChat = !!activeChat()?.advancedPrivacy;
   const items = [{ label: 'Reply', fn: () => startReply(m) }];
+  if (!m.deleted) items.push({ label: m.starred ? 'Unstar' : 'Star', fn: () => socket.emit('message:star', { chatId: activeId, messageId: m.id }) });
+  if (!m.deleted && !protectedChat && !m.viewOnce) items.push({ label: 'Forward', fn: () => openForward(m) });
+  if (!m.deleted) items.push({
+    label: m.pinnedUntil && m.pinnedUntil > Date.now() ? 'Unpin message' : 'Pin for 24 hours',
+    fn: () => socket.emit('message:pin', {
+      chatId: activeId, messageId: m.id,
+      durationSeconds: m.pinnedUntil && m.pinnedUntil > Date.now() ? 0 : 86400,
+    }, result => result?.error && toast(result.error)),
+  });
   if (m.text && !m.deleted) items.push({ label: 'Copy text', fn: () => { navigator.clipboard?.writeText(m.text); toast('Copied'); } });
   if (out && m.text && !m.deleted) items.push({ label: 'Edit message', fn: () => editMessage(m) });
-  if (m.file && !m.deleted) items.push({ label: 'Download', fn: () => { const a = document.createElement('a'); a.href = m.file.url; a.download = m.file.name; a.click(); } });
+  if (m.file && !m.deleted && !protectedChat && !m.viewOnce) items.push({ label: 'Download', fn: () => downloadAttachment(m.file) });
   items.push({ sep: true });
   items.push({ label: 'Delete for me', danger: true, fn: () => socket.emit('message:delete', { chatId: activeId, messageId: m.id, forEveryone: false }) });
   if (out && !m.deleted) items.push({ label: 'Delete for everyone', danger: true, fn: () => socket.emit('message:delete', { chatId: activeId, messageId: m.id, forEveryone: true }) });
   showCtxMenu(e, items, ['👍','❤️','😂','😮','😢','🙏'].map(emoji => ({ emoji, fn: () => socket.emit('message:react', { chatId: activeId, messageId: m.id, emoji }) })));
+}
+
+async function downloadAttachment(file) {
+  try {
+    const response = await fetch(file.url, { credentials: 'same-origin' });
+    if (!response.ok) throw new Error(response.status === 404 ? 'Attachment is unavailable' : 'Download failed');
+    const href = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = file.name || 'attachment';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 1000);
+  } catch (error) {
+    toast(error.message || 'Download failed');
+  }
+}
+
+function closeViewOnce() {
+  const viewer = $('view-once-viewer');
+  viewer.hidden = true;
+  viewer.setAttribute('aria-hidden', 'true');
+  viewer.querySelectorAll('video,audio').forEach(media => media.pause());
+  $('view-once-stage').innerHTML = '';
+  if (viewOnceObjectUrl) URL.revokeObjectURL(viewOnceObjectUrl);
+  viewOnceObjectUrl = null;
+}
+
+async function openViewOnce(message) {
+  if (!message || message.senderId === me.id || message.viewOnceOpened || !activeId) return;
+  const chatId = activeId;
+  const viewer = $('view-once-viewer');
+  viewer.hidden = false;
+  viewer.setAttribute('aria-hidden', 'false');
+  $('view-once-stage').innerHTML = '<span class="spinner"></span>';
+  try {
+    const opened = await api(`/api/messenger/messages/${encodeURIComponent(chatId)}/${encodeURIComponent(message.id)}/view-once`, {});
+    if (!opened.ok) throw new Error(opened.data.error || 'This View Once media is unavailable');
+    const response = await fetch(opened.data.mediaUrl, { credentials: 'same-origin', cache: 'no-store' });
+    if (!response.ok) throw new Error('This View Once media could not be loaded');
+    const blob = await response.blob();
+    if (!viewer.hidden && activeId === chatId) {
+      viewOnceObjectUrl = URL.createObjectURL(blob);
+      const isVideo = /^video\//i.test(opened.data.mimeType || blob.type);
+      const media = document.createElement(isVideo ? 'video' : 'img');
+      media.src = viewOnceObjectUrl;
+      media.alt = isVideo ? '' : (opened.data.name || 'View Once photo');
+      media.draggable = false;
+      media.oncontextmenu = event => event.preventDefault();
+      if (isVideo) {
+        media.controls = true;
+        media.autoplay = true;
+        media.playsInline = true;
+        media.disablePictureInPicture = true;
+        media.setAttribute('controlslist', 'nodownload noremoteplayback noplaybackrate');
+        media.setAttribute('disableremoteplayback', '');
+        media.play().catch(() => {});
+      }
+      $('view-once-stage').replaceChildren(media);
+    }
+  } catch (error) {
+    closeViewOnce();
+    toast(error.message || 'Could not open View Once media');
+  }
 }
 
 function editMessage(m) {
@@ -1064,6 +1607,37 @@ function editMessage(m) {
   if (text != null && text.trim() && text.trim() !== m.text) {
     socket.emit('message:edit', { chatId: activeId, messageId: m.id, text: text.trim() });
   }
+}
+
+function openForward(message) {
+  const picked = new Set();
+  const list = $('forward-list');
+  list.innerHTML = '';
+  if (activeChat()?.type === 'secret' || message.encryption) return toast('Secret messages cannot be forwarded');
+  chats.filter(chat => !chat.archived && chat.type !== 'secret').forEach(chat => {
+    const row = el('label', 'pick-row', `${avatarHTML(chat.type === 'dm' ? (chat.peer || { username: chat.name }) : { name: chat.name, type: 'group', id: chat.id }, 40)}<div class="pk-name">${esc(chat.name)}</div><input type="checkbox" />`);
+    row.querySelector('input').onchange = event => {
+      if (event.target.checked && picked.size >= 5) {
+        event.target.checked = false;
+        return toast('You can forward to up to 5 chats at once');
+      }
+      if (event.target.checked) picked.add(chat.id); else picked.delete(chat.id);
+    };
+    list.appendChild(row);
+  });
+  $('forward-send').onclick = () => {
+    if (!picked.size) return toast('Choose at least one chat');
+    socket.emit('message:forward', {
+      chatId: message.chatId,
+      messageId: message.id,
+      targetChatIds: [...picked],
+    }, result => {
+      if (result?.error) return toast(result.error);
+      closeModal('modal-forward');
+      toast(`Forwarded to ${result?.count || 0} chat${result?.count === 1 ? '' : 's'}`);
+    });
+  };
+  openModal('modal-forward');
 }
 
 // ── Reply bar ──────────────────────────────────────────────────────────
@@ -1094,10 +1668,17 @@ function updateSendBtn() {
   $('composer').classList.toggle('has-text', has);
 }
 
-function sendMessage() {
+async function sendMessage(opts = {}) {
   const input = $('msg-input');
   const text = input.value.trim();
   if ((!text && !pendingFile) || !activeId) return;
+  const chat = activeChat();
+  if (!canSendTo(chat)) return toast('Only group admins can send messages');
+  hideMentionSuggest();
+  if (chat?.type === 'secret') {
+    if (chat.secret?.state !== 'ready') return toast('Wait for this secret chat to be accepted');
+    if (pendingFile) return toast('Secret chats are text-only so files never sit on the server');
+  }
 
   const payload = {
     chatId: activeId,
@@ -1105,7 +1686,18 @@ function sendMessage() {
     file: pendingFile,
     type: pendingFile ? (pendingFile.mimeType?.split('/')[0] || 'file') : 'text',
     replyTo,
+    viewOnce: !!pendingFile && $('view-once-toggle').checked,
+    silent: opts.silent === true,
+    transport: chat?.type === 'dm' && chat.transport === 'sms' ? 'sms' : 'cloud',
   };
+  if (chat?.type === 'secret') {
+    try {
+      payload.encryption = await encryptSecretMessage(chat, text);
+      payload.plaintext = text;
+    } catch (error) {
+      return toast(error.message || 'Could not encrypt this secret message');
+    }
+  }
   // Everything goes through the outbox, connection or not. A message is only
   // dropped from it once the server has confirmed it, so a send that dies
   // halfway is retried instead of lost.
@@ -1126,6 +1718,7 @@ function onInput() {
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 100) + 'px';
   updateSendBtn();
+  updateMentionSuggest();
   if (!activeId) return;
   socket.emit('typing:start', { chatId: activeId });
   clearTimeout(typingTimers[activeId]);
@@ -1140,31 +1733,108 @@ function onInput() {
  * socket comes back. Ten seconds of signal is enough to empty a day of
  * writing.
  */
-const OUTBOX_KEY = 'vchat.outbox';
-// A send is given this long to be acknowledged before we assume the phone lost
-// signal mid-flight. Short enough to notice a dead bundle, long enough that a
-// slow 2G round trip is not mistaken for failure.
+const OUTBOX_DB_NAME = 'vchat-outbox';
+const OUTBOX_DB_VERSION = 1;
 const SEND_TIMEOUT_MS = 12000;
-// Waits between retries. A phone that has run out of data gets a few quick
-// tries, then we back off instead of burning battery on a dead radio.
 const RETRY_BACKOFF_MS = [3000, 8000, 20000, 60000];
 let outbox = [];
+let outboxOwnerId = null;
 let flushing = false;
 let retryTimer = null;
-let inflight = null;     // resolver of the send we are currently waiting on
+let inflight = null;
 let flushAgain = false;
 
-function loadOutbox() {
-  try { outbox = JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); }
-  catch { outbox = []; }
-  if (!Array.isArray(outbox)) outbox = [];
-  // Nothing is mid-flight after a reload, however it ended.
-  for (const i of outbox) i.sending = false;
+function openOutboxDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(OUTBOX_DB_NAME, OUTBOX_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains('queues')) db.createObjectStore('queues');
+      if (!db.objectStoreNames.contains('keys')) db.createObjectStore('keys');
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
 }
 
-function saveOutbox() {
-  try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox)); }
-  catch { /* storage full or blocked — the queue stays in memory */ }
+async function outboxKey(ownerId) {
+  const db = await openOutboxDb();
+  const existing = await new Promise((resolve, reject) => {
+    const tx = db.transaction('keys', 'readonly');
+    const req = tx.objectStore('keys').get(ownerId);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+  if (existing) return existing;
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction('keys', 'readwrite');
+    const req = tx.objectStore('keys').put(key, ownerId);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+  return key;
+}
+
+async function loadOutbox(ownerId) {
+  outboxOwnerId = ownerId || null;
+  outbox = [];
+  if (!ownerId || !window.indexedDB || !window.crypto?.subtle) return;
+  try {
+    const db = await openOutboxDb();
+    const record = await new Promise((resolve, reject) => {
+      const tx = db.transaction('queues', 'readonly');
+      const req = tx.objectStore('queues').get(ownerId);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+    if (!record) return;
+    const key = await outboxKey(ownerId);
+    const plain = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: record.iv, additionalData: new TextEncoder().encode(ownerId) },
+      key,
+      record.ciphertext,
+    );
+    outbox = JSON.parse(new TextDecoder().decode(plain));
+    if (!Array.isArray(outbox)) outbox = [];
+    for (const item of outbox) item.sending = false;
+  } catch { outbox = []; }
+}
+
+async function saveOutbox() {
+  if (!outboxOwnerId || !window.indexedDB || !window.crypto?.subtle) return;
+  try {
+    const key = await outboxKey(outboxOwnerId);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(outboxOwnerId) },
+      key,
+      new TextEncoder().encode(JSON.stringify(outbox)),
+    );
+    const db = await openOutboxDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('queues', 'readwrite');
+      const req = tx.objectStore('queues').put({ iv, ciphertext }, outboxOwnerId);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } catch { /* storage blocked — the queue stays in memory */ }
+}
+
+async function clearPrivateOutbox(ownerId) {
+  outbox = [];
+  outboxOwnerId = null;
+  if (!ownerId || !window.indexedDB) return;
+  try {
+    const db = await openOutboxDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(['queues', 'keys'], 'readwrite');
+      tx.objectStore('queues').delete(ownerId);
+      tx.objectStore('keys').delete(ownerId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch { /* ignore */ }
 }
 
 function online() { return !!socket && socket.connected; }
@@ -1198,9 +1868,11 @@ function outboxToMessage(item) {
     chatId: item.chatId,
     senderId: me.id,
     sender: { id: me.id, username: me.username, avatar: me.avatar, color: me.color },
-    text: item.text || '',
+    text: item.plaintext || item.text || '',
     file: item.file || null,
     type: item.type || 'text',
+    encryption: item.encryption || null,
+    viewOnce: item.viewOnce === true,
     replyTo: item.replyTo || null,
     timestamp: item.queuedAt,
     reactions: {},
@@ -1251,10 +1923,14 @@ function sendQueued(item) {
     try {
       socket.emit('message:send', {
         chatId: item.chatId,
-        text: item.text,
+        text: item.encryption ? '' : item.text,
         file: item.file,
         type: item.type,
         replyTo: item.replyTo,
+        viewOnce: item.viewOnce === true,
+        silent: item.silent === true,
+        transport: item.transport || undefined,
+        encryption: item.encryption || undefined,
         tempId: item.tempId,
         clientId: item.clientId,
       }, res => {
@@ -1403,7 +2079,9 @@ function setLite(on) {
   document.body.classList.toggle('lite', lite);
   updateCallButtons();
   if (activeId) renderMessages();
-  toast(lite ? 'Lite mode on — photos load on tap' : 'Lite mode off');
+  if (document.body.classList.contains('reels-open')) renderReels(visibleReelId());
+  toast(lite ? 'Lite mode on — media loads only when requested' : 'Lite mode off');
+  pushDeviceSettings();
 }
 
 function openLiteMode() {
@@ -1495,6 +2173,7 @@ async function uploadFile(file) {
 
   const fd = new FormData();
   fd.append('file', file);
+  fd.append('chatId', activeId || '');
   const saved = original - file.size;
   addSaved(saved);
   toast(saved > 50 * 1024 ? `Uploading… (saved ${fileSize(saved)})` : 'Uploading…');
@@ -1509,6 +2188,9 @@ async function uploadFile(file) {
       ? `<img src="${data.url}" alt="" />`
       : (data.mimeType?.startsWith('video/') ? '🎥' : data.mimeType?.startsWith('audio/') ? '🎵' : '📄');
     $('file-bar').classList.add('show');
+    const viewOnceEligible = /^(image|video)\//i.test(data.mimeType || '');
+    $('view-once-choice').hidden = !viewOnceEligible;
+    $('view-once-toggle').checked = false;
     updateSendBtn();
     $('msg-input').focus();
   } catch (err) {
@@ -1650,6 +2332,7 @@ async function finishRecording() {
   // Voice notes send immediately — no preview step, like WhatsApp.
   const fd = new FormData();
   fd.append('file', file);
+  fd.append('chatId', activeId || '');
   try {
     const res = await fetch('/api/messenger/upload', { method: 'POST', body: fd });
     const data = await res.json();
@@ -1728,28 +2411,82 @@ function clearPendingFile() {
   pendingFile = null;
   $('file-bar').classList.remove('show');
   $('file-input').value = '';
+  $('view-once-toggle').checked = false;
+  $('view-once-choice').hidden = true;
   updateSendBtn();
 }
 
 // ── Emoji panel ────────────────────────────────────────────────────────
 function buildEmojiPanel() {
-  const p = $('emoji-panel');
-  p.innerHTML = '';
-  for (const [group, list] of Object.entries(EMOJI_GROUPS)) {
-    p.appendChild(el('div', 'grp-title', group));
-    const grid = el('div', 'grid');
-    list.forEach(e => {
-      const b = el('button', '', e);
-      b.onclick = () => {
-        const input = $('msg-input');
-        input.value += e;
-        input.focus();
-        updateSendBtn();
-      };
-      grid.appendChild(b);
-    });
-    p.appendChild(grid);
-  }
+  const panel = $('emoji-panel');
+  panel.innerHTML = '';
+  let selectedGroup = Object.keys(EMOJI_GROUPS)[0];
+  const tools = el('div', 'emoji-tools');
+  const search = el('input', 'emoji-search');
+  search.type = 'search';
+  search.placeholder = 'Search emoji';
+  search.setAttribute('aria-label', 'Search emoji');
+  tools.appendChild(search);
+  const categories = el('div', 'emoji-categories');
+  const results = el('div', 'emoji-results');
+
+  const insertEmoji = emoji => {
+    const input = $('msg-input');
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    input.setRangeText(emoji, start, end, 'end');
+    input.focus();
+    updateSendBtn();
+  };
+  const drawResults = () => {
+    const query = search.value.trim().toLowerCase();
+    results.innerHTML = '';
+    let groups;
+    if (!query) groups = [[selectedGroup, EMOJI_GROUPS[selectedGroup]]];
+    else {
+      const keywordMatches = Object.entries(EMOJI_SEARCH_TERMS)
+        .filter(([term]) => term.includes(query) || query.includes(term))
+        .flatMap(([, emojis]) => emojis);
+      groups = Object.entries(EMOJI_GROUPS).map(([name, emojis]) => {
+        const list = name.toLowerCase().includes(query)
+          ? emojis
+          : emojis.filter(emoji => emoji.includes(query) || keywordMatches.includes(emoji));
+        return [name, [...new Set(list)]];
+      }).filter(([, emojis]) => emojis.length);
+    }
+    if (!groups.length) {
+      results.appendChild(el('div', 'empty-list', 'No emoji found. Try words like love, food, travel, music, or Ghana.'));
+      return;
+    }
+    for (const [name, emojis] of groups) {
+      results.appendChild(el('div', 'grp-title', esc(name)));
+      const grid = el('div', 'grid');
+      emojis.forEach(emoji => {
+        const button = el('button', '', emoji);
+        button.type = 'button';
+        button.title = name;
+        button.onclick = () => insertEmoji(emoji);
+        grid.appendChild(button);
+      });
+      results.appendChild(grid);
+    }
+  };
+  Object.keys(EMOJI_GROUPS).forEach((name, index) => {
+    const button = el('button', index === 0 ? 'selected' : '', EMOJI_CATEGORY_ICONS[index] || '•');
+    button.type = 'button';
+    button.title = name;
+    button.setAttribute('aria-label', name);
+    button.onclick = () => {
+      selectedGroup = name;
+      search.value = '';
+      categories.querySelectorAll('button').forEach(item => item.classList.toggle('selected', item === button));
+      drawResults();
+    };
+    categories.appendChild(button);
+  });
+  search.oninput = drawResults;
+  panel.append(tools, categories, results);
+  drawResults();
 }
 
 // ── Drawer (contact / group info) ──────────────────────────────────────
@@ -1758,6 +2495,9 @@ function openDrawer() {
   if (!c) return;
   const body = $('drawer-body');
   body.innerHTML = '';
+  const isGroupAdmin = c.type === 'group' && (c.admins || []).includes(me.id);
+  const canEditGroupInfo = c.type === 'group' && (c.permissions?.editInfo !== 'admins' || isGroupAdmin);
+  const canAddGroupMembers = c.type === 'group' && (c.permissions?.addMembers !== 'admins' || isGroupAdmin);
   $('drawer-title').textContent = c.type === 'group' ? 'Group info' : 'Contact info';
 
   const entity = c.type === 'dm' ? (users.find(u => u.id === c.peer?.id) || c.peer) : { name: c.name, type: 'group', id: c.id };
@@ -1770,14 +2510,31 @@ function openDrawer() {
   head.querySelector('.avatar').style.margin = '0 auto';
   body.appendChild(head);
 
+  if (c.type === 'group' && (c.about || canEditGroupInfo)) {
+    const info = el('div', 'drawer-block left', `<div class="drawer-label">Group description</div><div class="drawer-value">${esc(c.about || 'Add a group description')}</div>`);
+    if (canEditGroupInfo) {
+      info.style.cursor = 'pointer';
+      info.onclick = () => {
+        const about = prompt('Group description', c.about || '');
+        if (about != null) socket.emit('group:update', { chatId: c.id, about }, result => result?.error && toast(result.error));
+      };
+    }
+    body.appendChild(info);
+  }
+
   if (c.type === 'dm') {
     body.appendChild(el('div', 'drawer-block left', `
       <div class="drawer-label">About</div>
       <div class="drawer-value">${esc(entity?.about || 'Hey there! I am using VChat.')}</div>`));
-    if (entity?.handle) {
+    if (entity?.phone) {
       body.appendChild(el('div', 'drawer-block left', `
-        <div class="drawer-label">Username</div>
-        <div class="drawer-value">@${esc(entity.handle)}</div>`));
+        <div class="drawer-label">Phone number</div>
+        <div class="drawer-value">${esc(entity.phone)}</div>`));
+    }
+    if (entity?.accountType === 'business') {
+      const businessPage = el('button', 'drawer-action', `${icon('info')} View public business page`);
+      businessPage.onclick = () => openBusinessPage(entity.id);
+      body.appendChild(businessPage);
     }
   } else {
     const members = el('div', 'drawer-block left');
@@ -1789,24 +2546,81 @@ function openDrawer() {
       const row = el('div', 'member-row', `
         ${avatarHTML(u, 40, true)}
         <div class="mr-name">${esc(u.id === me.id ? 'You' : u.username)}<div style="font-size:12.5px;color:var(--text-secondary)">${esc(u.about || '')}</div></div>
-        ${c.createdBy === u.id ? '<span class="mr-tag">Admin</span>' : ''}`);
-      if (u.id !== me.id) row.onclick = () => socket.emit('chat:startDM', { targetUserId: u.id }, r => r?.chat && openChat(r.chat.id));
+        ${(c.admins || []).includes(u.id) ? '<span class="mr-tag">Admin</span>' : ''}`);
+      if (u.id !== me.id) {
+        row.onclick = () => socket.emit('chat:startDM', { targetUserId: u.id }, r => r?.chat && openChat(r.chat.id));
+        if (isGroupAdmin) {
+          row.oncontextmenu = event => {
+            event.preventDefault();
+            const admin = (c.admins || []).includes(u.id);
+            showCtxMenu(event, [
+              { label: admin ? 'Dismiss as admin' : 'Make group admin', fn: () => socket.emit('group:setAdmin', { chatId: c.id, memberId: u.id, makeAdmin: !admin }, result => result?.error && toast(result.error)) },
+              { label: 'Remove from group', danger: true, fn: () => socket.emit('group:removeMember', { chatId: c.id, memberId: u.id }, result => result?.error && toast(result.error)) },
+            ]);
+          };
+        }
+      }
       members.appendChild(row);
     });
-    const add = el('button', 'drawer-action', `<span style="color:var(--wa-green)">${icon('group')}</span> Add participants`);
-    add.onclick = () => openAddMembers(c);
-    members.appendChild(add);
+    if (canAddGroupMembers) {
+      const add = el('button', 'drawer-action', `<span style="color:var(--wa-green)">${icon('group')}</span> Add participants`);
+      add.onclick = () => openAddMembers(c);
+      members.appendChild(add);
+    }
+    if (isGroupAdmin) {
+      const settings = el('button', 'drawer-action', `<span style="color:var(--wa-green)">${icon('info')}</span> Group permissions`);
+      settings.onclick = () => openGroupSettings(c);
+      members.appendChild(settings);
+      const invite = el('button', 'drawer-action', `<span style="color:var(--wa-green)">${icon('copy')}</span> Copy new invite link`);
+      invite.onclick = () => socket.emit('chat:createInvite', { chatId: c.id }, result => {
+        if (result?.error) return toast(result.error);
+        const url = new URL(result.path, location.origin).href;
+        navigator.clipboard?.writeText(url);
+        toast('Invite link copied');
+      });
+      members.appendChild(invite);
+    }
     body.appendChild(members);
   }
+
+  renderSharedMedia(body, c);
 
   const actions = el('div', '');
   const mute = el('button', 'drawer-action', `${icon('mute')} ${c.muted ? 'Unmute notifications' : 'Mute notifications'}`);
   mute.onclick = () => { socket.emit('chat:flag', { chatId: c.id, flag: 'muted', value: !c.muted }); setTimeout(openDrawer, 150); };
   const pin = el('button', 'drawer-action', `${icon('pin')} ${c.pinned ? 'Unpin chat' : 'Pin chat'}`);
   pin.onclick = () => { socket.emit('chat:flag', { chatId: c.id, flag: 'pinned', value: !c.pinned }); setTimeout(openDrawer, 150); };
+  const archive = el('button', 'drawer-action', `${icon('archive')} ${c.archived ? 'Unarchive chat' : 'Archive chat'}`);
+  archive.onclick = () => { socket.emit('chat:flag', { chatId: c.id, flag: 'archived', value: !c.archived }); $('drawer').classList.remove('open'); closeChat(); };
+  const lock = el('button', 'drawer-action', `${icon('lock')} ${c.locked ? 'Remove chat lock' : 'Lock and hide chat'}`);
+  lock.onclick = () => toggleChatLock(c);
   const clear = el('button', 'drawer-action danger', `${icon('trash')} Clear messages`);
   clear.onclick = () => { if (confirm('Clear all messages in this chat?')) socket.emit('chat:clear', { chatId: c.id }); };
-  actions.append(mute, pin, clear);
+  actions.append(mute, pin, archive, lock);
+  if (c.type === 'dm' && entity?.id) {
+    const isBlocked = (me.blocked || []).includes(entity.id);
+    const block = el('button', 'drawer-action danger', `${icon('close')} ${isBlocked ? 'Unblock' : 'Block'} ${esc(entity.username || 'contact')}`);
+    block.onclick = async () => {
+      const { ok, data } = await api(`/api/account/block/${encodeURIComponent(entity.id)}`, { blocked: !isBlocked });
+      if (!ok) return toast(data.error || 'Could not update block list');
+      const set = new Set(me.blocked || []);
+      if (isBlocked) set.delete(entity.id); else set.add(entity.id);
+      me.blocked = [...set];
+      toast(isBlocked ? 'Contact unblocked' : 'Contact blocked');
+      if (document.body.classList.contains('reels-open')) loadReels(true, true).catch(() => {});
+      if ($('stories-screen').classList.contains('open')) loadStories({ quiet: true }).catch(() => {});
+      openDrawer();
+    };
+    const report = el('button', 'drawer-action danger', `${icon('info')} Report contact`);
+    report.onclick = async () => {
+      const reason = prompt('Why are you reporting this contact?', 'Spam');
+      if (!reason) return;
+      const { ok, data } = await api(`/api/account/report/${encodeURIComponent(entity.id)}`, { chatId: c.id, reason });
+      toast(ok ? 'Report submitted' : (data.error || 'Could not submit report'));
+    };
+    actions.append(block, report);
+  }
+  actions.append(clear);
   if (c.id !== 'general') {
     const leave = el('button', 'drawer-action danger', `${icon('logout')} ${c.type === 'group' ? 'Exit group' : 'Delete chat'}`);
     leave.onclick = () => { if (confirm('Are you sure?')) { socket.emit('chat:leave', { chatId: c.id }); $('drawer').classList.remove('open'); } };
@@ -1820,17 +2634,76 @@ function refreshDrawerIfOpen() { if ($('drawer').classList.contains('open')) ope
 
 // ── Modals ─────────────────────────────────────────────────────────────
 function openModal(id) { $(id).classList.add('show'); }
-function closeModal(id) { $(id).classList.remove('show'); }
+function closeModal(id) {
+  $(id).classList.remove('show');
+  if (id === 'modal-profile') profileModalCleanup?.();
+  if (id === 'modal-reel-upload') reelUploadCleanup?.();
+  if (id === 'modal-story-compose') cleanupStoryComposer();
+  if (id === 'modal-rate') rating = null;
+}
 document.querySelectorAll('.overlay').forEach(o => {
   o.addEventListener('click', e => {
-    if (e.target !== o) return;
-    o.classList.remove('show');
-    if (o.id === 'modal-rate') rating = null;
+    if (e.target === o) closeModal(o.id);
   });
-  o.querySelectorAll('[data-close]').forEach(b => b.onclick = () => o.classList.remove('show'));
+  o.querySelectorAll('[data-close]').forEach(b => b.onclick = () => closeModal(o.id));
 });
 
+const businessCategoryLabel = value => String(value || 'other').replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+async function openBusinessPage(userId = me?.id) {
+  if (!userId) return;
+  const result = await api(`/api/business/${encodeURIComponent(userId)}`);
+  if (!result.ok) return toast(result.data.error || 'Business page is unavailable');
+  const business = result.data.business;
+  const owner = business.owner || {};
+  const profile = business.profile || {};
+  $('business-page-head').innerHTML = `${avatarHTML(owner, 64)}<h2>${esc(profile.name || owner.username || 'Business')}</h2><p>${esc(businessCategoryLabel(profile.category))} · Public business-purpose page</p>`;
+  const ownerFields = $('business-owner-fields');
+  const details = $('business-public-details');
+  ownerFields.hidden = !business.canEdit;
+  if (business.canEdit) {
+    $('business-page-name').value = profile.name || '';
+    $('business-page-category').value = profile.category || 'other';
+    $('business-page-description').value = profile.description || '';
+    $('business-page-address').value = profile.address || '';
+    $('business-page-hours').value = profile.hours || '';
+    $('business-page-website').value = profile.website || '';
+    details.innerHTML = '<p class="capture-disclosure">This page describes your business purpose. Vchat does not add catalogs, carts, or shopping tools.</p>';
+    $('business-page-save').onclick = async () => {
+      const name = $('business-page-name').value.trim();
+      if (name.length < 2) return toast('Business name must be at least 2 characters');
+      const save = await api('/api/account/business-profile', {
+        name,
+        category: $('business-page-category').value,
+        description: $('business-page-description').value.trim(),
+        address: $('business-page-address').value.trim(),
+        hours: $('business-page-hours').value.trim(),
+        website: $('business-page-website').value.trim(),
+      }, { method: 'PUT' });
+      if (!save.ok) return toast(save.data.error || 'Could not save business page');
+      me = { ...me, ...(save.data.user || {}) };
+      toast('Business page updated');
+      openBusinessPage(me.id);
+    };
+    $('business-open-boosts').onclick = () => {
+      closeModal('modal-business');
+      openStoryBoosts();
+    };
+  } else {
+    const website = /^https:\/\//i.test(profile.website || '')
+      ? `<p><strong>Website</strong><br><a href="${esc(profile.website)}" target="_blank" rel="noopener noreferrer">${esc(profile.website)}</a></p>` : '';
+    details.innerHTML = `<div class="business-public-card">
+      <p><strong>Business purpose</strong><br>${esc(profile.description || 'No business purpose has been added yet.')}</p>
+      ${profile.address ? `<p><strong>Service area or address</strong><br>${esc(profile.address)}</p>` : ''}
+      ${profile.hours ? `<p><strong>Hours</strong><br>${esc(profile.hours)}</p>` : ''}
+      ${website}
+      <small>Public business page · No catalog, cart, or Vchat shopping features</small>
+    </div>`;
+  }
+  openModal('modal-business');
+}
+
 function openNewChat() {
+  let lookupTimer = null;
   const render = (list, q = '') => {
     const box = $('newchat-list');
     box.innerHTML = '';
@@ -1844,18 +2717,20 @@ function openNewChat() {
     }
     list.forEach(u => {
       const row = el('div', 'pick-row', `${avatarHTML(u, 40, true)}<div class="pk-name">${esc(u.username)}<div class="user-handle">${u.handle ? '@' + esc(u.handle) : ''}</div></div>`);
+      const lock = el('button', 'hdr-btn', icon('lock'));
+      lock.title = 'Start a secret chat';
+      lock.onclick = ev => { ev.stopPropagation(); startSecretChatWith(u); };
+      row.appendChild(lock);
       row.onclick = () => socket.emit('chat:startDM', { targetUserId: u.id }, res => { closeModal('modal-newchat'); if (res?.chat) openChat(res.chat.id); });
       box.appendChild(row);
     });
   };
   $('newchat-search').value = '';
-  $('newchat-search').placeholder = 'Search @username';
-  let t = null;
   $('newchat-search').oninput = e => {
     const q = e.target.value.trim();
-    clearTimeout(t);
+    clearTimeout(lookupTimer);
     if (q.length < 2) { render([], q); return; }
-    t = setTimeout(() => socket.emit('users:lookup', { query: q }, list => render(list || [], q)), 160);
+    lookupTimer = setTimeout(() => socket.emit('users:lookup', { query: q }, list => render(list || [], q)), 160);
   };
   render([], '');
   openModal('modal-newchat');
@@ -1901,6 +2776,28 @@ function openNewGroup() {
   openModal('modal-group');
 }
 
+function openGroupSettings(c) {
+  if (!c || !(c.admins || []).includes(me.id)) return;
+  $('group-permission-info').value = c.permissions?.editInfo || 'admins';
+  $('group-permission-send').value = c.permissions?.sendMessages || 'members';
+  $('group-permission-add').value = c.permissions?.addMembers || 'admins';
+  $('group-settings-save').onclick = () => {
+    socket.emit('group:update', {
+      chatId: c.id,
+      permissions: {
+        editInfo: $('group-permission-info').value,
+        sendMessages: $('group-permission-send').value,
+        addMembers: $('group-permission-add').value,
+      },
+    }, result => {
+      if (result?.error) return toast(result.error);
+      closeModal('modal-group-settings');
+      toast('Group permissions updated');
+    });
+  };
+  openModal('modal-group-settings');
+}
+
 function openAddMembers(c) {
   const picked = new Set();
   const box = $('addmembers-list');
@@ -1913,8 +2810,11 @@ function openAddMembers(c) {
     box.appendChild(row);
   });
   $('addmembers-save').onclick = () => {
-    if (picked.size) socket.emit('chat:addMembers', { chatId: c.id, members: [...picked] });
-    closeModal('modal-addmembers');
+    if (!picked.size) return closeModal('modal-addmembers');
+    socket.emit('chat:addMembers', { chatId: c.id, members: [...picked] }, result => {
+      if (result?.error) return toast(result.error);
+      closeModal('modal-addmembers');
+    });
   };
   openModal('modal-addmembers');
 }
@@ -1925,6 +2825,7 @@ function openLightbox(url, name) {
   $('lb-name').textContent = name || '';
   $('lb-download').href = url;
   $('lb-download').download = name || 'image';
+  $('lb-download').hidden = !!activeChat()?.advancedPrivacy;
   $('lightbox').classList.add('show');
 }
 $('lb-close').onclick = () => $('lightbox').classList.remove('show');
@@ -1947,35 +2848,1978 @@ function runGlobalSearch(q) {
   });
 }
 
+// ── Privacy, account security and linked devices ─────────────────────
+async function openPrivacy() {
+  const privacy = me.privacy || {};
+  $('privacy-last-seen').value = privacy.lastSeen || 'contacts';
+  $('privacy-online').value = privacy.online || 'same-as-last-seen';
+  $('privacy-photo').value = privacy.profilePhoto || 'everyone';
+  $('privacy-about').value = privacy.about || 'everyone';
+  $('privacy-timer').value = String(privacy.defaultDisappearingSeconds || 0);
+  $('privacy-receipts').checked = privacy.readReceipts !== false;
+  $('privacy-advanced').checked = !!privacy.advancedChatPrivacy;
+  $('privacy-silence').checked = privacy.silenceUnknownCallers !== false;
+  $('two-step-status').textContent = me.twoStepEnabled ? 'PIN is enabled' : 'Add a PIN for extra account protection';
+  $('two-step-set').textContent = me.twoStepEnabled ? 'Change PIN' : 'Set PIN';
+  $('two-step-disable').hidden = !me.twoStepEnabled;
+  renderChatLockState();
+  openModal('modal-privacy');
+  await Promise.all([loadDevices(), loadChatLockState()]);
+}
+
+function chatLockIsUnlocked() {
+  return Number(me?.chatLockUnlockedUntil) > Date.now();
+}
+
+function renderChatLockState() {
+  if (!me) return;
+  const enabled = me.chatLockEnabled === true;
+  const unlocked = enabled && chatLockIsUnlocked();
+  const count = Math.max(0, Number(me.lockedChatCount) || 0);
+  const filterButton = $('locked-chats-filter');
+  filterButton.hidden = !enabled;
+  $('locked-chat-count').textContent = count ? String(count) : '';
+  $('chat-lock-status').textContent = enabled
+    ? (unlocked ? 'Locked chats are unlocked on this device' : 'Locked chats are hidden')
+    : 'Protect hidden chats with a separate PIN';
+  $('chat-lock-note').textContent = unlocked
+    ? `Automatically locks again ${new Date(me.chatLockUnlockedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+    : 'Locked chats and previews stay hidden until this device session is unlocked.';
+  $('chat-lock-pin').textContent = enabled ? 'Change lock PIN' : 'Set lock PIN';
+  $('chat-lock-unlock').hidden = !enabled || unlocked;
+  $('chat-lock-now').hidden = !unlocked;
+  $('chat-lock-passkey-add').hidden = !enabled || !unlocked || !window.PublicKeyCredential
+    || Number(me.chatLockPasskeyCount) >= 10;
+  $('chat-lock-passkey-unlock').hidden = !enabled || unlocked || !(Number(me.chatLockPasskeyCount) > 0);
+  if (!unlocked && filter === 'locked') {
+    filter = 'all';
+    document.querySelectorAll('.chip').forEach(chip => chip.classList.toggle('on', chip.dataset.filter === 'all'));
+  }
+}
+
+async function loadChatLockState() {
+  const { ok, data } = await api('/api/account/chat-lock');
+  if (!ok) return;
+  me = { ...me, ...(data.user || {}) };
+  chatLockCredentials = Array.isArray(data.credentials) ? data.credentials : [];
+  renderChatLockCredentials();
+  renderChatLockState();
+}
+
+function renderChatLockCredentials() {
+  const list = $('chat-lock-credentials');
+  list.innerHTML = '';
+  if (!chatLockCredentials.length) {
+    list.innerHTML = '<div class="empty-list">No passkeys added. Your separate chat-lock PIN remains the fallback.</div>';
+    return;
+  }
+  chatLockCredentials.forEach(credential => {
+    const row = el('div', 'device-row', `<div>${icon('lock')}<span><strong>${esc(credential.name || 'Device passkey')}</strong><small>Added ${esc(new Date(credential.createdAt).toLocaleDateString())}</small></span></div>`);
+    const remove = el('button', 'btn-text danger', 'Remove');
+    remove.onclick = async () => {
+      const pin = prompt('Enter your separate 6-digit chat-lock PIN to remove this passkey');
+      if (pin == null) return;
+      const result = await api(`/api/account/chat-lock/passkey/${encodeURIComponent(credential.id)}`, { pin }, { method: 'DELETE' });
+      if (!result.ok) return toast(result.data.error || 'Could not remove passkey');
+      chatLockCredentials = result.data.credentials || [];
+      me.chatLockPasskeyCount = chatLockCredentials.length;
+      renderChatLockCredentials();
+      renderChatLockState();
+      toast('Passkey removed');
+    };
+    row.appendChild(remove);
+    list.appendChild(row);
+  });
+}
+
+async function setChatLockPin() {
+  const wasEnabled = me.chatLockEnabled === true;
+  const currentPin = wasEnabled ? prompt('Enter your current separate chat-lock PIN') : null;
+  if (wasEnabled && currentPin == null) return false;
+  const pin = prompt(wasEnabled
+    ? 'Choose a new 6-digit chat-lock PIN (different from two-step verification)'
+    : 'Choose a separate 6-digit PIN for locked chats');
+  if (pin == null) return false;
+  if (!/^\d{6}$/.test(pin)) { toast('The chat-lock PIN must contain exactly 6 digits'); return false; }
+  const result = await api('/api/account/chat-lock/pin', { pin, currentPin }, { method: 'PUT' });
+  if (!result.ok) { toast(result.data.error || 'Could not set chat-lock PIN'); return false; }
+  me = { ...me, ...(result.data.user || {}) };
+  chatLockCredentials = result.data.credentials || chatLockCredentials;
+  renderChatLockCredentials();
+  renderChatLockState();
+  toast(wasEnabled ? 'Chat-lock PIN updated' : 'Chat lock enabled');
+  return true;
+}
+
+async function unlockChatLockWithPin() {
+  if (!me.chatLockEnabled) return setChatLockPin();
+  const pin = prompt('Enter your separate 6-digit chat-lock PIN');
+  if (pin == null) return false;
+  const result = await api('/api/account/chat-lock/unlock', { pin });
+  if (!result.ok) { toast(result.data.error || 'Could not unlock chats'); return false; }
+  me = { ...me, ...(result.data.user || {}) };
+  renderChatLockState();
+  toast('Locked chats unlocked temporarily');
+  return true;
+}
+
+const bytesFromBase64url = value => {
+  const base64 = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(base64 + '='.repeat((4 - base64.length % 4) % 4));
+  return Uint8Array.from(binary, char => char.charCodeAt(0));
+};
+const base64urlFromBytes = value => {
+  if (value == null) return null;
+  const bytes = new Uint8Array(value);
+  let binary = '';
+  bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+};
+function publicKeyCreateOptions(options) {
+  return {
+    ...options,
+    challenge: bytesFromBase64url(options.challenge),
+    user: { ...options.user, id: bytesFromBase64url(options.user.id) },
+    excludeCredentials: (options.excludeCredentials || []).map(item => ({ ...item, id: bytesFromBase64url(item.id) })),
+  };
+}
+function publicKeyRequestOptions(options) {
+  return {
+    ...options,
+    challenge: bytesFromBase64url(options.challenge),
+    allowCredentials: (options.allowCredentials || []).map(item => ({ ...item, id: bytesFromBase64url(item.id) })),
+  };
+}
+function serializePasskeyCredential(credential) {
+  const response = credential.response;
+  const serialized = {
+    id: credential.id,
+    rawId: base64urlFromBytes(credential.rawId),
+    type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment || undefined,
+    clientExtensionResults: credential.getClientExtensionResults?.() || {},
+    response: { clientDataJSON: base64urlFromBytes(response.clientDataJSON) },
+  };
+  if ('attestationObject' in response) {
+    serialized.response.attestationObject = base64urlFromBytes(response.attestationObject);
+    serialized.response.transports = response.getTransports?.() || [];
+  } else {
+    serialized.response.authenticatorData = base64urlFromBytes(response.authenticatorData);
+    serialized.response.signature = base64urlFromBytes(response.signature);
+    serialized.response.userHandle = base64urlFromBytes(response.userHandle);
+  }
+  return serialized;
+}
+
+async function addChatLockPasskey() {
+  if (!window.PublicKeyCredential || !navigator.credentials) return toast('Passkeys are not supported by this browser');
+  if (!chatLockIsUnlocked() && !(await unlockChatLockWithPin())) return;
+  try {
+    const optionsResult = await api('/api/account/chat-lock/passkey/register/options', {});
+    if (!optionsResult.ok) throw new Error(optionsResult.data.error || 'Could not begin passkey setup');
+    const credential = await navigator.credentials.create({ publicKey: publicKeyCreateOptions(optionsResult.data) });
+    if (!credential) throw new Error('Passkey setup was cancelled');
+    const name = /Mobile|Android|iPhone/i.test(navigator.userAgent) ? 'Mobile device passkey' : 'Desktop device passkey';
+    const verified = await api('/api/account/chat-lock/passkey/register/verify', {
+      credential: serializePasskeyCredential(credential), name,
+    });
+    if (!verified.ok) throw new Error(verified.data.error || 'Passkey could not be verified');
+    chatLockCredentials = verified.data.credentials || [];
+    me.chatLockPasskeyCount = chatLockCredentials.length;
+    renderChatLockCredentials();
+    renderChatLockState();
+    toast('Device passkey added');
+  } catch (error) {
+    toast(error.name === 'NotAllowedError' ? 'Passkey setup was cancelled' : (error.message || 'Could not add passkey'));
+  }
+}
+
+async function unlockChatLockWithPasskey() {
+  if (!window.PublicKeyCredential || !navigator.credentials) return toast('Passkeys are not supported by this browser'), false;
+  try {
+    const optionsResult = await api('/api/account/chat-lock/passkey/authenticate/options', {});
+    if (!optionsResult.ok) throw new Error(optionsResult.data.error || 'No passkey is available');
+    const credential = await navigator.credentials.get({ publicKey: publicKeyRequestOptions(optionsResult.data) });
+    if (!credential) throw new Error('Passkey unlock was cancelled');
+    const verified = await api('/api/account/chat-lock/passkey/authenticate/verify', {
+      credential: serializePasskeyCredential(credential),
+    });
+    if (!verified.ok) throw new Error(verified.data.error || 'Passkey unlock failed');
+    me = { ...me, ...(verified.data.user || {}) };
+    renderChatLockState();
+    toast('Locked chats unlocked temporarily');
+    return true;
+  } catch (error) {
+    toast(error.name === 'NotAllowedError' ? 'Passkey unlock was cancelled' : (error.message || 'Could not use passkey'));
+    return false;
+  }
+}
+
+async function lockChatsNow() {
+  const result = await api('/api/account/chat-lock/lock', {});
+  if (!result.ok) return toast(result.data.error || 'Could not lock chats');
+  me = { ...me, ...(result.data.user || {}) };
+  if (activeChat()?.locked) closeChat();
+  renderChatLockState();
+  renderChatList();
+  toast('Locked chats hidden');
+}
+
+async function toggleChatLock(chat) {
+  if (!chat) return;
+  if (!me.chatLockEnabled && !(await setChatLockPin())) return;
+  if (!chatLockIsUnlocked() && !(await unlockChatLockWithPin())) return;
+  const result = await api(`/api/messenger/chats/${encodeURIComponent(chat.id)}/lock`, { locked: !chat.locked }, { method: 'PUT' });
+  if (!result.ok) return toast(result.data.error || 'Could not change chat lock');
+  me = { ...me, ...(result.data.user || {}) };
+  if (result.data.locked) {
+    if (activeId === chat.id) closeChat();
+    setFilter('all');
+    toast('Chat locked and moved to Locked');
+  } else toast('Chat removed from Locked');
+  renderChatLockState();
+}
+
+async function loadDevices() {
+  const list = $('device-list');
+  list.innerHTML = '<div class="empty-list">Loading…</div>';
+  const { ok, data } = await api('/api/account/devices');
+  if (!ok || !Array.isArray(data)) {
+    list.innerHTML = '<div class="empty-list">Could not load linked devices.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  data.forEach(device => {
+    const name = /Mobile|Android|iPhone/i.test(device.userAgent || '') ? 'Mobile browser' : 'Desktop browser';
+    const row = el('div', 'device-row', `<div>${icon('newchat')}<span><strong>${esc(name)}${device.current ? ' · This device' : ''}</strong><small>Last active ${esc(new Date(device.lastUsedAt).toLocaleString())}</small></span></div>`);
+    if (!device.current) {
+      const remove = el('button', 'btn-text', 'Log out');
+      remove.onclick = async () => {
+        const result = await api(`/api/account/devices/${encodeURIComponent(device.id)}`, undefined, { method: 'DELETE' });
+        if (!result.ok) return toast(result.data.error || 'Could not log out device');
+        loadDevices();
+      };
+      row.appendChild(remove);
+    }
+    list.appendChild(row);
+  });
+}
+
+$('privacy-save').onclick = async () => {
+  const patch = {
+    lastSeen: $('privacy-last-seen').value,
+    online: $('privacy-online').value,
+    profilePhoto: $('privacy-photo').value,
+    about: $('privacy-about').value,
+    defaultDisappearingSeconds: Number($('privacy-timer').value),
+    readReceipts: $('privacy-receipts').checked,
+    advancedChatPrivacy: $('privacy-advanced').checked,
+    silenceUnknownCallers: $('privacy-silence').checked,
+  };
+  const { ok, data } = await api('/api/account/privacy', patch, { method: 'PATCH' });
+  if (!ok) return toast(data.error || 'Could not save privacy settings');
+  me.privacy = data.privacy;
+  closeModal('modal-privacy');
+  toast('Privacy settings saved');
+};
+
+$('two-step-set').onclick = async () => {
+  const currentPin = me.twoStepEnabled ? prompt('Enter your current 6-digit PIN') : null;
+  if (me.twoStepEnabled && currentPin == null) return;
+  const pin = prompt(me.twoStepEnabled ? 'Choose a new 6-digit PIN' : 'Choose a 6-digit two-step verification PIN');
+  if (pin == null) return;
+  const { ok, data } = await api('/api/account/two-step', { pin, currentPin }, { method: 'PUT' });
+  if (!ok) return toast(data.error || 'Could not set PIN');
+  me.twoStepEnabled = true;
+  $('two-step-status').textContent = 'PIN is enabled';
+  $('two-step-set').textContent = 'Change PIN';
+  $('two-step-disable').hidden = false;
+  toast('Two-step verification enabled');
+};
+
+$('two-step-disable').onclick = async () => {
+  const pin = prompt('Enter your current PIN to disable two-step verification');
+  if (pin == null) return;
+  const { ok, data } = await api('/api/account/two-step', { pin }, { method: 'DELETE' });
+  if (!ok) return toast(data.error || 'Could not disable two-step verification');
+  me.twoStepEnabled = false;
+  $('two-step-status').textContent = 'Add a PIN for extra account protection';
+  $('two-step-set').textContent = 'Set PIN';
+  $('two-step-disable').hidden = true;
+  toast('Two-step verification disabled');
+};
+
+$('devices-revoke-all').onclick = async () => {
+  if (!confirm('Log out every other linked device?')) return;
+  const { ok, data } = await api('/api/account/devices', undefined, { method: 'DELETE' });
+  if (!ok) return toast(data.error || 'Could not log out devices');
+  toast(`${data.revoked || 0} device${data.revoked === 1 ? '' : 's'} logged out`);
+  loadDevices();
+};
+
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  installPrompt = event;
+});
+async function installApp() {
+  if (isNativeApp()) return toast('You are already in the VChat app');
+  if (!installPrompt) return toast('Use your browser menu to Add to Home Screen, or open Get the VChat app');
+  installPrompt.prompt();
+  await installPrompt.userChoice;
+  installPrompt = null;
+}
+
+function isNativeApp() {
+  const ua = navigator.userAgent || '';
+  return /VChatNative/i.test(ua)
+    || window.Capacitor?.isNativePlatform?.() === true
+    || window.vchatNative === true;
+}
+
+function applyNativeShell() {
+  const native = isNativeApp();
+  document.body.classList.toggle('native', native);
+  document.documentElement.classList.toggle('native', native);
+  if (native) {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', '#0b1f3a');
+  }
+}
+
+function openGetApp() {
+  applyNativeShell();
+  const status = $('get-app-status');
+  if (status) {
+    status.textContent = isNativeApp()
+      ? 'This window is already the native VChat shell. Cloud is navy. SMS is orange.'
+      : 'The native shell still talks to your VChat server. It does not replace Twilio, Apple iMessage, or a carrier SMS stack.';
+  }
+  const pwa = $('get-app-pwa');
+  if (pwa) pwa.hidden = isNativeApp();
+  openModal('modal-get-app');
+}
+
+// ── Notification, ringtone and media preferences (per linked device) ──
+function notificationPermissionText() {
+  if (!('Notification' in window)) return 'Desktop notifications are not supported by this browser';
+  if (Notification.permission === 'granted') return 'Enabled while Vchat is open on this device';
+  if (Notification.permission === 'denied') return 'Blocked in browser settings';
+  return 'Allow browser alerts while Vchat is open';
+}
+
+function readNotificationDraft() {
+  return {
+    desktop: $('notify-desktop').checked,
+    previews: $('notify-preview').checked,
+    messageSounds: $('notify-sounds').checked,
+    messageTone: $('notify-tone').value,
+    callSounds: $('notify-call-sounds').checked,
+    ringtone: $('notify-ringtone').value,
+    mediaVisibility: $('media-visibility').value,
+  };
+}
+
+function openNotifications() {
+  $('notify-desktop').checked = notificationPrefs.desktop;
+  $('notify-preview').checked = notificationPrefs.previews;
+  $('notify-sounds').checked = notificationPrefs.messageSounds;
+  $('notify-tone').value = notificationPrefs.messageTone;
+  $('notify-call-sounds').checked = notificationPrefs.callSounds;
+  $('notify-ringtone').value = notificationPrefs.ringtone;
+  $('media-visibility').value = notificationPrefs.mediaVisibility;
+  $('notification-permission-status').textContent = notificationPermissionText();
+  $('notify-desktop').disabled = !('Notification' in window) || Notification.permission === 'denied';
+
+  $('notify-desktop').onchange = async () => {
+    if (!$('notify-desktop').checked || !('Notification' in window)) return;
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') $('notify-desktop').checked = false;
+    } catch {
+      $('notify-desktop').checked = false;
+    }
+    $('notification-permission-status').textContent = notificationPermissionText();
+  };
+  $('notify-test').onclick = () => {
+    const previous = notificationPrefs.messageTone;
+    notificationPrefs.messageTone = $('notify-tone').value;
+    ping(true);
+    notificationPrefs.messageTone = previous;
+  };
+  $('ringtone-test').onclick = () => {
+    if (ringTone) return callToneStop();
+    const previous = notificationPrefs.ringtone;
+    notificationPrefs.ringtone = $('notify-ringtone').value;
+    callTone('ring', true);
+    notificationPrefs.ringtone = previous;
+    setTimeout(callToneStop, 4200);
+  };
+  $('notifications-save').onclick = () => {
+    notificationPrefs = { ...NOTIFICATION_DEFAULTS, ...readNotificationDraft() };
+    localStorage.setItem('vchat.notifications', JSON.stringify(notificationPrefs));
+    pushDeviceSettings();
+    callToneStop();
+    if (activeId) renderMessages();
+    closeModal('modal-notifications');
+    toast('Notification and media settings saved');
+  };
+  openModal('modal-notifications');
+}
+
+// ── Reels companion pane ──────────────────────────────────────────────
+function visibleReelId() {
+  const feed = $('reels-feed');
+  const cards = [...feed.querySelectorAll('.reel-card')];
+  if (!cards.length) return null;
+  return cards.reduce((best, card) => (
+    Math.abs(card.offsetTop - feed.scrollTop) < Math.abs(best.offsetTop - feed.scrollTop) ? card : best
+  )).dataset.id;
+}
+
+function pauseReelVideos() {
+  $('reels-feed')?.querySelectorAll('video').forEach(video => video.pause());
+}
+
+function reelAutoplayEnabled() {
+  return !lite && !document.hidden && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+async function loadReels(reset = false, preservePosition = false) {
+  if (reelsLoading) {
+    if (reset) reelsReloadPending = true;
+    return;
+  }
+  const keepId = preservePosition ? visibleReelId() : null;
+  reelsLoading = true;
+  if (reset) {
+    reelsCursor = null;
+    reelsExhausted = false;
+  }
+  if (!reels.length) $('reels-feed').innerHTML = '<div class="reels-loading">Loading reels…</div>';
+  try {
+    const query = new URLSearchParams({ limit: '10' });
+    if (!reset && reelsCursor) query.set('cursor', reelsCursor);
+    const response = await fetch(`/api/reels?${query}`, { credentials: 'same-origin' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Could not load reels');
+    const incoming = Array.isArray(data.items) ? data.items : [];
+    if (Number.isFinite(data.maxUploadBytes) && data.maxUploadBytes > 0) reelMaxBytes = data.maxUploadBytes;
+    if (reset) reels = incoming;
+    else {
+      const known = new Set(reels.map(reel => reel.id));
+      reels.push(...incoming.filter(reel => !known.has(reel.id)));
+    }
+    reelsCursor = data.nextCursor || null;
+    reelsExhausted = !reelsCursor;
+    if (document.body.classList.contains('reels-open')) renderReels(keepId);
+  } catch (error) {
+    if (!reels.length) {
+      $('reels-feed').innerHTML = `<div class="reels-empty"><strong>Reels unavailable</strong><span>${esc(error.message)}</span><button class="btn-text" type="button" id="reels-retry">Try again</button></div>`;
+      $('reels-retry').onclick = () => loadReels(true);
+    } else toast(error.message);
+  } finally {
+    reelsLoading = false;
+    if (reelsReloadPending) {
+      reelsReloadPending = false;
+      if (document.body.classList.contains('reels-open')) loadReels(true, true);
+    }
+  }
+}
+
+function renderReels(keepId = null) {
+  const feed = $('reels-feed');
+  reelsObserver?.disconnect();
+  reelsObserver = null;
+  feed.innerHTML = '';
+
+  if (!reels.length) {
+    feed.innerHTML = '<div class="reels-empty"><strong>No reels yet</strong><span>Post a short video and keep chatting while everyone scrolls.</span><button class="btn-text" type="button" id="reels-empty-upload">Post the first reel</button></div>';
+    $('reels-empty-upload').onclick = chooseReelFile;
+    return;
+  }
+
+  for (const reel of reels) {
+    const owner = reel.owner || { id: '', username: 'Vchat user', avatar: '🎬' };
+    const mine = owner.id === me.id;
+    const card = el('article', 'reel-card paused');
+    card.dataset.id = reel.id;
+    card.innerHTML = `
+      <video class="reel-video" src="${esc(reel.videoUrl)}" muted loop playsinline preload="${lite ? 'none' : 'metadata'}" aria-label="Reel by ${esc(owner.username)}"></video>
+      <div class="reel-play-state">${icon('play')}</div>
+      <div class="reel-shade"></div>
+      <div class="reel-meta">
+        <button class="reel-owner" type="button" data-reel-action="chat" ${mine ? 'disabled' : ''}>${avatarHTML(owner, 32)}<span>${esc(mine ? 'You' : owner.username)}</span></button>
+        ${reel.caption ? `<div class="reel-caption">${esc(reel.caption)}</div>` : ''}
+        <span class="reel-date">${esc(dayLabel(reel.createdAt))} · ${esc(timeOf(reel.createdAt))}</span>
+      </div>
+      <div class="reel-actions">
+        <button class="reel-action ${reel.liked ? 'on' : ''}" type="button" data-reel-action="like" aria-label="${reel.liked ? 'Unlike' : 'Like'} reel"><span aria-hidden="true">♥</span><span class="reel-action-count">${Number(reel.likeCount) || 0}</span></button>
+        <button class="reel-action" type="button" data-reel-action="play" aria-label="Play reel">${icon('play')}</button>
+        ${mine
+          ? `<button class="reel-action" type="button" data-reel-action="delete" aria-label="Delete reel">${icon('trash')}</button>`
+          : `<button class="reel-action" type="button" data-reel-action="chat" aria-label="Chat with ${esc(owner.username)}">${icon('chat')}</button>`}
+        <button class="reel-action" type="button" data-reel-action="sound" aria-label="Turn sound on"><span aria-hidden="true">🔇</span></button>
+      </div>`;
+
+    const video = card.querySelector('video');
+    const playButton = card.querySelector('[data-reel-action="play"]');
+    const setPlaying = playing => {
+      card.classList.toggle('paused', !playing);
+      playButton.innerHTML = icon(playing ? 'pause' : 'play');
+      playButton.setAttribute('aria-label', playing ? 'Pause reel' : 'Play reel');
+    };
+    video.onclick = () => video.paused ? video.play().catch(() => {}) : video.pause();
+    video.onplay = () => setPlaying(true);
+    video.onpause = () => setPlaying(false);
+    video.onerror = () => card.classList.add('reel-error');
+    playButton.onclick = event => {
+      event.stopPropagation();
+      if (video.paused) video.play().catch(() => {});
+      else video.pause();
+    };
+
+    card.querySelectorAll('[data-reel-action="chat"]').forEach(button => {
+      if (!mine) button.onclick = event => { event.stopPropagation(); chatWithReelOwner(owner.id); };
+    });
+    card.querySelector('[data-reel-action="like"]').onclick = event => {
+      event.stopPropagation();
+      updateReelLike(reel, card);
+    };
+    card.querySelector('[data-reel-action="sound"]').onclick = event => {
+      event.stopPropagation();
+      video.muted = !video.muted;
+      event.currentTarget.firstElementChild.textContent = video.muted ? '🔇' : '🔊';
+      event.currentTarget.setAttribute('aria-label', video.muted ? 'Turn sound on' : 'Mute reel');
+      if (video.paused) video.play().catch(() => {});
+    };
+    if (mine) card.querySelector('[data-reel-action="delete"]').onclick = event => {
+      event.stopPropagation();
+      removeReel(reel.id);
+    };
+    feed.appendChild(card);
+  }
+
+  reelsObserver = new IntersectionObserver(entries => {
+    if (!document.body.classList.contains('reels-open')) return;
+    for (const entry of entries) {
+      const video = entry.target.querySelector('video');
+      if (entry.isIntersecting && entry.intersectionRatio >= 0.65) {
+        feed.querySelectorAll('video').forEach(other => { if (other !== video) other.pause(); });
+        if (reelAutoplayEnabled()) video.play().catch(() => entry.target.classList.add('paused'));
+      } else if (entry.intersectionRatio < 0.35) video.pause();
+    }
+  }, { root: feed, threshold: [0.2, 0.35, 0.65, 0.85] });
+  feed.querySelectorAll('.reel-card').forEach(card => reelsObserver.observe(card));
+
+  requestAnimationFrame(() => {
+    const target = keepId && feed.querySelector(`[data-id="${CSS.escape(keepId)}"]`);
+    if (target) feed.scrollTop = target.offsetTop;
+  });
+}
+
+async function updateReelLike(reel, card) {
+  const button = card.querySelector('[data-reel-action="like"]');
+  if (button.disabled) return;
+  button.disabled = true;
+  const desired = !reel.liked;
+  reel.liked = desired;
+  reel.likeCount = Math.max(0, (Number(reel.likeCount) || 0) + (desired ? 1 : -1));
+  button.classList.toggle('on', desired);
+  button.setAttribute('aria-label', desired ? 'Unlike reel' : 'Like reel');
+  button.querySelector('.reel-action-count').textContent = reel.likeCount;
+  try {
+    const { ok, data } = await api(`/api/reels/${encodeURIComponent(reel.id)}/like`, { liked: desired }, { method: 'PUT' });
+    if (!ok) throw new Error(data.error || 'Could not update like');
+    Object.assign(reel, data.reel);
+    button.querySelector('.reel-action-count').textContent = reel.likeCount;
+  } catch (error) {
+    reel.liked = !desired;
+    reel.likeCount = Math.max(0, reel.likeCount + (desired ? -1 : 1));
+    button.classList.toggle('on', reel.liked);
+    button.querySelector('.reel-action-count').textContent = reel.likeCount;
+    toast(error.message || 'Could not update like');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function chatWithReelOwner(ownerId) {
+  if (!ownerId || ownerId === me.id) return;
+  socket.emit('chat:startDM', { targetUserId: ownerId }, result => {
+    if (result?.error) return toast(result.error);
+    if (result?.chat) openChat(result.chat.id);
+  });
+}
+
+async function removeReel(reelId) {
+  if (!confirm('Delete this reel permanently?')) return;
+  try {
+    const { ok, data } = await api(`/api/reels/${encodeURIComponent(reelId)}`, {}, { method: 'DELETE' });
+    if (!ok) throw new Error(data.error || 'Could not delete reel');
+    const keep = visibleReelId();
+    reels = reels.filter(reel => reel.id !== reelId);
+    renderReels(keep === reelId ? null : keep);
+    toast('Reel deleted');
+  } catch (error) {
+    toast(error.message || 'Could not delete reel');
+  }
+}
+
+function openReels() {
+  document.body.classList.add('reels-open');
+  $('reels-panel').setAttribute('aria-hidden', 'false');
+  $('btn-reels').setAttribute('aria-expanded', 'true');
+  $('btn-reels-chat').setAttribute('aria-expanded', 'true');
+  $('drawer').classList.remove('open');
+  loadReels(true);
+}
+
+function closeReels() {
+  clearTimeout(reelsRefreshTimer);
+  reelsReloadPending = false;
+  document.body.classList.remove('reels-open');
+  $('reels-panel').setAttribute('aria-hidden', 'true');
+  $('btn-reels').setAttribute('aria-expanded', 'false');
+  $('btn-reels-chat').setAttribute('aria-expanded', 'false');
+  pauseReelVideos();
+}
+
+function toggleReels() {
+  if (document.body.classList.contains('reels-open')) closeReels();
+  else openReels();
+}
+
+function chooseReelFile() {
+  $('reel-file-input').value = '';
+  $('reel-file-input').click();
+}
+
+function prepareReelUpload(file) {
+  if (!file) return;
+  if (!['video/mp4', 'video/quicktime', 'video/webm'].includes(file.type) || file.size > reelMaxBytes) {
+    return toast(`Choose an MP4, MOV, or WebM video up to ${fileSize(reelMaxBytes)}`);
+  }
+  reelUploadCleanup?.();
+  reelUploadFile = file;
+  reelUploadPreviewUrl = URL.createObjectURL(file);
+  $('reel-upload-preview').src = reelUploadPreviewUrl;
+  $('reel-file-summary').textContent = `${file.name} · ${fileSize(file.size)}`;
+  $('reel-caption').value = '';
+  $('reel-upload-status').textContent = '';
+  $('reel-publish').disabled = false;
+  const cleanup = () => {
+    reelUploadAbort?.abort();
+    reelUploadAbort = null;
+    $('reel-upload-preview').pause();
+    $('reel-upload-preview').removeAttribute('src');
+    $('reel-upload-preview').load();
+    if (reelUploadPreviewUrl) URL.revokeObjectURL(reelUploadPreviewUrl);
+    reelUploadPreviewUrl = null;
+    reelUploadFile = null;
+    $('reel-file-input').value = '';
+    if (reelUploadCleanup === cleanup) reelUploadCleanup = null;
+  };
+  reelUploadCleanup = cleanup;
+  openModal('modal-reel-upload');
+}
+
+async function publishReel() {
+  if (!reelUploadFile || reelUploadAbort) return;
+  const button = $('reel-publish');
+  const status = $('reel-upload-status');
+  const form = new FormData();
+  form.append('video', reelUploadFile, reelUploadFile.name);
+  form.append('caption', $('reel-caption').value.trim());
+  const request = new XMLHttpRequest();
+  reelUploadAbort = request;
+  button.disabled = true;
+  status.textContent = 'Uploading securely… 0%';
+  status.style.color = 'var(--text-secondary)';
+  try {
+    const data = await new Promise((resolve, reject) => {
+      request.open('POST', '/api/reels');
+      request.withCredentials = true;
+      request.responseType = 'json';
+      request.upload.onprogress = event => {
+        if (event.lengthComputable) status.textContent = `Uploading securely… ${Math.min(99, Math.round((event.loaded / event.total) * 100))}%`;
+      };
+      request.onerror = () => reject(new Error('Network error while uploading'));
+      request.onabort = () => reject(Object.assign(new Error('Upload cancelled'), { name: 'AbortError' }));
+      request.onload = () => {
+        const body = request.response && typeof request.response === 'object' ? request.response : {};
+        if (request.status >= 200 && request.status < 300) resolve(body);
+        else reject(new Error(body.error || 'Could not post reel'));
+      };
+      request.send(form);
+    });
+    if (!data.reel) throw new Error('The server did not return the published reel');
+    reelUploadAbort = null;
+    closeModal('modal-reel-upload');
+    openReels();
+    toast('Reel posted');
+  } catch (error) {
+    if (error.name === 'AbortError') return;
+    reelUploadAbort = null;
+    button.disabled = false;
+    status.style.color = 'var(--danger)';
+    status.textContent = error.message || 'Could not post reel';
+  }
+}
+
+// ── Status stories and sponsored playback ─────────────────────────────
+function storyBackgroundClass(background) {
+  return `story-bg-${['jade', 'ocean', 'sunset', 'violet', 'charcoal'].includes(background) ? background : 'jade'}`;
+}
+
+function setStoriesOpen(open) {
+  $('stories-screen').classList.toggle('open', open);
+  $('stories-screen').setAttribute('aria-hidden', String(!open));
+  if (!open) {
+    closeStoryViewer();
+    clearTimeout(storiesRefreshTimer);
+  }
+}
+
+async function openStories() {
+  closeReels();
+  setStoriesOpen(true);
+  $('story-notice').hidden = true;
+  await loadStories();
+}
+
+function closeStories() {
+  setStoriesOpen(false);
+}
+
+async function loadStories({ quiet = false } = {}) {
+  if (storiesLoading || !me) return;
+  storiesLoading = true;
+  if (!quiet) $('stories-loading').hidden = false;
+  try {
+    const { ok, data } = await api('/api/stories');
+    if (!ok) throw new Error(data.error || 'Could not load status updates');
+    storyGroups = Array.isArray(data.groups) ? data.groups : [];
+    storyAds = Array.isArray(data.ads) ? data.ads : [];
+    storyReactions = Array.isArray(data.reactions) ? data.reactions : storyReactions;
+    storyMaxBytes = Number(data.maxUploadBytes) || storyMaxBytes;
+    storyPaymentConfigured = data.paymentConfigured === true;
+    storyAdAdmin = data.adAdmin === true;
+    $('story-review-button').hidden = !storyAdAdmin;
+    renderStoryTray();
+  } catch (error) {
+    if (!quiet) toast(error.message || 'Could not load status updates');
+  } finally {
+    storiesLoading = false;
+    $('stories-loading').hidden = true;
+  }
+}
+
+function openSponsoredStory(item) {
+  if (!item) return;
+  storySequence = [{ ...item, kind: 'ad' }];
+  $('stories-home').hidden = true;
+  $('story-viewer').hidden = false;
+  storyIndex = 0;
+  renderCurrentStory();
+}
+
+function renderSponsoredDiscovery() {
+  const section = $('sponsored-discovery');
+  const tray = $('sponsored-story-tray');
+  const ads = storyAds.filter(Boolean);
+  tray.innerHTML = '';
+  section.hidden = ads.length === 0;
+  ads.forEach(item => {
+    const card = el('button', `story-tray-card sponsored-tray-card unseen${item.type === 'text' ? ` story-bg-${item.background || 'jade'}` : ''}`);
+    card.type = 'button';
+    card.setAttribute('role', 'listitem');
+    card.setAttribute('aria-label', `Sponsored Status from ${item.advertiser?.username || 'a business'}`);
+    card.innerHTML = `${avatarHTML(item.advertiser, 40)}<span class="story-tray-name">${esc(item.advertiser?.username || 'Business')}</span><span class="story-tray-meta">${esc(item.cta || 'View sponsored Status')}</span>`;
+    card.onclick = () => openSponsoredStory(item);
+    tray.appendChild(card);
+  });
+}
+
+function renderStoryTray() {
+  const tray = $('story-tray');
+  tray.innerHTML = '';
+  renderSponsoredDiscovery();
+  const own = storyGroups.find(group => group.mine);
+  if (!own) {
+    const add = el('button', 'story-tray-card add-card');
+    add.type = 'button';
+    add.innerHTML = `${avatarHTML(me, 40)}<span class="story-tray-name">Your status</span><span class="story-tray-meta">Tap to add an update</span>`;
+    add.onclick = openStoryComposer;
+    tray.appendChild(add);
+  }
+  for (const group of storyGroups) {
+    const card = el('button', `story-tray-card${group.unseenCount ? ' unseen' : ''}`);
+    card.type = 'button';
+    card.setAttribute('role', 'listitem');
+    const latest = group.items[group.items.length - 1];
+    card.innerHTML = `${avatarHTML(group.owner, 40)}<span class="story-tray-name">${esc(group.mine ? 'Your status' : group.owner?.username)}</span><span class="story-tray-meta">${group.unseenCount ? `${group.unseenCount} new · ` : ''}${esc(rowTime(latest?.createdAt || Date.now()))}</span>`;
+    card.onclick = () => openStoryViewer(group.owner?.id);
+    tray.appendChild(card);
+  }
+  const friendCount = storyGroups.filter(group => !group.mine).length;
+  $('stories-empty').hidden = friendCount > 0 || Boolean(own);
+}
+
+function buildStorySequence(ownerId) {
+  const selectedIndex = storyGroups.findIndex(group => group.owner?.id === ownerId);
+  if (selectedIndex < 0) return [];
+  const selected = storyGroups[selectedIndex];
+  const groups = selected.mine
+    ? [selected]
+    : storyGroups.slice(selectedIndex).filter(group => !group.mine);
+  const organic = groups.flatMap(group => group.items.map(item => ({ ...item, kind: 'story' })));
+  if (selected.mine || !organic.length || !storyAds.length) return organic;
+  const firstAdAfter = organic.length > 3 ? 3 : Math.max(1, organic.length - 1);
+  const sequence = [];
+  let sinceAd = 0;
+  let adIndex = 0;
+  for (const item of organic) {
+    sequence.push(item);
+    sinceAd += 1;
+    const threshold = adIndex === 0 ? firstAdAfter : 3;
+    if (sinceAd >= threshold && adIndex < storyAds.length) {
+      sequence.push({ ...storyAds[adIndex], kind: 'ad' });
+      adIndex += 1;
+      sinceAd = 0;
+    }
+  }
+  return sequence;
+}
+
+function openStoryViewer(ownerId) {
+  storySequence = buildStorySequence(ownerId);
+  if (!storySequence.length) return;
+  $('stories-home').hidden = true;
+  $('story-viewer').hidden = false;
+  storyIndex = 0;
+  renderCurrentStory();
+}
+
+function closeStoryViewer() {
+  stopStoryPlayback();
+  $('story-stage').querySelectorAll('video').forEach(video => video.pause());
+  $('story-viewer').hidden = true;
+  $('stories-home').hidden = false;
+  storySequence = [];
+  storyIndex = -1;
+  if ($('stories-screen').classList.contains('open')) loadStories({ quiet: true }).catch(() => {});
+}
+
+function renderStoryProgress() {
+  $('story-progress').innerHTML = storySequence.map((_item, index) => `<span class="story-progress-part${index < storyIndex ? ' done' : ''}"><span class="story-progress-fill"></span></span>`).join('');
+}
+
+function stopStoryPlayback() {
+  if (storyPlayback?.raf) cancelAnimationFrame(storyPlayback.raf);
+  storyPlayback = null;
+}
+
+function startStoryPlayback(duration) {
+  stopStoryPlayback();
+  const index = storyIndex;
+  const state = { duration: Math.max(1000, duration), elapsed: 0, last: performance.now(), raf: 0 };
+  storyPlayback = state;
+  const fill = $('story-progress').children[index]?.firstElementChild;
+  const tick = now => {
+    if (storyPlayback !== state || index !== storyIndex) return;
+    const delta = Math.min(250, now - state.last);
+    state.last = now;
+    if (!document.hidden) state.elapsed += delta;
+    if (fill) fill.style.width = `${Math.min(100, (state.elapsed / state.duration) * 100)}%`;
+    if (storySequence[index]?.kind === 'ad') $('story-ad-countdown').textContent = `${Math.max(0, Math.ceil((state.duration - state.elapsed) / 1000))}s`;
+    if (state.elapsed >= state.duration) return showNextStory(true);
+    state.raf = requestAnimationFrame(tick);
+  };
+  state.raf = requestAnimationFrame(tick);
+}
+
+function renderCurrentStory() {
+  stopStoryPlayback();
+  if (storyIndex < 0 || storyIndex >= storySequence.length) return closeStoryViewer();
+  const item = storySequence[storyIndex];
+  const isAd = item.kind === 'ad';
+  const owner = isAd ? item.advertiser : item.owner;
+  renderStoryProgress();
+  $('story-viewer-avatar').innerHTML = avatarHTML(owner || { id: 'vchat', username: 'Vchat', avatar: '💬' }, 40);
+  $('story-viewer-name').textContent = owner?.username || 'Vchat';
+  $('story-viewer-time').textContent = isAd ? 'Promoted story' : rowTime(item.createdAt);
+  $('story-sponsored').hidden = !isAd;
+  $('story-ad-countdown').hidden = !isAd;
+  $('story-delete').hidden = isAd || !item.mine;
+  $('story-save').hidden = isAd || item.mine || item.canSave !== true;
+  $('story-save').title = item.canSave === true
+    ? 'Save a copy permitted by the Status owner'
+    : 'The Status owner has not enabled saving';
+  $('story-insight').hidden = isAd || !item.mine;
+  $('story-insight').textContent = item.mine ? `${Number(item.viewCount) || 0} view${Number(item.viewCount) === 1 ? '' : 's'} · ${Number(item.reactionCount) || 0} reactions` : '';
+  $('story-reactions').hidden = isAd || item.mine;
+  $('story-reactions').innerHTML = isAd || item.mine ? '' : storyReactions.map(reaction => `<button class="story-reaction${item.myReaction === reaction ? ' selected' : ''}" type="button" data-reaction="${reaction}" aria-label="React ${reaction}">${reaction}</button>`).join('');
+  $('story-reactions').querySelectorAll('.story-reaction').forEach(button => {
+    button.onclick = () => reactToStory(item, button.dataset.reaction);
+  });
+
+  const cta = $('story-ad-cta');
+  const destination = isAd && /^https?:\/\//i.test(item.destinationUrl || '') ? item.destinationUrl : null;
+  const internalAction = isAd && ['profile_visits', 'messages'].includes(item.objective)
+    && item.advertiser?.id && item.advertiser.id !== me.id;
+  cta.hidden = !destination && !internalAction;
+  cta.textContent = item.cta || (item.objective === 'messages' ? 'Send message' : 'Learn more');
+  cta.href = destination || '#';
+  cta.target = destination ? '_blank' : '';
+  cta.onclick = destination ? () => {
+    api(`/api/story-ads/${encodeURIComponent(item.id)}/click`, {}).catch(() => {});
+  } : (internalAction ? event => {
+    event.preventDefault();
+    api(`/api/story-ads/${encodeURIComponent(item.id)}/click`, {}).catch(() => {});
+    closeStories();
+    socket.emit('chat:startDM', { targetUserId: item.advertiser.id }, result => {
+      if (result?.error) return toast(result.error);
+      if (!result?.chat) return;
+      openChat(result.chat.id);
+      if (item.objective === 'profile_visits') {
+        if (item.advertiser.accountType === 'business') openBusinessPage(item.advertiser.id);
+        else setTimeout(openDrawer, 0);
+      }
+    });
+  } : null);
+
+  const stage = $('story-stage');
+  stage.innerHTML = '';
+  if (item.type === 'image' && item.mediaUrl) {
+    const image = el('img', 'story-stage-media');
+    image.alt = item.text || `${owner?.username || 'Contact'} status`;
+    image.src = item.mediaUrl;
+    stage.appendChild(image);
+    if (item.text) stage.appendChild(el('div', 'story-stage-caption', esc(item.text)));
+    startStoryPlayback(isAd ? 30000 : 6500);
+  } else if (item.type === 'video' && item.mediaUrl) {
+    const video = el('video', 'story-stage-media');
+    video.src = item.mediaUrl;
+    video.playsInline = true;
+    video.preload = lite ? 'none' : 'metadata';
+    video.loop = isAd;
+    video.onloadedmetadata = () => {
+      const normalDuration = Number.isFinite(video.duration) ? Math.min(60000, Math.max(3000, video.duration * 1000)) : 10000;
+      if (!isAd) startStoryPlayback(normalDuration);
+      video.play().catch(() => { video.controls = true; });
+    };
+    video.onerror = () => toast('This status video is unavailable');
+    stage.appendChild(video);
+    if (item.text) stage.appendChild(el('div', 'story-stage-caption', esc(item.text)));
+    startStoryPlayback(isAd ? 30000 : 10000);
+  } else {
+    const headline = isAd && item.headline ? `<div>${esc(item.headline)}</div>` : '';
+    const detail = item.text ? `<small>${esc(item.text)}</small>` : '';
+    const text = el('div', `story-stage-text ${storyBackgroundClass(item.background)}`, `${headline || (!isAd ? esc(item.text) : '')}${isAd ? detail : ''}`);
+    stage.appendChild(text);
+    startStoryPlayback(isAd ? 30000 : 6500);
+  }
+
+  if (isAd) {
+    api(`/api/story-ads/${encodeURIComponent(item.id)}/impression`, {}).catch(() => {});
+    } else if (!item.mine) {
+    api(`/api/stories/${encodeURIComponent(item.id)}/view`, {}).then(({ ok, data }) => {
+      if (ok && storySequence[storyIndex]?.id === item.id) Object.assign(item, data.story || {}, { seen: true });
+    }).catch(() => {});
+  }
+}
+
+function showNextStory(adFinished = false) {
+  if (storySequence[storyIndex]?.kind === 'ad' && !adFinished) {
+    toast(`Sponsored story · ${$('story-ad-countdown').textContent || '30s'} remaining`);
+    return;
+  }
+  if (storyIndex >= storySequence.length - 1) {
+    closeStoryViewer();
+    loadStories({ quiet: true });
+    return;
+  }
+  storyIndex += 1;
+  renderCurrentStory();
+}
+
+function showPreviousStory() {
+  if (storyIndex <= 0) return;
+  storyIndex -= 1;
+  renderCurrentStory();
+}
+
+async function reactToStory(item, reaction) {
+  const desired = item.myReaction === reaction ? null : reaction;
+  const { ok, data } = await api(`/api/stories/${encodeURIComponent(item.id)}/reaction`, { reaction: desired }, { method: 'PUT' });
+  if (!ok) return toast(data.error || 'Could not send reaction');
+  Object.assign(item, data.story || {});
+  renderCurrentStory();
+  toast(desired ? `Reacted ${desired}` : 'Reaction removed');
+}
+
+async function saveCurrentStory() {
+  const item = storySequence[storyIndex];
+  if (!item || item.kind === 'ad' || item.mine || item.canSave !== true) {
+    return toast('The Status owner has not allowed saving');
+  }
+  const button = $('story-save');
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/stories/${encodeURIComponent(item.id)}/save`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || 'Saving is no longer allowed');
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition') || '';
+    const matchedName = disposition.match(/filename="?([^";]+)"?/i)?.[1];
+    const extension = item.type === 'text' ? 'txt'
+      : item.mimeType === 'image/png' ? 'png'
+        : item.mimeType === 'image/webp' ? 'webp'
+          : item.mimeType === 'image/jpeg' ? 'jpg'
+            : item.mimeType === 'video/webm' ? 'webm'
+              : item.mimeType === 'video/quicktime' ? 'mov' : 'mp4';
+    const url = URL.createObjectURL(blob);
+    const download = el('a');
+    download.href = url;
+    download.download = matchedName || `vchat-status-${item.id}.${extension}`;
+    document.body.appendChild(download);
+    download.click();
+    download.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast('Status saved with the owner’s permission');
+  } catch (error) {
+    toast(error.message || 'Could not save this Status');
+    loadStories({ quiet: true }).catch(() => {});
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function deleteCurrentStory() {
+  const item = storySequence[storyIndex];
+  if (!item?.mine || !confirm('Delete this status?')) return;
+  const { ok, data } = await api(`/api/stories/${encodeURIComponent(item.id)}`, {}, { method: 'DELETE' });
+  if (!ok) return toast(data.error || 'Could not delete status');
+  toast('Status deleted');
+  closeStoryViewer();
+  loadStories();
+}
+
+function cleanupStoryComposer() {
+  storyUploadRequest?.abort();
+  storyUploadRequest = null;
+  storyPublishing = false;
+  if (storyPreviewUrl) URL.revokeObjectURL(storyPreviewUrl);
+  storyPreviewUrl = null;
+  storyFile = null;
+  $('story-file-input').value = '';
+}
+
+function updateStoryComposePreview() {
+  const preview = $('story-compose-preview');
+  preview.className = `story-compose-preview ${storyBackgroundClass(storyBackground)}`;
+  preview.innerHTML = '';
+  if (storyFile) {
+    const media = document.createElement(storyFile.type.startsWith('video/') ? 'video' : 'img');
+    media.src = storyPreviewUrl;
+    if (media.tagName === 'VIDEO') { media.muted = true; media.loop = true; media.autoplay = true; media.playsInline = true; }
+    media.alt = '';
+    preview.appendChild(media);
+  } else {
+    const text = $('story-text').value.trim();
+    preview.textContent = text || 'Write a status or choose a photo or video';
+  }
+}
+
+function openStoryComposer() {
+  cleanupStoryComposer();
+  storyBackground = 'jade';
+  $('story-text').value = '';
+  $('story-file-name').textContent = '';
+  $('story-media-remove').hidden = true;
+  $('story-allow-save').checked = false;
+  $('story-boost-toggle').checked = false;
+  $('story-boost-fields').hidden = true;
+  $('boost-objective').value = 'profile_visits';
+  $('boost-url-row').hidden = true;
+  $('boost-url').value = '';
+  $('boost-budget').value = '30';
+  $('boost-days').value = '7';
+  $('boost-email').value = '';
+  $('story-publish-status').textContent = '';
+  $('story-publish').disabled = false;
+  document.querySelectorAll('[data-story-color]').forEach(button => button.classList.toggle('selected', button.dataset.storyColor === 'jade'));
+  updateStoryBoostDisclosure();
+  updateBoostEstimate();
+  updateStoryComposePreview();
+  openModal('modal-story-compose');
+}
+
+function chooseStoryMedia(file) {
+  if (!file) return;
+  const supported = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/quicktime', 'video/webm'];
+  if (!supported.includes(file.type) || file.size > storyMaxBytes) return toast(`Choose a supported photo or video up to ${fileSize(storyMaxBytes)}`);
+  if (storyPreviewUrl) URL.revokeObjectURL(storyPreviewUrl);
+  storyFile = file;
+  storyPreviewUrl = URL.createObjectURL(file);
+  $('story-file-name').textContent = `${file.name} · ${fileSize(file.size)}`;
+  $('story-media-remove').hidden = false;
+  updateStoryComposePreview();
+}
+
+function removeStoryMedia() {
+  if (storyPreviewUrl) URL.revokeObjectURL(storyPreviewUrl);
+  storyPreviewUrl = null;
+  storyFile = null;
+  $('story-file-input').value = '';
+  $('story-file-name').textContent = '';
+  $('story-media-remove').hidden = true;
+  updateStoryComposePreview();
+}
+
+function updateStoryBoostDisclosure() {
+  $('story-boost-disclosure').textContent = storyPaymentConfigured
+    ? 'Boosts require ad review and confirmed payment before delivery. Posting your normal status does not depend on approval.'
+    : 'Billing is not configured. Your status can still post, but this boost will not deliver unless an authorized administrator intentionally grants account credit.';
+}
+
+function updateBoostEstimate() {
+  const budget = Math.max(0, Number($('boost-budget').value) || 0);
+  const days = Math.max(1, Number($('boost-days').value) || 1);
+  $('boost-estimate').textContent = `Pilot reservation: GHS ${budget.toLocaleString()} for up to ${days} day${days === 1 ? '' : 's'} after activation. No delivery forecast or result is guaranteed.`;
+}
+
+async function publishStory() {
+  if (storyPublishing) return;
+  const text = $('story-text').value.trim();
+  const boosted = $('story-boost-toggle').checked;
+  const status = $('story-publish-status');
+  if (!storyFile && !text) { status.textContent = 'Write something or choose a photo or video.'; return; }
+  if (boosted) {
+    if (!/^\S+@\S+\.\S+$/.test($('boost-email').value.trim())) { status.textContent = 'Enter a billing email for your boost.'; return; }
+    if ($('boost-objective').value === 'website_visits' && !/^https?:\/\//i.test($('boost-url').value.trim())) { status.textContent = 'Enter a complete http or https website address.'; return; }
+    const budget = Number($('boost-budget').value);
+    if (!Number.isFinite(budget) || budget < 10 || budget > 10000) { status.textContent = 'Choose a budget from GHS 10 to GHS 10,000.'; return; }
+  }
+  const form = new FormData();
+  form.append('type', storyFile ? (storyFile.type.startsWith('video/') ? 'video' : 'image') : 'text');
+  form.append('text', text);
+  form.append('background', storyBackground);
+  form.append('allowSave', String($('story-allow-save').checked));
+  if (storyFile) form.append('media', storyFile, storyFile.name);
+  form.append('boost', String(boosted));
+  if (boosted) {
+    form.append('objective', $('boost-objective').value);
+    form.append('cta', $('boost-cta').value);
+    form.append('destinationUrl', $('boost-url').value.trim());
+    form.append('adAudience', $('boost-audience').value);
+    form.append('budgetGhs', $('boost-budget').value);
+    form.append('durationDays', $('boost-days').value);
+    form.append('billingEmail', $('boost-email').value.trim());
+  }
+  const request = new XMLHttpRequest();
+  storyUploadRequest = request;
+  storyPublishing = true;
+  $('story-publish').disabled = true;
+  status.style.color = 'var(--text-secondary)';
+  status.textContent = 'Publishing securely… 0%';
+  try {
+    const data = await new Promise((resolve, reject) => {
+      request.open('POST', '/api/stories');
+      request.withCredentials = true;
+      request.responseType = 'json';
+      request.upload.onprogress = event => {
+        if (event.lengthComputable) status.textContent = `Publishing securely… ${Math.min(99, Math.round((event.loaded / event.total) * 100))}%`;
+      };
+      request.onerror = () => reject(new Error('Network error while publishing'));
+      request.onabort = () => reject(Object.assign(new Error('Publishing cancelled'), { name: 'AbortError' }));
+      request.onload = () => {
+        const body = request.response && typeof request.response === 'object' ? request.response : {};
+        if (request.status >= 200 && request.status < 300) resolve(body);
+        else reject(new Error(body.error || 'Could not publish status'));
+      };
+      request.send(form);
+    });
+    storyUploadRequest = null;
+    storyPublishing = false;
+    closeModal('modal-story-compose');
+    await loadStories();
+    if (data.boostError) toast(data.boostError);
+    else toast(data.campaign ? 'Status posted · boost saved for review and payment' : 'Status posted');
+    if (data.payment?.authorizationUrl && confirm('Your status is live. Continue to ValmontPay to pay for this boost?')) {
+      location.assign(data.payment.authorizationUrl);
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') return;
+    storyUploadRequest = null;
+    storyPublishing = false;
+    $('story-publish').disabled = false;
+    status.style.color = 'var(--danger)';
+    status.textContent = error.message || 'Could not publish status';
+  }
+}
+
+function campaignStatusLabel(status) {
+  return String(status || 'pending').replaceAll('_', ' ');
+}
+
+function campaignCard(campaign, admin = false) {
+  const card = el('article', 'campaign-card');
+  const advertiser = admin ? `<p>Advertiser: <strong>${esc(campaign.advertiser?.username || 'Unknown')}</strong></p>` : '';
+  const payment = campaign.paymentStatus ? `<p>Payment: ${esc(campaignStatusLabel(campaign.paymentStatus))} · Review: ${esc(campaignStatusLabel(campaign.reviewStatus))}</p>` : '';
+  card.innerHTML = `<div class="campaign-card-head"><div><h3>${esc(campaign.text || 'Media status promotion')}</h3>${advertiser}<p>${esc(campaign.objective?.replaceAll('_', ' ') || 'Sponsored status')} · GHS ${Number(campaign.budgetGhs || 0).toFixed(2)} · ${Number(campaign.durationDays) || 0} day${Number(campaign.durationDays) === 1 ? '' : 's'}</p>${payment}</div><span class="campaign-state ${esc(campaign.status)}">${esc(campaignStatusLabel(campaign.status))}</span></div><div class="campaign-metrics"><div class="campaign-metric"><strong>${Number(campaign.reachCount) || 0}</strong><span>Reach</span></div><div class="campaign-metric"><strong>${Number(campaign.impressionCount) || 0}</strong><span>Impressions</span></div><div class="campaign-metric"><strong>${Number(campaign.clickCount) || 0}</strong><span>Clicks</span></div></div>`;
+  const actions = el('div', 'campaign-actions');
+  if (!admin && campaign.status === 'active') {
+    const pause = el('button', '', 'Pause delivery');
+    pause.type = 'button';
+    pause.onclick = () => controlStoryCampaign(campaign.id, 'pause');
+    actions.appendChild(pause);
+  }
+  if (!admin && campaign.status === 'paused') {
+    const resume = el('button', '', 'Resume delivery');
+    resume.type = 'button';
+    resume.onclick = () => controlStoryCampaign(campaign.id, 'resume');
+    actions.appendChild(resume);
+  }
+  if (!admin && !['completed', 'expired', 'rejected', 'stopped'].includes(campaign.status)) {
+    const stop = el('button', '', 'Stop campaign');
+    stop.type = 'button';
+    stop.onclick = () => controlStoryCampaign(campaign.id, 'stop');
+    actions.appendChild(stop);
+  }
+  if (!admin && campaign.checkoutUrl && !['paid', 'waived'].includes(campaign.paymentStatus)) {
+    const pay = el('a', '', 'Continue secure payment');
+    pay.href = campaign.checkoutUrl;
+    pay.rel = 'noopener noreferrer';
+    actions.appendChild(pay);
+  } else if (!admin && storyPaymentConfigured && ['failed', 'configuration_required'].includes(campaign.paymentStatus)
+      && !['completed', 'expired', 'rejected', 'stopped'].includes(campaign.status)) {
+    const retry = el('button', '', 'Start ValmontPay checkout');
+    retry.type = 'button';
+    retry.onclick = () => initializeStoryBoostPayment(campaign.id, retry);
+    actions.appendChild(retry);
+  }
+  if (campaign.reviewNote) actions.appendChild(el('span', '', `Review note: ${esc(campaign.reviewNote)}`));
+  if (campaign.reviewer) {
+    const reviewedWhen = campaign.reviewedAt ? ` · ${esc(new Date(campaign.reviewedAt).toLocaleString())}` : '';
+    actions.appendChild(el('span', '', `Reviewed by ${esc(campaign.reviewer.username || 'administrator')}${reviewedWhen}`));
+  }
+  if (campaign.stopNote || campaign.stopActor) {
+    const stoppedWhen = campaign.stoppedAt ? ` · ${esc(new Date(campaign.stoppedAt).toLocaleString())}` : '';
+    const stoppedBy = campaign.stopActor?.username ? ` by ${esc(campaign.stopActor.username)}` : '';
+    actions.appendChild(el('span', '', `Stopped${stoppedBy}${stoppedWhen}${campaign.stopNote ? ` · ${esc(campaign.stopNote)}` : ''}`));
+  }
+  if (admin && ['active', 'paused'].includes(campaign.status)) {
+    const stop = el('button', '', 'Stop delivery');
+    stop.type = 'button';
+    stop.onclick = () => controlStoryCampaign(campaign.id, 'stop', true);
+    actions.appendChild(stop);
+  }
+  if (admin && campaign.reviewStatus === 'pending' && campaign.status !== 'stopped') {
+    const approve = el('button', '', 'Approve');
+    approve.onclick = () => reviewCampaign(campaign.id, 'approve', false);
+    const reject = el('button', '', 'Reject');
+    reject.onclick = () => reviewCampaign(campaign.id, 'reject', false);
+    actions.appendChild(approve);
+    if (campaign.paymentStatus !== 'paid') {
+      const credit = el('button', '', 'Approve with account credit');
+      credit.onclick = () => reviewCampaign(campaign.id, 'approve', true);
+      actions.appendChild(credit);
+    }
+    actions.appendChild(reject);
+  }
+  if (actions.childNodes.length) card.appendChild(actions);
+  return card;
+}
+
+async function initializeStoryBoostPayment(campaignId, button) {
+  button.disabled = true;
+  const { ok, data } = await api(
+    `/api/story-ads/${encodeURIComponent(campaignId)}/payment/initialize`,
+    {},
+    { method: 'POST' },
+  );
+  if (!ok) {
+    button.disabled = false;
+    return toast(data.error || 'ValmontPay checkout could not be started');
+  }
+  if (!data.payment?.authorizationUrl) {
+    button.disabled = false;
+    return toast('ValmontPay did not return a checkout address');
+  }
+  location.assign(data.payment.authorizationUrl);
+}
+
+async function controlStoryCampaign(campaignId, action, asAdmin = false) {
+  let note = '';
+  if (asAdmin) {
+    note = prompt('Safety reason shown to the advertiser:', 'Advertising policy or safety action');
+    if (note == null || !note.trim()) return;
+  } else {
+    const warning = action === 'stop'
+      ? 'Stop this campaign permanently? This does not automatically issue a payment refund.'
+      : `${action === 'pause' ? 'Pause' : 'Resume'} this campaign?`;
+    if (!confirm(warning)) return;
+  }
+  const { ok, data } = await api(
+    `/api/story-ads/${encodeURIComponent(campaignId)}/control`,
+    { action, note },
+    { method: 'PUT' },
+  );
+  if (!ok) return toast(data.error || 'Could not update campaign delivery');
+  toast(`Campaign ${campaignStatusLabel(data.campaign.status)}`);
+  if (asAdmin) await openStoryReview();
+  else await openStoryBoosts();
+}
+
+async function openStoryBoosts() {
+  openModal('modal-story-boosts');
+  $('story-campaign-list').innerHTML = '<div class="empty-list">Loading boosts…</div>';
+  const { ok, data } = await api('/api/story-ads/campaigns');
+  if (!ok) { $('story-campaign-list').innerHTML = `<div class="empty-list">${esc(data.error || 'Could not load boosts')}</div>`; return; }
+  const list = $('story-campaign-list');
+  list.innerHTML = '';
+  if (!data.campaigns?.length) list.innerHTML = '<div class="empty-list">No boosted status posts yet.</div>';
+  else data.campaigns.forEach(campaign => list.appendChild(campaignCard(campaign)));
+}
+
+async function openStoryReview() {
+  if (!storyAdAdmin) return;
+  openModal('modal-story-review');
+  $('story-review-list').innerHTML = '<div class="empty-list">Loading review queue…</div>';
+  const { ok, data } = await api('/api/story-ads/review');
+  if (!ok) { $('story-review-list').innerHTML = `<div class="empty-list">${esc(data.error || 'Could not load review queue')}</div>`; return; }
+  const list = $('story-review-list');
+  list.innerHTML = '';
+  if (!data.campaigns?.length) list.innerHTML = '<div class="empty-list">No campaigns to review.</div>';
+  else data.campaigns.forEach(campaign => list.appendChild(campaignCard(campaign, true)));
+}
+
+async function reviewCampaign(id, decision, waivePayment) {
+  const message = waivePayment
+    ? 'Granting account credit intentionally waives payment and may activate this ad. Continue?'
+    : `${decision === 'approve' ? 'Approve' : 'Reject'} this campaign?`;
+  if (!confirm(message)) return;
+  let note = '';
+  if (waivePayment) note = prompt('Required account-credit authorization reason:', 'Approved promotional account credit');
+  else if (decision === 'reject') note = prompt('Reason shown to the advertiser:', 'Creative does not meet advertising policy');
+  if ((waivePayment || decision === 'reject') && (note == null || !note.trim())) return;
+  const { ok, data } = await api(`/api/story-ads/${encodeURIComponent(id)}/review`, { decision, waivePayment, note }, { method: 'PUT' });
+  if (!ok) return toast(data.error || 'Could not review campaign');
+  toast(waivePayment ? 'Approved with documented account credit' : `Campaign ${decision}d`);
+  openStoryReview();
+}
+
+async function verifyReturnedBoostPayment() {
+  const params = new URLSearchParams(location.search);
+  if (params.get('boost_return') !== '1') return;
+  const reference = params.get('reference') || params.get('ref');
+  params.delete('boost_return');
+  params.delete('reference');
+  params.delete('ref');
+  params.delete('status');
+  params.delete('merchant');
+  const remaining = params.toString();
+  history.replaceState({}, '', `${location.pathname}${remaining ? `?${remaining}` : ''}${location.hash}`);
+  if (!reference) return toast('Returned from checkout without a payment reference');
+  const { ok, data } = await api(`/api/story-ads/payment/verify?reference=${encodeURIComponent(reference)}`);
+  toast(ok ? 'Boost payment confirmed. Delivery starts after ad review.' : (data.error || 'Payment could not be verified'));
+  if (ok) openStoryBoosts();
+}
+
+
+
+
+function collectDeviceSettings() {
+  return {
+    theme: document.body.classList.contains('dark') ? 'dark' : 'light',
+    lite: !!lite,
+    wallpaper: loadWallpaper(),
+    notifications: { ...notificationPrefs },
+  };
+}
+
+async function pushDeviceSettings() {
+  if (!me) return;
+  try {
+    const { ok, data } = await api('/api/account/settings', collectDeviceSettings(), { method: 'PUT' });
+    if (ok && data.settings) me.settings = data.settings;
+  } catch { /* offline — local values remain */ }
+}
+
+function applyDeviceSettings(settings) {
+  if (!settings) return;
+  const theme = settings.theme === 'dark' ? 'dark' : 'light';
+  document.body.classList.toggle('dark', theme === 'dark');
+  localStorage.setItem('vchat.theme', theme);
+  if (settings.wallpaper) {
+    saveWallpaper(settings.wallpaper);
+    applyWallpaper();
+  }
+  if (typeof settings.lite === 'boolean') {
+    lite = settings.lite;
+    localStorage.setItem('vchat.lite', lite ? '1' : '0');
+    document.body.classList.toggle('lite', lite);
+  }
+  if (settings.notifications) {
+    notificationPrefs = { ...NOTIFICATION_DEFAULTS, ...settings.notifications };
+    localStorage.setItem('vchat.notifications', JSON.stringify(notificationPrefs));
+  }
+}
+
+function updateTransportSwitch() {
+  const bar = $('transport-switch');
+  if (!bar) return;
+  const chat = activeChat();
+  const show = chat?.type === 'dm';
+  bar.hidden = !show;
+  if (!show) return;
+  const current = chat.transport === 'sms' ? 'sms' : 'cloud';
+  const panel = $('chat-panel');
+  if (panel) panel.dataset.transport = current;
+  bar.querySelectorAll('[data-transport]').forEach(btn => {
+    btn.classList.toggle('on', btn.dataset.transport === current);
+    btn.setAttribute('aria-pressed', String(btn.dataset.transport === current));
+  });
+  if (canSendTo(chat)) {
+    $('msg-input').placeholder = current === 'sms' ? 'Text message (SMS)' : 'Type a message';
+  }
+}
+
+function setActiveTransport(transport) {
+  const chat = activeChat();
+  if (!chat || chat.type !== 'dm') return;
+  socket.emit('chat:setTransport', { chatId: chat.id, transport }, res => {
+    if (res?.error) return toast(res.error);
+    chat.transport = res.transport;
+    updateTransportSwitch();
+    toast(res.transport === 'sms' ? 'Sending as SMS' : 'Sending via VChat Cloud');
+  });
+}
+
+async function openBackup() {
+  const settings = me?.settings || collectDeviceSettings();
+  $('backup-last').textContent = settings.updatedAt
+    ? `${dayLabel(settings.updatedAt)} · ${timeOf(settings.updatedAt)}`
+    : 'Not yet backed up from this account';
+  $('backup-status').textContent = '';
+  openModal('modal-backup');
+}
+
+async function backupNow() {
+  $('backup-status').textContent = 'Saving theme, wallpaper, and settings to VChat Cloud…';
+  const { ok, data } = await api('/api/account/settings', collectDeviceSettings(), { method: 'PUT' });
+  if (!ok) {
+    $('backup-status').textContent = data.error || 'Backup failed';
+    return toast(data.error || 'Backup failed');
+  }
+  me.settings = data.settings;
+  $('backup-last').textContent = `${dayLabel(data.settings.updatedAt)} · ${timeOf(data.settings.updatedAt)}`;
+  $('backup-status').textContent = 'Cloud backup updated. Chat history was already in VChat Cloud.';
+  toast('Backup saved');
+}
+
+async function restoreBackup() {
+  const { ok, data } = await api('/api/account/settings');
+  if (!ok || !data.settings) return toast(data?.error || 'No cloud backup found');
+  applyDeviceSettings(data.settings);
+  me.settings = data.settings;
+  $('backup-last').textContent = `${dayLabel(data.settings.updatedAt)} · ${timeOf(data.settings.updatedAt)}`;
+  $('backup-status').textContent = 'Settings, theme, and wallpaper restored from VChat Cloud.';
+  toast('Restored from cloud backup');
+}
+
+async function downloadBackupFile() {
+  const pin = prompt('Enter your 6-digit two-step PIN to download a backup file');
+  if (pin == null) return;
+  const response = await fetch('/api/account/export', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ currentPin: pin }),
+    credentials: 'same-origin',
+  });
+  if (!response.ok) return toast('Could not download backup. Check your two-step PIN.');
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `vchat-backup-${me.id}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Backup file downloaded');
+}
+
+// ── Secret chats (device-held E2E) ─────────────────────────────────────
+const SECRET_DB_NAME = 'vchat-secret';
+const SECRET_DB_VERSION = 1;
+const secretKeyCache = new Map();
+
+function bytesToB64url(bytes) {
+  let bin = '';
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  view.forEach(b => { bin += String.fromCharCode(b); });
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function b64urlToBytes(value) {
+  const padded = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(padded + '==='.slice((padded.length + 3) % 4));
+  return Uint8Array.from(bin, ch => ch.charCodeAt(0));
+}
+function openSecretDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(SECRET_DB_NAME, SECRET_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('keys')) db.createObjectStore('keys');
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function loadSecretKeyPair(chatId) {
+  const cacheKey = `${me?.id}:${chatId}`;
+  if (secretKeyCache.has(cacheKey)) return secretKeyCache.get(cacheKey);
+  if (!me?.id || !window.indexedDB || !window.crypto?.subtle) return null;
+  const db = await openSecretDb();
+  const record = await new Promise((resolve, reject) => {
+    const tx = db.transaction('keys', 'readonly');
+    const req = tx.objectStore('keys').get(cacheKey);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+  if (!record?.privateJwk) return null;
+  const pair = {
+    privateKey: await crypto.subtle.importKey('jwk', record.privateJwk, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveKey']),
+    publicKey: record.publicKey,
+  };
+  secretKeyCache.set(cacheKey, pair);
+  return pair;
+}
+async function createSecretKeyPair(chatId) {
+  const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']);
+  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+  const publicKey = bytesToB64url(raw);
+  const privateJwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+  const cacheKey = `${me.id}:${chatId || 'pending'}`;
+  if (chatId) {
+    const db = await openSecretDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('keys', 'readwrite');
+      tx.objectStore('keys').put({ privateJwk, publicKey, ownerId: me.id, chatId }, cacheKey);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  const stored = { privateKey: pair.privateKey, publicKey };
+  secretKeyCache.set(cacheKey, stored);
+  return stored;
+}
+async function persistPendingSecretKey(chatId, pair) {
+  const cacheKey = `${me.id}:${chatId}`;
+  const privateJwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+  const db = await openSecretDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction('keys', 'readwrite');
+    tx.objectStore('keys').put({ privateJwk, publicKey: pair.publicKey, ownerId: me.id, chatId }, cacheKey);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  secretKeyCache.set(cacheKey, pair);
+}
+async function deriveSecretAesKey(chat) {
+  const pair = await loadSecretKeyPair(chat.id);
+  const remote = chat.secret?.remotePublicKey;
+  if (!pair || !remote) throw new Error('This device does not have the secret-chat key');
+  const publicKey = await crypto.subtle.importKey(
+    'raw',
+    b64urlToBytes(remote),
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    [],
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'ECDH', public: publicKey },
+    pair.privateKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+async function encryptSecretMessage(chat, plaintext) {
+  const key = await deriveSecretAesKey(chat);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const aad = new TextEncoder().encode(`${chat.id}:${me.id}`);
+  const ct = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: aad },
+    key,
+    new TextEncoder().encode(plaintext),
+  );
+  return { v: 1, alg: 'A256GCM', iv: bytesToB64url(iv), ct: bytesToB64url(new Uint8Array(ct)) };
+}
+async function decryptSecretMessage(chat, message) {
+  const key = await deriveSecretAesKey(chat);
+  const aad = new TextEncoder().encode(`${chat.id}:${message.senderId}`);
+  const pt = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: b64urlToBytes(message.encryption.iv), additionalData: aad },
+    key,
+    b64urlToBytes(message.encryption.ct),
+  );
+  return new TextDecoder().decode(pt);
+}
+async function hydrateSecretMessage(message) {
+  if (!message?.encryption || message.plaintext) {
+    if (message?.plaintext) message.text = message.plaintext;
+    return message;
+  }
+  const chat = chats.find(item => item.id === message.chatId);
+  if (!chat || chat.type !== 'secret') return message;
+  try {
+    message.text = await decryptSecretMessage(chat, message);
+    message.decrypted = true;
+  } catch {
+    message.decryptError = true;
+    message.text = '';
+  }
+  return message;
+}
+async function hydrateSecretThread() {
+  const chat = activeChat();
+  if (!chat || chat.type !== 'secret') return;
+  messages = await Promise.all(messages.map(hydrateSecretMessage));
+}
+
+async function startSecretChatWith(user) {
+  closeModal('modal-newchat');
+  try {
+    const pending = await createSecretKeyPair('pending');
+    socket.emit('chat:startSecret', { targetUserId: user.id, publicKey: pending.publicKey }, async res => {
+      if (res?.error) return toast(res.error);
+      await persistPendingSecretKey(res.chat.id, pending);
+      const idx = chats.findIndex(c => c.id === res.chat.id);
+      if (idx === -1) chats.unshift(res.chat); else chats[idx] = res.chat;
+      openChat(res.chat.id);
+    });
+  } catch (error) {
+    toast(error.message || 'This browser cannot create a secret chat');
+  }
+}
+
+function updateSecretBanner() {
+  const banner = $('secret-banner');
+  if (!banner) return;
+  const chat = activeChat();
+  if (!chat || chat.type !== 'secret') {
+    banner.hidden = true;
+    $('composer').classList.remove('read-only');
+    return;
+  }
+  banner.hidden = false;
+  const incoming = chat.secret?.state === 'pending' && chat.secret.peerId === me.id;
+  const waiting = chat.secret?.state === 'pending' && chat.secret.initiatorId === me.id;
+  $('secret-banner-title').textContent = incoming ? 'Incoming secret chat' : (waiting ? 'Waiting for acceptance' : 'Secret chat');
+  $('secret-banner-note').textContent = incoming
+    ? 'Accept only on this device. Messages never leave here as plaintext.'
+    : (waiting
+      ? 'The other person must accept before you can send encrypted messages.'
+      : 'End-to-end encrypted on this device. The server stores ciphertext only.');
+  $('secret-accept').hidden = !incoming;
+  $('secret-decline').hidden = !incoming;
+  $('secret-ttl').hidden = chat.secret?.state !== 'ready';
+  if (chat.secret?.state !== 'ready') {
+    $('composer').classList.add('read-only');
+    $('msg-input').disabled = true;
+  }
+}
+
+async function acceptActiveSecretChat() {
+  const chat = activeChat();
+  if (!chat) return;
+  try {
+    const pair = await createSecretKeyPair(chat.id);
+    socket.emit('chat:acceptSecret', { chatId: chat.id, publicKey: pair.publicKey }, res => {
+      if (res?.error) return toast(res.error);
+      Object.assign(chat, res.chat);
+      updateHeaderForActive();
+      updateSecretBanner();
+      toast('Secret chat is ready');
+    });
+  } catch (error) {
+    toast(error.message || 'Could not accept this secret chat');
+  }
+}
+
+function declineActiveSecretChat() {
+  const chat = activeChat();
+  if (!chat) return;
+  socket.emit('chat:declineSecret', { chatId: chat.id }, res => {
+    if (res?.error) return toast(res.error);
+    chats = chats.filter(c => c.id !== chat.id);
+    closeChat();
+    renderChatList();
+  });
+}
+
+// ── Hybrid WhatsApp + Telegram helpers ────────────────────────────────
+function openSavedMessages() {
+  socket.emit('chat:startDM', { targetUserId: me.id }, res => {
+    if (res?.error) return toast(res.error);
+    if (res?.chat) openChat(res.chat.id);
+  });
+}
+
+function hideMentionSuggest() {
+  const box = $('mention-suggest');
+  if (box) { box.hidden = true; box.innerHTML = ''; }
+}
+
+function mentionCandidates(query) {
+  const chat = activeChat();
+  if (!chat || (chat.type !== 'group' && chat.type !== 'saved')) return [];
+  const q = String(query || '').toLowerCase();
+  const people = (chat.members || []).map(id => users.find(u => u.id === id)).filter(Boolean);
+  const extras = chat.type === 'group' ? [{ id: 'all', username: 'all', handle: 'all', about: 'Notify everyone' }] : [];
+  return [...extras, ...people]
+    .filter(u => !q || (u.handle || '').includes(q) || (u.username || '').toLowerCase().includes(q))
+    .slice(0, 8);
+}
+
+function updateMentionSuggest() {
+  const input = $('msg-input');
+  const box = $('mention-suggest');
+  if (!input || !box) return;
+  const upto = input.value.slice(0, input.selectionStart || input.value.length);
+  const match = upto.match(/(^|\s)@([a-zA-Z0-9_]*)$/);
+  if (!match) return hideMentionSuggest();
+  const items = mentionCandidates(match[2]);
+  if (!items.length) return hideMentionSuggest();
+  box.hidden = false;
+  box.innerHTML = '';
+  items.forEach((u, index) => {
+    const btn = el('button', index === 0 ? 'on' : '', `${avatarHTML(u, 32)}<span>${esc(u.username)} <small>@${esc(u.handle || u.username)}</small></span>`);
+    btn.type = 'button';
+    btn.onclick = () => insertMention(u.handle || u.username);
+    box.appendChild(btn);
+  });
+}
+
+function insertMention(handle) {
+  const input = $('msg-input');
+  const start = input.selectionStart || input.value.length;
+  const upto = input.value.slice(0, start);
+  const rest = input.value.slice(start);
+  const next = upto.replace(/(^|\s)@([a-zA-Z0-9_]*)$/, `$1@${handle} `) + rest;
+  input.value = next;
+  hideMentionSuggest();
+  input.focus();
+  updateSendBtn();
+}
+
+function currentPinnedMessage() {
+  const now = Date.now();
+  return [...messages].reverse().find(m => m.pinnedUntil && m.pinnedUntil > now) || null;
+}
+
+function updatePinBar() {
+  const bar = $('pin-bar');
+  if (!bar) return;
+  const pinned = currentPinnedMessage();
+  if (!pinned) { bar.hidden = true; return; }
+  bar.hidden = false;
+  $('pin-bar-text').textContent = pinned.text || pinned.file?.name || 'Pinned message';
+  bar.onclick = () => jumpToMessage(pinned.id);
+}
+
+function jumpToMessage(id) {
+  const row = document.querySelector(`.msg-row[data-id="${CSS.escape(id)}"]`);
+  if (!row) return;
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  row.classList.add('search-hit');
+  setTimeout(() => row.classList.remove('search-hit'), 1200);
+}
+
+let inChatHits = [];
+let inChatHitIndex = -1;
+function toggleInChatSearch(on) {
+  const bar = $('inchat-search');
+  if (!bar) return;
+  bar.hidden = !on;
+  if (on) {
+    $('inchat-search-input').value = '';
+    $('inchat-search-count').textContent = '';
+    $('inchat-search-input').focus();
+  } else {
+    inChatHits = [];
+    document.querySelectorAll('.msg-row.search-hit').forEach(node => node.classList.remove('search-hit'));
+  }
+}
+
+function runInChatSearch(query) {
+  const q = String(query || '').trim().toLowerCase();
+  document.querySelectorAll('.msg-row.search-hit').forEach(node => node.classList.remove('search-hit'));
+  if (!q) { $('inchat-search-count').textContent = ''; inChatHits = []; return; }
+  inChatHits = messages.filter(m => String(m.text || '').toLowerCase().includes(q));
+  inChatHitIndex = inChatHits.length ? 0 : -1;
+  $('inchat-search-count').textContent = inChatHits.length ? `1 / ${inChatHits.length}` : '0';
+  if (inChatHits[0]) jumpToMessage(inChatHits[0].id);
+}
+
+function stepInChatSearch(dir) {
+  if (!inChatHits.length) return;
+  inChatHitIndex = (inChatHitIndex + dir + inChatHits.length) % inChatHits.length;
+  $('inchat-search-count').textContent = `${inChatHitIndex + 1} / ${inChatHits.length}`;
+  jumpToMessage(inChatHits[inChatHitIndex].id);
+}
+
+function openStarredMessages() {
+  socket.emit('messages:starred', {}, res => {
+    const box = $('starred-list');
+    box.innerHTML = '';
+    const items = res?.items || [];
+    if (!items.length) box.appendChild(el('div', 'empty-list', 'No starred messages yet.'));
+    items.forEach(({ chat, message }) => {
+      const row = el('div', 'hybrid-item', `<strong>${esc(chat.name)}</strong><span>${esc(message.text || previewOf(message))}</span><em>${dayLabel(message.timestamp)} · ${timeOf(message.timestamp)}</em>`);
+      row.onclick = () => { closeModal('modal-starred'); openChat(chat.id); setTimeout(() => jumpToMessage(message.id), 250); };
+      box.appendChild(row);
+    });
+    openModal('modal-starred');
+  });
+}
+
+function openCallHistory() {
+  socket.emit('calls:history', {}, res => {
+    const box = $('call-history-list');
+    box.innerHTML = '';
+    const items = res?.items || [];
+    if (!items.length) box.appendChild(el('div', 'empty-list', 'No calls yet. Start one from a chat header.'));
+    items.forEach(({ chat, message }) => {
+      const call = message.call || {};
+      const row = el('div', 'hybrid-item', `<strong>${esc(chat.name)}</strong><span>${esc(call.media === 'video' ? 'Video' : 'Voice')} · ${esc(call.outcome || 'call')}</span><em>${dayLabel(message.timestamp)} · ${timeOf(message.timestamp)}</em>`);
+      row.onclick = () => { closeModal('modal-calls'); openChat(chat.id); };
+      box.appendChild(row);
+    });
+    openModal('modal-calls');
+  });
+}
+
+function openMessageInfo(m) {
+  const body = $('message-info-body');
+  const readers = (m.readBy || []).map(id => users.find(u => u.id === id)?.username || 'Someone');
+  const delivered = (m.deliveredTo || []).map(id => users.find(u => u.id === id)?.username || 'Someone');
+  body.innerHTML = `
+    <div class="drawer-label">Sent</div><div class="drawer-value">${esc(dayLabel(m.timestamp))} · ${esc(timeOf(m.timestamp))}</div>
+    <div class="drawer-label" style="margin-top:14px">Delivered to</div><div class="drawer-value">${esc(delivered.join(', ') || 'Waiting')}</div>
+    <div class="drawer-label" style="margin-top:14px">Read by</div><div class="drawer-value">${esc(readers.join(', ') || 'Not yet')}</div>
+    ${m.silent ? '<p class="setting-explainer">Sent silently — no push sound.</p>' : ''}
+    ${m.mentions?.length ? `<p class="setting-explainer">Mentions: ${m.mentions.length}</p>` : ''}`;
+  openModal('modal-message-info');
+}
+
+function renderSharedMedia(container, chat) {
+  const media = messages.filter(m => m.file && /^(image|video)\//.test(m.file.mimeType || '') && m.file.url);
+  if (!media.length) return;
+  container.appendChild(el('div', 'drawer-label', 'Shared media'));
+  const grid = el('div', 'shared-media-grid');
+  media.slice(-12).reverse().forEach(m => {
+    const tag = (m.file.mimeType || '').startsWith('video/') ? 'video' : 'img';
+    const node = document.createElement(tag);
+    node.src = m.file.url;
+    if (tag === 'video') node.muted = true;
+    node.onclick = () => { if (tag === 'img') openLightbox(m.file.url, m.file.name); else jumpToMessage(m.id); };
+    grid.appendChild(node);
+  });
+  container.appendChild(grid);
+}
+
+function wireHybrid() {
+  $('transport-switch').querySelectorAll('[data-transport]').forEach(btn => {
+    btn.onclick = () => setActiveTransport(btn.dataset.transport);
+  });
+  $('login-get-app')?.addEventListener('click', openGetApp);
+  $('get-app-pwa')?.addEventListener('click', () => {
+    closeModal('modal-get-app');
+    installApp();
+  });
+  $('backup-now').onclick = backupNow;
+  $('backup-restore').onclick = restoreBackup;
+  $('backup-download').onclick = downloadBackupFile;
+  $('secret-accept').onclick = acceptActiveSecretChat;
+  $('secret-decline').onclick = declineActiveSecretChat;
+  $('secret-ttl').onclick = () => activeChat() && chooseDisappearing(activeChat());
+  $('inchat-search-close').onclick = () => toggleInChatSearch(false);
+  $('inchat-search-input').oninput = e => runInChatSearch(e.target.value);
+  $('inchat-search-prev').onclick = () => stepInChatSearch(-1);
+  $('inchat-search-next').onclick = () => stepInChatSearch(1);
+  document.querySelectorAll('#bottom-nav [data-nav]').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('#bottom-nav [data-nav]').forEach(b => b.classList.toggle('on', b === btn));
+      if (btn.dataset.nav === 'status') openStories();
+      else if (btn.dataset.nav === 'calls') openCallHistory();
+      else { closeChat(); setFilter('all'); }
+    };
+  });
+  document.addEventListener('click', e => {
+    const mention = e.target.closest?.('.mention[data-handle]');
+    if (!mention || !me) return;
+    const handle = mention.dataset.handle;
+    if (!handle || handle === 'all' || handle === me.handle) return;
+    const user = users.find(u => u.handle === handle);
+    if (!user) return toast(`@${handle} is not in your contacts yet`);
+    socket.emit('chat:startDM', { targetUserId: user.id }, res => res?.chat && openChat(res.chat.id));
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      if (!$('inchat-search').hidden) return toggleInChatSearch(false);
+      if (activeId && window.innerWidth <= 900) closeChat();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      $('search-input').focus();
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && document.activeElement === $('msg-input')) {
+      e.preventDefault();
+      sendMessage({ silent: true });
+      toast('Sent silently');
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && activeId) {
+      e.preventDefault();
+      toggleInChatSearch(true);
+    }
+  });
+}
+
 // ── Chat wallpaper ─────────────────────────────────────────────────────
 const WP_KEY = 'vchat.wallpaper';
 const WALLPAPERS = [
-  { id: 'default', name: 'Doodle' },
+  { id: 'default', name: 'Default' },
   { id: 'navy', name: 'Navy' },
   { id: 'dusk', name: 'Dusk' },
   { id: 'ember', name: 'Ember' },
   { id: 'kente', name: 'Kente' },
-  { id: 'grid', name: 'Grid' },
   { id: 'mist', name: 'Mist' },
+  { id: 'grid', name: 'Grid' },
   { id: 'plain', name: 'Plain' },
 ];
 
 function loadWallpaper() {
-  try { return JSON.parse(localStorage.getItem(WP_KEY) || '{}'); }
+  try { return JSON.parse(localStorage.getItem(WP_KEY) || '{}') || {}; }
   catch { return {}; }
 }
-
 function saveWallpaper(state) {
   try { localStorage.setItem(WP_KEY, JSON.stringify(state)); }
   catch { toast('Could not save wallpaper — storage is full'); }
 }
-
 function applyWallpaper() {
   const state = loadWallpaper();
   const id = WALLPAPERS.some(w => w.id === state.id) || state.id === 'custom' ? state.id : 'default';
   const panel = $('chat-panel');
   if (!panel) return;
-  panel.dataset.wp = id;
+  panel.dataset.wp = id === 'default' ? '' : id;
   if (id === 'custom' && state.photo) {
     panel.style.setProperty('--wp-photo', `url("${state.photo}")`);
     panel.style.setProperty('--wp-dim', String((state.dim ?? 40) / 100));
@@ -1984,23 +4828,20 @@ function applyWallpaper() {
     panel.style.removeProperty('--wp-dim');
   }
 }
-
 function setWallpaper(id, extra = {}) {
   const prev = loadWallpaper();
   const next = { ...prev, id, ...extra };
-  if (id !== 'custom') delete next.photo;
   saveWallpaper(next);
   applyWallpaper();
   renderWallpaperGrid();
+  pushDeviceSettings();
 }
-
 function renderWallpaperGrid() {
   const box = $('wp-grid');
   if (!box) return;
   const state = loadWallpaper();
   const current = state.id || 'default';
   box.innerHTML = '';
-
   WALLPAPERS.forEach(w => {
     const b = el('button', 'wp-tile' + (current === w.id ? ' on' : ''));
     b.type = 'button';
@@ -2008,61 +4849,52 @@ function renderWallpaperGrid() {
     b.onclick = () => { setWallpaper(w.id); toast(`${w.name} wallpaper`); };
     box.appendChild(b);
   });
-
   const upload = el('button', 'wp-tile upload' + (current === 'custom' ? ' on' : ''));
   upload.type = 'button';
   upload.innerHTML = `${icon('camera')}<span class="wp-name">${current === 'custom' ? 'Change photo' : 'Your photo'}</span>`;
   upload.onclick = () => $('wp-file').click();
-  if (current === 'custom' && state.photo) {
-    upload.style.backgroundImage = `url("${state.photo}")`;
-    upload.style.backgroundSize = 'cover';
-    upload.style.backgroundPosition = 'center';
-    upload.style.color = '#fff';
-  }
   box.appendChild(upload);
-
   const dimRow = $('wp-dim-row');
   const dim = $('wp-dim');
-  const showDim = current === 'custom' && !!state.photo;
-  dimRow.hidden = !showDim;
-  if (showDim) dim.value = String(state.dim ?? 40);
+  if (dimRow && dim) {
+    dimRow.hidden = current !== 'custom';
+    if (Number.isFinite(state.dim)) dim.value = state.dim;
+  }
 }
-
 async function onWallpaperFile(file) {
-  if (!file || !file.type.startsWith('image/')) return toast('Pick a photo');
+  if (!file || !file.type.startsWith('image/')) return toast('Choose an image');
   toast('Preparing wallpaper…');
   try {
     const dataUrl = await wallpaperToDataUrl(file);
     setWallpaper('custom', { photo: dataUrl, dim: Number($('wp-dim').value) || 40 });
     toast('Wallpaper updated');
-  } catch (err) {
-    toast(err.message || 'Could not use that photo');
+  } catch {
+    toast('Could not use that photo');
   }
 }
-
-/** Shrink a photo so it fits in localStorage — no server, no build. */
 function wallpaperToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
-      URL.revokeObjectURL(url);
-      const max = 1400;
-      const scale = Math.min(1, max / Math.max(img.width, img.height));
-      const w = Math.max(1, Math.round(img.width * scale));
-      const h = Math.max(1, Math.round(img.height * scale));
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      const data = canvas.toDataURL('image/jpeg', 0.72);
-      if (data.length > 1.6 * 1024 * 1024) return reject(new Error('That photo is still too large'));
-      resolve(data);
+      try {
+        const max = 1600;
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
+      } catch (error) {
+        URL.revokeObjectURL(url);
+        reject(error);
+      }
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read that photo')); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode')); };
     img.src = url;
   });
 }
-
 function openWallpaper() {
   renderWallpaperGrid();
   openModal('modal-wallpaper');
@@ -2071,19 +4903,32 @@ function openWallpaper() {
 // ── Main menu ──────────────────────────────────────────────────────────
 function mainMenu(e) {
   showCtxMenu(e, [
+    { label: 'Message info', fn: () => openMessageInfo(m) },
     { label: 'New group', fn: openNewGroup },
-    { label: 'Profile', fn: openProfile },
+    { label: 'Saved Messages', fn: openSavedMessages },
+    { label: 'VChat Backup', fn: openBackup },
+    { label: 'New secret chat', fn: openNewChat },
+    { label: 'Starred messages', fn: openStarredMessages },
+    { label: 'Calls', fn: openCallHistory },
     { label: 'Chat wallpaper', fn: openWallpaper },
+    { label: 'Status updates', fn: openStories },
+    { label: document.body.classList.contains('reels-open') ? 'Close reels' : 'Reels · scroll while chatting', fn: toggleReels },
+    { label: 'Profile', fn: openProfile },
+    ...(me?.accountType === 'business' ? [{ label: 'Business page & dashboard', fn: () => openBusinessPage(me.id) }] : []),
+    { label: 'Privacy & security', fn: openPrivacy },
+    { label: 'Notifications & media', fn: openNotifications },
     { label: 'Archived', fn: () => setFilter('archived') },
     { label: 'Call quality', fn: openCallQuality },
+    { label: isNativeApp() ? 'You are in the VChat app' : 'Get the VChat app', fn: openGetApp },
     { label: lite ? 'Lite mode: on' : 'Lite mode: off', fn: openLiteMode },
     { sep: true },
     { label: document.body.classList.contains('dark') ? 'Light mode' : 'Dark mode', fn: toggleTheme },
     { sep: true },
     { label: 'Log out', danger: true, fn: async () => {
-      const token = localStorage.getItem('vchat.token');
       localStorage.removeItem('vchat.token');
-      try { await api('/api/auth/logout', { token }); } catch { /* offline */ }
+      localStorage.removeItem('vchat.outbox');
+      await clearPrivateOutbox(me?.id);
+      try { await api('/api/auth/logout', {}); } catch { /* offline */ }
       location.reload();
     } },
   ]);
@@ -2092,18 +4937,61 @@ function mainMenu(e) {
 function chatMenu(e) {
   const c = activeChat();
   if (!c) return;
+  const canManagePrivacy = c.type !== 'group' || (c.admins || []).includes(me.id);
   showCtxMenu(e, [
     { label: c.type === 'group' ? 'Group info' : 'Contact info', fn: openDrawer },
     { label: 'Wallpaper', fn: openWallpaper },
     { label: c.muted ? 'Unmute notifications' : 'Mute notifications', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'muted', value: !c.muted }) },
+    { label: c.pinned ? 'Unpin chat' : 'Pin chat', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'pinned', value: !c.pinned }) },
+    { label: c.favorite ? 'Remove from Favorites' : 'Add to Favorites', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'favorite', value: !c.favorite }) },
     { label: c.archived ? 'Unarchive chat' : 'Archive chat', fn: () => { socket.emit('chat:flag', { chatId: c.id, flag: 'archived', value: !c.archived }); closeChat(); } },
+    { label: c.locked ? 'Remove chat lock' : 'Lock and hide chat', fn: () => toggleChatLock(c) },
+    ...(canManagePrivacy ? [{ label: 'Disappearing messages', fn: () => chooseDisappearing(c) }] : []),
+    ...(canManagePrivacy ? [{
+      label: c.advancedPrivacy ? 'Turn off advanced chat privacy' : 'Turn on advanced chat privacy',
+      fn: () => {
+        const enabled = !c.advancedPrivacy;
+        const detail = enabled
+          ? 'This limits forwarding and attachment downloads from this chat. Turn it on?'
+          : 'Allow forwarding and attachment downloads from this chat again?';
+        if (!confirm(detail)) return;
+        socket.emit('chat:setAdvancedPrivacy', { chatId: c.id, enabled }, result => result?.error && toast(result.error));
+      },
+    }] : []),
     { sep: true },
     { label: 'Clear messages', danger: true, fn: () => { if (confirm('Clear all messages?')) socket.emit('chat:clear', { chatId: c.id }); } },
     ...(c.id !== 'general' ? [{ label: c.type === 'group' ? 'Exit group' : 'Delete chat', danger: true, fn: () => { if (confirm('Are you sure?')) socket.emit('chat:leave', { chatId: c.id }); } }] : []),
   ]);
 }
 
-function setFilter(f) {
+function chooseDisappearing(chat) {
+  if (chat.type === 'secret') {
+    const answer = prompt('Secret self-destruct: 0, 1, 5, 15, 60 seconds, or 300, 3600, 86400', String(chat.disappearingSeconds || 0));
+    if (answer == null) return;
+    const seconds = Number(answer);
+    if (![0, 1, 5, 15, 60, 300, 3600, 86400].includes(seconds)) return toast('Choose a supported secret-chat timer');
+    socket.emit('chat:setDisappearing', { chatId: chat.id, seconds }, result => {
+      if (result?.error) toast(result.error);
+      else { chat.disappearingSeconds = seconds; updateHeaderForActive(); updateSecretBanner(); }
+    });
+    return;
+  }
+  const answer = prompt('Disappearing messages: enter 0 (off), 1 (day), 7 (days), or 90 (days)', String((chat.disappearingSeconds || 0) / 86400));
+  if (answer == null) return;
+  const days = Number(answer);
+  if (![0, 1, 7, 90].includes(days)) return toast('Choose 0, 1, 7, or 90 days');
+  socket.emit('chat:setDisappearing', { chatId: chat.id, seconds: days * 86400 }, result => {
+    if (result?.error) toast(result.error);
+  });
+}
+
+async function setFilter(f) {
+  if (f === 'locked' && !chatLockIsUnlocked()) {
+    const usePasskey = Number(me?.chatLockPasskeyCount) > 0
+      && confirm('Unlock locked chats with your device passkey? Choose Cancel to use the separate chat-lock PIN.');
+    const unlocked = usePasskey ? await unlockChatLockWithPasskey() : await unlockChatLockWithPin();
+    if (!unlocked) return;
+  }
   filter = f;
   document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.filter === f));
   renderChatList();
@@ -2112,12 +5000,19 @@ function setFilter(f) {
 function toggleTheme() {
   document.body.classList.toggle('dark');
   localStorage.setItem('vchat.theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+  pushDeviceSettings();
 }
 
 // ── Calls (WebRTC) ─────────────────────────────────────────────────────
-const ICE_SERVERS = [
-  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+let ICE_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302'] },
 ];
+async function refreshIceServers() {
+  try {
+    const { ok, data } = await api('/api/calls/ice');
+    if (ok && Array.isArray(data.iceServers) && data.iceServers.length) ICE_SERVERS = data.iceServers;
+  } catch { /* STUN fallback remains available */ }
+}
 
 let call = null;        // { id, chatId, peer, media, role, state }
 let pc = null;          // RTCPeerConnection
@@ -2131,24 +5026,27 @@ function callSupported() {
   return !!(window.RTCPeerConnection && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 }
 
-function callTone(kind) {
+function callTone(kind, force = false) {
   callToneStop();
+  if (!force && !notificationPrefs.callSounds) return;
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx.resume?.();
     const ctx = audioCtx;
     const gain = ctx.createGain();
     gain.gain.value = kind === 'ring' ? 0.05 : 0.035;
     gain.connect(ctx.destination);
+    const ringtone = notificationPrefs.ringtone;
     const beat = () => {
       const o = ctx.createOscillator();
       const g = ctx.createGain();
-      o.type = 'sine';
-      o.frequency.value = kind === 'ring' ? 520 : 440;
+      o.type = ringtone === 'pulse' ? 'square' : 'sine';
+      o.frequency.value = kind !== 'ring' ? 440 : ({ classic: 520, gentle: 392, pulse: 660 }[ringtone] || 520);
       o.connect(g); g.connect(gain);
       g.gain.setValueAtTime(0.0001, ctx.currentTime);
       g.gain.exponentialRampToValueAtTime(1, ctx.currentTime + 0.05);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.9);
-      o.start(); o.stop(ctx.currentTime + 0.95);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + (ringtone === 'gentle' ? 1.15 : 0.9));
+      o.start(); o.stop(ctx.currentTime + 1.2);
     };
     beat();
     ringTone = { gain, timer: setInterval(beat, kind === 'ring' ? 2400 : 3000) };
@@ -2268,6 +5166,7 @@ function attachLocal(stream) {
 }
 
 async function startCall(media) {
+  pauseReelVideos();
   const c = activeChat();
   if (!c) return;
   if (c.type !== 'dm') return toast('Calls are one-to-one only');
@@ -2297,8 +5196,10 @@ async function startCall(media) {
 
 function onCallIncoming({ callId, chatId, media, from }) {
   if (call) return;  // server guards this, belt & braces
+  pauseReelVideos();
   call = { id: callId, chatId, peer: from, media, role: 'callee', state: 'ringing' };
   ringShow(from, media);
+  showCallNotification(from, media);
   callTone('ring');
 }
 
@@ -2316,6 +5217,7 @@ async function acceptCall() {
   attachLocal(stream);
   callShow(call.peer, call.media, 'Connecting…');
   callToneStop();
+  closeCallNotification();
 
   pc = makePeer(call.id);
   stream.getTracks().forEach(t => pc.addTrack(t, stream));
@@ -2406,6 +5308,7 @@ function hangUp() {
 
 function teardown() {
   callToneStop();
+  closeCallNotification();
   ringHide();
   callHide();
   if (pc) { try { pc.close(); } catch (_) {} pc = null; }
@@ -2628,6 +5531,45 @@ function wire() {
   $('btn-menu').onclick = mainMenu;
   $('btn-back').onclick = closeChat;
   $('btn-chat-menu').onclick = chatMenu;
+  $('btn-stories').onclick = openStories;
+  $('stories-close').onclick = closeStories;
+  $('story-viewer-close').onclick = closeStoryViewer;
+  $('story-create-button').onclick = openStoryComposer;
+  $('story-empty-create').onclick = openStoryComposer;
+  $('story-boosts-button').onclick = openStoryBoosts;
+  $('story-review-button').onclick = openStoryReview;
+  $('story-prev').onclick = showPreviousStory;
+  $('story-next').onclick = () => showNextStory();
+  $('story-delete').onclick = deleteCurrentStory;
+  $('story-save').onclick = saveCurrentStory;
+  $('story-media-button').onclick = () => { $('story-file-input').value = ''; $('story-file-input').click(); };
+  $('story-file-input').onchange = event => chooseStoryMedia(event.target.files?.[0]);
+  $('story-media-remove').onclick = removeStoryMedia;
+  $('story-text').oninput = updateStoryComposePreview;
+  $('story-boost-toggle').onchange = event => { $('story-boost-fields').hidden = !event.target.checked; };
+  $('boost-objective').onchange = event => { $('boost-url-row').hidden = event.target.value !== 'website_visits'; };
+  $('boost-budget').oninput = updateBoostEstimate;
+  $('boost-days').onchange = updateBoostEstimate;
+  $('story-publish').onclick = publishStory;
+  document.querySelectorAll('[data-story-color]').forEach(button => {
+    button.onclick = () => {
+      storyBackground = button.dataset.storyColor;
+      document.querySelectorAll('[data-story-color]').forEach(choice => choice.classList.toggle('selected', choice === button));
+      updateStoryComposePreview();
+    };
+  });
+  $('btn-reels').onclick = toggleReels;
+  $('btn-reels-chat').onclick = toggleReels;
+  $('reels-close').onclick = closeReels;
+  $('reel-upload-button').onclick = chooseReelFile;
+  $('reel-file-input').onchange = event => prepareReelUpload(event.target.files?.[0]);
+  $('reel-publish').onclick = publishReel;
+  $('reels-feed').addEventListener('scroll', () => {
+    const feed = $('reels-feed');
+    if (!reelsLoading && !reelsExhausted && feed.scrollHeight - feed.scrollTop < feed.clientHeight * 2.25) {
+      loadReels(false, true);
+    }
+  }, { passive: true });
   $('btn-call-voice').onclick = () => startCall('audio');
   $('btn-call-video').onclick = () => startCall('video');
   $('call-hangup').onclick = () => hangUp();
@@ -2637,13 +5579,33 @@ function wire() {
   wireRatingStars();
   $('ring-decline').onclick = () => declineCall();
   document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape' || !call) return;
-    if ($('ring').classList.contains('on')) declineCall();
+    if (e.key !== 'Escape') return;
+    if (!$('view-once-viewer').hidden) closeViewOnce();
+    else if (call && $('ring').classList.contains('on')) declineCall();
+    else if ($('modal-story-compose').classList.contains('show')) closeModal('modal-story-compose');
+    else if (!$('story-viewer').hidden) closeStoryViewer();
+    else if ($('stories-screen').classList.contains('open')) closeStories();
+    else if ($('modal-reel-upload').classList.contains('show')) closeModal('modal-reel-upload');
+    else if (document.body.classList.contains('reels-open')) closeReels();
   });
 
-  $('btn-chat-search').onclick = () => { $('search-input').focus(); if (window.innerWidth <= 900) closeChat(); };
+  $('wp-file').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) onWallpaperFile(f); };
+  $('wp-dim').oninput = e => {
+    const prev = loadWallpaper();
+    const dim = Number(e.target.value) || 40;
+    saveWallpaper({ ...prev, dim });
+    applyWallpaper();
+  };
+  $('btn-chat-search').onclick = () => toggleInChatSearch(true);
   $('peer-open').onclick = openDrawer;
   $('drawer-close').onclick = () => $('drawer').classList.remove('open');
+  $('view-once-close').onclick = closeViewOnce;
+
+  $('chat-lock-pin').onclick = setChatLockPin;
+  $('chat-lock-unlock').onclick = unlockChatLockWithPin;
+  $('chat-lock-now').onclick = lockChatsNow;
+  $('chat-lock-passkey-add').onclick = addChatLockPasskey;
+  $('chat-lock-passkey-unlock').onclick = unlockChatLockWithPasskey;
 
   $('search-input').oninput = e => {
     searchQuery = e.target.value.trim();
@@ -2689,14 +5651,6 @@ function wire() {
     };
   });
   $('file-input').onchange = e => { const f = e.target.files[0]; if (f) uploadFile(f); };
-  $('wp-file').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) onWallpaperFile(f); };
-  $('wp-dim').oninput = e => {
-    const dim = Number(e.target.value) || 40;
-    const prev = loadWallpaper();
-    if (prev.id !== 'custom') return;
-    saveWallpaper({ ...prev, dim });
-    applyWallpaper();
-  };
 
   $('messages').addEventListener('scroll', () => {
     if (nearBottom()) { $('jump-btn').classList.remove('show'); $('jump-n').style.display = 'none'; $('jump-n').textContent = ''; }
@@ -2717,15 +5671,21 @@ function wire() {
   });
 
   buildEmojiPanel();
+  wireHybrid();
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────
-loadOutbox();
 document.body.classList.toggle('lite', lite);
-applyWallpaper();
 // The browser tells us before the socket does.
 window.addEventListener('online', () => flushOutbox());
 window.addEventListener('offline', () => updateOfflineBar());
+window.addEventListener('pagehide', closeViewOnce);
+window.addEventListener('beforeunload', closeViewOnce);
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}
+applyNativeShell();
+applyWallpaper();
 initLogin();
 wire();
 

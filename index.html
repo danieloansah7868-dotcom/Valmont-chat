@@ -6,6 +6,8 @@
 <meta name="theme-color" content="#0b1f3a" />
 <title>VChat</title>
 <link rel="icon" href="/favicon.svg" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" href="/icons/icon-192.png" />
 <link rel="stylesheet" href="/app.css" />
 <script src="/socket.io/socket.io.js"></script>
 </head>
@@ -51,8 +53,11 @@
   <symbol id="i-info" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></symbol>
-  <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 17.3 6.2 3.7-1.6-7 5.4-4.7-7.1-.6L12 2 9.1 8.7l-7.1.6 5.4 4.7-1.6 7z"/></symbol>
   <symbol id="i-camera" viewBox="0 0 24 24"><path d="M20 5h-3.2L15 3H9L7.2 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm-8 13a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></symbol>
+  <symbol id="i-status" viewBox="0 0 24 24"><path d="M3.7 7.4A9.5 9.5 0 0 1 6.9 4.2L5.8 2.5A11.5 11.5 0 0 0 2 6.3l1.7 1.1zM16.6 3.7A9.5 9.5 0 0 1 19.8 7l1.7-1.1A11.5 11.5 0 0 0 17.7 2l-1.1 1.7zM20.3 16.6a9.5 9.5 0 0 1-3.3 3.2l1.1 1.7a11.5 11.5 0 0 0 3.8-3.8l-1.6-1.1zM7.4 20.3a9.5 9.5 0 0 1-3.2-3.3l-1.7 1.1A11.5 11.5 0 0 0 6.3 22l1.1-1.7zM12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></symbol>
+  <symbol id="i-megaphone" viewBox="0 0 24 24"><path d="M3 10v4a2 2 0 0 0 2 2h1l2 5h3l-2-5h2l8 4V4l-8 4H5a2 2 0 0 0-2 2zm18-1v6h2V9h-2z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M11 5v6H5v2h6v6h2v-6h6v-2h-6V5h-2z"/></symbol>
+  <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z"/></symbol>
   <symbol id="i-wallpaper" viewBox="0 0 24 24"><path d="M21 3H3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H3V5h18v14zM8.5 11.5 5 16h14l-4.5-6-3.5 4.5-2.5-3z"/></symbol>
 </svg>
 
@@ -77,7 +82,8 @@
 
       <button class="btn-primary" id="btn-send-code">Next</button>
       <div class="login-err" id="login-err"></div>
-      <p class="login-hint">We never share your number. It is only used to sign you in and let contacts find you.</p>
+      <p class="login-hint">We never share your number. Friends find you by @username, not your phone number.</p>
+      <button type="button" class="login-get-app" id="login-get-app">Get the real VChat app instead of a browser tab</button>
     </section>
 
     <!-- Step 2 — verification code -->
@@ -104,23 +110,36 @@
 
     <!-- Step 3 — profile (new numbers only) -->
     <section class="auth-step" id="step-profile" hidden>
-      <h2>Create your account</h2>
-      <p class="sub">Pick a name and a unique username. Friends find you with @username — not your phone number.</p>
+      <h2>Profile info</h2>
+      <p class="sub">Please provide your name and an optional profile photo.</p>
 
-      <label class="field-label" for="name-input">Display name</label>
+      <label class="field-label" for="name-input">Your name</label>
       <input id="name-input" type="text" placeholder="e.g. Daniel" autocomplete="name" maxlength="24" />
 
-      <label class="field-label" for="handle-input">Username</label>
-      <div class="handle-row">
-        <span class="handle-at">@</span>
-        <input id="handle-input" type="text" placeholder="daniel" autocomplete="username" maxlength="20" spellcheck="false" />
+      <label class="field-label">Account type</label>
+      <div class="account-type-picker" role="radiogroup" aria-label="Account type">
+        <label class="account-type-card selected"><input type="radio" name="register-account-type" value="personal" checked /><strong>Personal</strong><span>For everyday conversations</span></label>
+        <label class="account-type-card"><input type="radio" name="register-account-type" value="business" /><strong>Business</strong><span>Public purpose page and Status boosting</span></label>
       </div>
-      <p class="login-hint" style="margin-top:0;margin-bottom:18px">3–20 characters. Letters, numbers and underscore. This is how people search for you.</p>
+      <div class="business-register-fields" id="business-register-fields" hidden>
+        <label class="field-label" for="business-name-input">Business name</label>
+        <input id="business-name-input" type="text" maxlength="80" placeholder="Your public business name" />
+        <label class="field-label" for="business-category-input">Category</label>
+        <select id="business-category-input"><option value="professional_services">Professional services</option><option value="retail">Retail</option><option value="food">Food</option><option value="beauty">Beauty</option><option value="health">Health</option><option value="education">Education</option><option value="technology">Technology</option><option value="media">Media</option><option value="travel">Travel</option><option value="nonprofit">Nonprofit</option><option value="creator">Creator</option><option value="other">Other</option></select>
+        <label class="field-label" for="business-description-input">Business purpose</label>
+        <textarea id="business-description-input" maxlength="500" rows="3" placeholder="What your business does"></textarea>
+      </div>
 
-      <label class="field-label">Choose an avatar</label>
+      <label class="field-label">Profile photo <span class="field-hint">optional · JPEG, PNG or WebP</span></label>
+      <div class="registration-photo-row">
+        <button class="registration-photo-preview" id="registration-photo-choose" type="button" aria-label="Choose profile photo"><span id="registration-photo-preview"><svg class="icon"><use href="#i-photo"/></svg></span></button>
+        <div><button class="btn-text" id="registration-photo-button" type="button">Choose photo</button><button class="btn-text danger" id="registration-photo-remove" type="button" hidden>Remove</button><small id="registration-photo-name">You can replace or remove it later.</small></div>
+      </div>
+      <input id="registration-photo-input" type="file" accept="image/jpeg,image/png,image/webp" hidden />
+      <label class="field-label">Or choose an avatar</label>
       <div class="avatar-picker" id="avatar-picker"></div>
 
-      <button class="btn-primary" id="login-btn">Create account</button>
+      <button class="btn-primary" id="login-btn">Start chatting</button>
       <div class="login-err" id="profile-err"></div>
     </section>
   </div>
@@ -135,6 +154,8 @@
       <header class="side-header">
         <div class="avatar sz-40 me-avatar" id="me-avatar" title="Profile"></div>
         <div class="spacer"></div>
+        <button class="hdr-btn" id="btn-stories" title="Status updates" aria-label="Open status updates" aria-controls="stories-screen"><svg class="icon"><use href="#i-status"/></svg><span class="story-notice" id="story-notice" hidden></span></button>
+        <button class="hdr-btn" id="btn-reels" title="Open reels beside chat" aria-label="Open reels" aria-controls="reels-panel" aria-expanded="false"><svg class="icon"><use href="#i-play"/></svg></button>
         <button class="hdr-btn" id="btn-new-group" title="New group"><svg class="icon"><use href="#i-group"/></svg></button>
         <button class="hdr-btn" id="btn-new-chat" title="New chat"><svg class="icon"><use href="#i-newchat"/></svg></button>
         <button class="hdr-btn" id="btn-menu" title="Menu"><svg class="icon"><use href="#i-menu"/></svg></button>
@@ -150,11 +171,21 @@
       <div class="side-filters">
         <button class="chip on" data-filter="all">All</button>
         <button class="chip" data-filter="unread">Unread</button>
+        <button class="chip" data-filter="personal">Personal</button>
         <button class="chip" data-filter="groups">Groups</button>
+        <button class="chip" data-filter="favorites">Favorites</button>
+        <button class="chip" data-filter="calls">Calls</button>
+        <button class="chip" data-filter="secret">Secret</button>
         <button class="chip" data-filter="archived">Archived</button>
+        <button class="chip locked-filter" id="locked-chats-filter" data-filter="locked" hidden>🔒 Locked <span id="locked-chat-count"></span></button>
       </div>
 
       <div class="chat-list" id="chat-list"></div>
+      <nav class="bottom-nav" id="bottom-nav" aria-label="Main">
+        <button type="button" class="on" data-nav="chats"><svg class="icon"><use href="#i-chat"/></svg>Chats</button>
+        <button type="button" data-nav="status"><svg class="icon"><use href="#i-status"/></svg>Status</button>
+        <button type="button" data-nav="calls"><svg class="icon"><use href="#i-phone"/></svg>Calls</button>
+      </nav>
     </aside>
 
     <!-- ── Intro (no chat selected) ── -->
@@ -169,7 +200,7 @@
       </svg>
       <h2>VChat for Desktop</h2>
       <p>Send and receive messages, share files and start group chats in real time. Select a conversation on the left to begin.</p>
-      <div class="lock"><svg class="icon-sm"><use href="#i-lock"/></svg> Your messages stay on your own server</div>
+      <div class="lock"><svg class="icon-sm"><use href="#i-lock"/></svg> Secure transport active · end-to-end encryption rollout in progress</div>
     </section>
 
     <!-- ── Chat panel ── -->
@@ -185,6 +216,11 @@
             <div class="peer-status" id="peer-status"></div>
           </div>
         </div>
+        <div class="transport-switch" id="transport-switch" hidden>
+          <button type="button" data-transport="cloud" class="on">Cloud</button>
+          <button type="button" data-transport="sms">SMS</button>
+        </div>
+        <button class="hdr-btn reels-chat-button" id="btn-reels-chat" title="Reels beside chat" aria-label="Open reels" aria-controls="reels-panel" aria-expanded="false"><svg class="icon"><use href="#i-play"/></svg></button>
         <button class="hdr-btn" id="btn-call-video" title="Video call"><svg class="icon"><use href="#i-video"/></svg></button>
         <button class="hdr-btn" id="btn-call-voice" title="Voice call"><svg class="icon"><use href="#i-phone"/></svg></button>
         <button class="hdr-btn" id="btn-chat-search" title="Search"><svg class="icon"><use href="#i-search"/></svg></button>
@@ -192,6 +228,32 @@
       </header>
 
       <div class="offline-bar" id="offline-bar"></div>
+
+      <div class="inchat-search" id="inchat-search" hidden>
+        <svg class="icon-sm"><use href="#i-search"/></svg>
+        <input id="inchat-search-input" type="search" placeholder="Search in this chat" autocomplete="off" />
+        <span id="inchat-search-count"></span>
+        <button class="hdr-btn" id="inchat-search-prev" type="button" title="Previous">↑</button>
+        <button class="hdr-btn" id="inchat-search-next" type="button" title="Next">↓</button>
+        <button class="hdr-btn" id="inchat-search-close" type="button" aria-label="Close search"><svg class="icon"><use href="#i-close"/></svg></button>
+      </div>
+
+      <div class="secret-banner" id="secret-banner" hidden>
+        <div>
+          <strong id="secret-banner-title">Secret chat</strong>
+          <span id="secret-banner-note">Messages are encrypted on this device. The server only stores ciphertext.</span>
+        </div>
+        <div class="secret-banner-actions">
+          <button type="button" class="btn-text" id="secret-accept">Accept</button>
+          <button type="button" class="btn-text danger" id="secret-decline">Decline</button>
+          <button type="button" class="btn-text" id="secret-ttl">Self-destruct</button>
+        </div>
+      </div>
+
+      <button class="pin-bar" id="pin-bar" type="button" hidden>
+        <svg class="icon-sm"><use href="#i-pin"/></svg>
+        <span id="pin-bar-text"></span>
+      </button>
 
       <div class="messages" id="messages"></div>
 
@@ -209,6 +271,7 @@
           <div style="flex:1;min-width:0">
             <div class="fb-name" id="fb-name"></div>
             <div class="fb-size" id="fb-size"></div>
+            <label class="view-once-choice" id="view-once-choice" hidden><input type="checkbox" id="view-once-toggle" /> <span>① View once</span></label>
           </div>
           <button class="bar-x" id="fb-close"><svg class="icon-sm"><use href="#i-close"/></svg></button>
         </div>
@@ -218,6 +281,7 @@
           <button class="comp-btn" id="btn-attach" title="Attach"><svg class="icon"><use href="#i-clip"/></svg></button>
           <div class="input-wrap">
             <textarea class="msg-input" id="msg-input" rows="1" placeholder="Type a message"></textarea>
+            <div class="mention-suggest" id="mention-suggest" hidden></div>
           </div>
           <button class="send-btn" id="btn-send" title="Send"><svg class="icon"><use href="#i-send"/></svg></button>
           <button class="mic-btn" id="btn-mic" title="Record voice note"><svg class="icon"><use href="#i-mic"/></svg></button>
@@ -241,6 +305,24 @@
       </footer>
     </section>
 
+    <!-- ── Reels companion pane: it never replaces the active chat ── -->
+    <aside class="reels-panel" id="reels-panel" aria-label="Reels" aria-hidden="true">
+      <header class="reels-head">
+        <div>
+          <strong>Reels</strong>
+          <span>Scroll while you chat</span>
+        </div>
+        <div class="reels-head-actions">
+          <button class="hdr-btn" id="reel-upload-button" type="button" title="Post a reel" aria-label="Post a reel"><svg class="icon"><use href="#i-camera"/></svg></button>
+          <button class="hdr-btn" id="reels-close" type="button" title="Close reels" aria-label="Close reels"><svg class="icon"><use href="#i-close"/></svg></button>
+        </div>
+      </header>
+      <div class="reels-feed" id="reels-feed" tabindex="0" aria-live="polite">
+        <div class="reels-empty">Open Reels to load videos.</div>
+      </div>
+      <input type="file" id="reel-file-input" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" hidden />
+    </aside>
+
     <!-- ── Right drawer ── -->
     <aside class="drawer" id="drawer">
       <div class="drawer-head">
@@ -253,7 +335,147 @@
   </div>
 </div>
 
+<!-- ═══ STATUS / STORIES ═════════════════════════════════════ -->
+<section class="stories-screen" id="stories-screen" aria-label="Status updates" aria-hidden="true">
+  <header class="stories-header">
+    <button class="story-icon-button" id="stories-close" type="button" aria-label="Close status"><svg class="icon"><use href="#i-back"/></svg></button>
+    <div class="stories-title"><strong>Status</strong><span>Updates disappear after 24 hours</span></div>
+    <div class="stories-header-actions">
+      <button class="story-text-button" id="story-boosts-button" type="button"><svg class="icon-sm"><use href="#i-megaphone"/></svg> My boosts</button>
+      <button class="story-text-button" id="story-review-button" type="button" hidden>Ad review</button>
+      <button class="story-primary-button" id="story-create-button" type="button"><svg class="icon-sm"><use href="#i-plus"/></svg> Add status</button>
+    </div>
+  </header>
+  <div class="stories-home" id="stories-home">
+    <div class="status-intro">
+      <span class="status-intro-icon"><svg class="icon"><use href="#i-status"/></svg></span>
+      <div><h2>Share what’s happening</h2><p>Photos, videos and text are visible to mutual contacts for 24 hours.</p></div>
+    </div>
+    <div class="story-tray" id="story-tray" role="list" aria-label="Recent status updates"></div>
+    <section class="sponsored-discovery" id="sponsored-discovery" hidden aria-labelledby="sponsored-discovery-title">
+      <div class="sponsored-discovery-head"><div><h3 id="sponsored-discovery-title">Sponsored status</h3><p>Reviewed promotions available across Vchat, separate from friend updates.</p></div><span>Ads</span></div>
+      <div class="story-tray sponsored-story-tray" id="sponsored-story-tray" role="list" aria-label="Sponsored status updates"></div>
+    </section>
+    <div class="stories-empty" id="stories-empty" hidden>
+      <div class="stories-empty-art"><svg class="icon"><use href="#i-camera"/></svg></div>
+      <h3>No friend updates yet</h3>
+      <p>When mutual contacts post a status, it will appear here.</p>
+      <button class="story-primary-button" id="story-empty-create" type="button">Share your first status</button>
+    </div>
+  </div>
+  <div class="story-viewer" id="story-viewer" hidden>
+    <div class="story-progress" id="story-progress" aria-hidden="true"></div>
+    <div class="story-viewer-meta">
+      <div id="story-viewer-avatar"></div>
+      <div class="story-viewer-who"><strong id="story-viewer-name"></strong><span id="story-viewer-time"></span></div>
+      <span class="sponsored-label" id="story-sponsored" hidden>Sponsored</span>
+      <span class="story-ad-countdown" id="story-ad-countdown" hidden></span>
+      <a class="story-icon-button" id="story-save" aria-label="Save status" title="Save status" download hidden><svg class="icon"><use href="#i-download"/></svg></a>
+      <button class="story-icon-button" id="story-delete" type="button" aria-label="Delete status" hidden><svg class="icon"><use href="#i-trash"/></svg></button>
+      <button class="story-icon-button" id="story-viewer-close" type="button" aria-label="Close viewer"><svg class="icon"><use href="#i-close"/></svg></button>
+    </div>
+    <div class="story-stage" id="story-stage"></div>
+    <button class="story-nav story-nav-prev" id="story-prev" type="button" aria-label="Previous status"><svg class="icon"><use href="#i-back"/></svg></button>
+    <button class="story-nav story-nav-next" id="story-next" type="button" aria-label="Next status"><svg class="icon"><use href="#i-back"/></svg></button>
+    <div class="story-viewer-footer" id="story-viewer-footer">
+      <div class="story-reactions" id="story-reactions" aria-label="React to this status"></div>
+      <span class="story-insight" id="story-insight"></span>
+      <a class="story-ad-cta" id="story-ad-cta" target="_blank" rel="noopener noreferrer sponsored" hidden></a>
+    </div>
+  </div>
+  <div class="stories-loading" id="stories-loading" hidden><span class="spinner"></span> Loading status updates…</div>
+</section>
+
 <!-- ═══ Modals ═══════════════════════════════════════════════ -->
+<div class="overlay" id="modal-story-compose">
+  <div class="modal story-compose-modal">
+    <div class="modal-head">Create status</div>
+    <div class="modal-body">
+      <div class="story-compose-preview story-bg-jade" id="story-compose-preview"><span id="story-preview-placeholder">Write a status or choose a photo or video</span></div>
+      <div class="story-compose-actions">
+        <button class="story-media-choice" id="story-media-button" type="button"><svg class="icon-sm"><use href="#i-camera"/></svg> Photo or video</button>
+        <button class="btn-text danger" id="story-media-remove" type="button" hidden>Remove</button>
+        <span class="story-file-name" id="story-file-name"></span>
+      </div>
+      <input type="file" id="story-file-input" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm,.jpg,.jpeg,.png,.webp,.mp4,.mov,.webm" hidden />
+      <label class="field-label" for="story-text">Text <span class="field-hint">700 characters</span></label>
+      <textarea id="story-text" maxlength="700" rows="3" placeholder="Type a status…"></textarea>
+      <fieldset class="story-color-field">
+        <legend>Background</legend>
+        <div class="story-colors" id="story-colors">
+          <button type="button" class="story-color jade selected" data-story-color="jade" aria-label="Jade background"></button>
+          <button type="button" class="story-color ocean" data-story-color="ocean" aria-label="Ocean background"></button>
+          <button type="button" class="story-color sunset" data-story-color="sunset" aria-label="Sunset background"></button>
+          <button type="button" class="story-color violet" data-story-color="violet" aria-label="Violet background"></button>
+          <button type="button" class="story-color charcoal" data-story-color="charcoal" aria-label="Charcoal background"></button>
+        </div>
+      </fieldset>
+      <p class="story-audience-note"><svg class="icon-sm"><use href="#i-lock"/></svg> Visible to mutual contacts for 24 hours</p>
+      <label class="lite-row story-save-privacy"><span><span class="lite-title">Allow viewers to save</span><span class="lite-note">Adds Vchat’s Save action to this Status only</span></span><input type="checkbox" id="story-allow-save" class="switch" /></label>
+      <p class="capture-disclosure">Vchat can hide its Save action, but no app can prevent screenshots, screen recording, another camera, or external capture.</p>
+
+      <section class="story-boost-box">
+        <label class="story-boost-toggle"><span><strong><svg class="icon-sm"><use href="#i-megaphone"/></svg> Boost post</strong><small>Promote this status as a clearly labelled sponsored story</small></span><input type="checkbox" id="story-boost-toggle" class="switch" /></label>
+        <div class="story-boost-fields" id="story-boost-fields" hidden>
+          <div class="story-boost-disclosure" id="story-boost-disclosure">Boosts require ad review and confirmed payment before delivery. Posting your normal status does not depend on approval.</div>
+          <label class="field-label" for="boost-objective">Goal</label>
+          <select id="boost-objective"><option value="profile_visits">More profile visits</option><option value="website_visits">More website visits</option><option value="messages">More messages</option></select>
+          <div id="boost-url-row" hidden><label class="field-label" for="boost-url">Website</label><input id="boost-url" type="url" maxlength="1000" placeholder="https://example.com" /></div>
+          <div class="story-form-grid">
+            <label>Call to action<select id="boost-cta"><option>Learn more</option><option>Visit profile</option><option>Send message</option><option>Sign up</option></select></label>
+            <label>Audience<select id="boost-audience"><option value="broad">Vchat audience</option><option value="contacts">Mutual contacts</option></select></label>
+            <label>Budget (GHS)<input id="boost-budget" type="number" min="10" max="10000" step="1" value="30" /></label>
+            <label>Duration<select id="boost-days"><option value="1">1 day</option><option value="3">3 days</option><option value="7" selected>7 days</option><option value="14">14 days</option></select></label>
+          </div>
+          <label class="field-label" for="boost-email">Billing email</label>
+          <input id="boost-email" type="email" maxlength="200" autocomplete="email" placeholder="you@example.com" />
+          <div class="boost-estimate" id="boost-estimate">Pilot reservation: GHS 30 for up to 7 days after activation. No delivery forecast or result is guaranteed.</div>
+        </div>
+      </section>
+      <div class="story-publish-status" id="story-publish-status" role="status"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Cancel</button><button class="btn-primary" id="story-publish" type="button">Post status</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-story-boosts">
+  <div class="modal story-campaign-modal">
+    <div class="modal-head">My boosted status</div>
+    <div class="modal-body">
+      <p class="setting-explainer">Pilot budgets are fixed campaign reservations, not live auction spend. You can pause, resume, or permanently stop active delivery; stopping does not automatically issue a refund.</p>
+      <div class="campaign-list" id="story-campaign-list"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Done</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-story-review">
+  <div class="modal story-campaign-modal">
+    <div class="modal-head">Advertising review</div>
+    <div class="modal-body">
+      <p class="setting-explainer">Approval alone never fabricates a payment. Use a documented account credit only when you intentionally waive billing.</p>
+      <div class="campaign-list" id="story-review-list"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Done</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-wallpaper">
+  <div class="modal wallpaper-modal">
+    <div class="modal-head">Chat wallpaper</div>
+    <div class="modal-body">
+      <p class="wp-intro">Applies to every conversation on this device. Pick a colour, or use your own photo.</p>
+      <div class="wp-grid" id="wp-grid"></div>
+      <label class="wp-dim" id="wp-dim-row" hidden>
+        <span>Dim photo so messages stay readable</span>
+        <input type="range" id="wp-dim" min="15" max="75" value="40" />
+      </label>
+      <input type="file" id="wp-file" accept="image/*" hidden />
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Done</button></div>
+  </div>
+</div>
+
 <div class="overlay" id="modal-newchat">
   <div class="modal">
     <div class="modal-head">New chat</div>
@@ -305,31 +527,146 @@
   </div>
 </div>
 
+<div class="overlay" id="modal-reel-upload">
+  <div class="modal reel-upload-modal">
+    <div class="modal-head">Post a reel</div>
+    <div class="modal-body">
+      <video id="reel-upload-preview" class="reel-upload-preview" controls muted playsinline preload="metadata"></video>
+      <div class="reel-file-summary" id="reel-file-summary"></div>
+      <label class="field-label" for="reel-caption">Caption <span class="field-hint">optional · 220 characters</span></label>
+      <textarea id="reel-caption" class="reel-caption-input" maxlength="220" rows="3" placeholder="Say something about this video…"></textarea>
+      <p class="setting-explainer">Signed-in Vchat users can see this reel unless either of you has blocked the other.</p>
+      <div class="reel-upload-status" id="reel-upload-status" role="status"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Cancel</button><button class="btn-primary" id="reel-publish" type="button">Post reel</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-notifications">
+  <div class="modal settings-modal">
+    <div class="modal-head">Notifications &amp; media</div>
+    <div class="modal-body">
+      <div class="settings-section-title">Messages</div>
+      <label class="lite-row"><span><span class="lite-title">Desktop notifications</span><span class="lite-note" id="notification-permission-status">Browser alerts while Vchat is open</span></span><input type="checkbox" id="notify-desktop" class="switch"></label>
+      <label class="lite-row"><span><span class="lite-title">Show message previews</span><span class="lite-note">Show sender and message text in notifications</span></span><input type="checkbox" id="notify-preview" class="switch"></label>
+      <label class="lite-row"><span><span class="lite-title">Message sounds</span><span class="lite-note">Play a sound for new messages</span></span><input type="checkbox" id="notify-sounds" class="switch"></label>
+      <label class="setting-field">Message tone <select id="notify-tone"><option value="chime">Chime</option><option value="soft">Soft</option><option value="bright">Bright</option></select></label>
+      <button class="btn-text settings-test-button" id="notify-test" type="button">Test message sound</button>
+
+      <div class="settings-section-title">Calls</div>
+      <label class="lite-row"><span><span class="lite-title">Call sounds &amp; ringing</span><span class="lite-note">Ring for incoming calls and play the outgoing call tone</span></span><input type="checkbox" id="notify-call-sounds" class="switch"></label>
+      <label class="setting-field">Ringtone <select id="notify-ringtone"><option value="classic">Classic</option><option value="gentle">Gentle</option><option value="pulse">Pulse</option></select></label>
+      <button class="btn-text settings-test-button" id="ringtone-test" type="button">Test ringtone</button>
+
+      <div class="settings-section-title">Media visibility</div>
+      <label class="setting-field">Photo previews <select id="media-visibility"><option value="show">Show automatically</option><option value="tap">Tap to view</option></select></label>
+      <p class="setting-explainer">Vchat keeps received media inside protected chats. When you choose Save, your browser places the file in its Downloads folder. Web apps cannot add files to your phone gallery automatically.</p>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Cancel</button><button class="btn-primary" id="notifications-save">Save</button></div>
+  </div>
+</div>
+
 <div class="overlay" id="modal-profile">
   <div class="modal">
     <div class="modal-head">Profile</div>
     <div class="modal-body" style="text-align:center">
-      <div class="avatar sz-140" id="profile-avatar" style="margin:8px auto 20px"></div>
+      <div class="profile-photo-wrap">
+        <div class="avatar sz-140" id="profile-avatar"></div>
+        <button class="profile-photo-button" id="profile-photo-choose" type="button">Change photo</button>
+      </div>
+      <input type="file" id="profile-photo-input" accept="image/jpeg,image/png,image/webp" hidden />
+      <button class="btn-text danger profile-photo-remove" id="profile-photo-remove" type="button">Remove photo</button>
       <div class="avatar-picker" id="profile-avatar-picker" style="justify-content:center"></div>
       <div style="text-align:left;margin-top:10px">
-        <label class="field-label">Display name</label>
-        <input type="text" id="profile-name" maxlength="24" />
-        <label class="field-label" style="margin-top:20px">Username</label>
-        <div class="handle-row">
-          <span class="handle-at">@</span>
-          <input type="text" id="profile-handle" maxlength="20" spellcheck="false" autocomplete="username" />
-        </div>
+        <label class="field-label">Your name <span class="field-hint">Emoji welcome</span></label>
+        <div class="profile-name-row"><input type="text" id="profile-name" maxlength="40" /><button class="emoji-name-button" id="profile-name-emoji" type="button" title="Add emoji">😊</button></div>
         <label class="field-label" style="margin-top:20px">About</label>
         <input type="text" id="profile-about" maxlength="80" />
         <label class="field-label" style="margin-top:20px">Phone number</label>
         <div class="profile-phone" id="profile-phone"></div>
-        <p class="login-hint" style="margin-top:8px">Only you see your number. Friends search for @username.</p>
       </div>
     </div>
     <div class="modal-foot">
       <button class="btn-text" data-close>Cancel</button>
       <button class="btn-primary" id="profile-save">Save</button>
     </div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-business">
+  <div class="modal business-modal">
+    <div class="modal-head">Business page &amp; dashboard</div>
+    <div class="modal-body">
+      <div class="business-page-head" id="business-page-head"></div>
+      <div id="business-owner-fields" hidden>
+        <label class="field-label" for="business-page-name">Public business name</label><input id="business-page-name" maxlength="80" />
+        <label class="field-label" for="business-page-category">Category</label><select id="business-page-category"><option value="professional_services">Professional services</option><option value="retail">Retail</option><option value="food">Food</option><option value="beauty">Beauty</option><option value="health">Health</option><option value="education">Education</option><option value="technology">Technology</option><option value="media">Media</option><option value="travel">Travel</option><option value="nonprofit">Nonprofit</option><option value="creator">Creator</option><option value="other">Other</option></select>
+        <label class="field-label" for="business-page-description">Business purpose</label><textarea id="business-page-description" maxlength="500" rows="4"></textarea>
+        <label class="field-label" for="business-page-address">Service area or address</label><input id="business-page-address" maxlength="200" />
+        <label class="field-label" for="business-page-hours">Hours</label><input id="business-page-hours" maxlength="120" placeholder="e.g. Mon–Fri, 9:00–17:00" />
+        <label class="field-label" for="business-page-website">Website</label><input id="business-page-website" type="url" maxlength="1000" placeholder="https://example.com" />
+        <div class="business-dashboard-actions"><button class="btn-text" id="business-open-boosts" type="button">Status boost dashboard</button><button class="btn-primary" id="business-page-save" type="button">Save business page</button></div>
+      </div>
+      <div id="business-public-details"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-privacy">
+  <div class="modal settings-modal">
+    <div class="modal-head">Privacy &amp; security</div>
+    <div class="modal-body">
+      <div class="security-phase">
+        <svg class="icon"><use href="#i-lock"/></svg>
+        <div><strong>Security foundation active</strong><span>Protected sessions and media are on. End-to-end message encryption is the next rollout stage.</span></div>
+      </div>
+      <label class="setting-field">Last seen <select id="privacy-last-seen"><option value="everyone">Everyone</option><option value="contacts">My contacts</option><option value="nobody">Nobody</option></select></label>
+      <label class="setting-field">Online status <select id="privacy-online"><option value="everyone">Everyone</option><option value="same-as-last-seen">Same as last seen</option></select></label>
+      <label class="setting-field">Profile photo <select id="privacy-photo"><option value="everyone">Everyone</option><option value="contacts">My contacts</option><option value="nobody">Nobody</option></select></label>
+      <label class="setting-field">About <select id="privacy-about"><option value="everyone">Everyone</option><option value="contacts">My contacts</option><option value="nobody">Nobody</option></select></label>
+      <label class="setting-field">Default disappearing messages <select id="privacy-timer"><option value="0">Off</option><option value="86400">24 hours</option><option value="604800">7 days</option><option value="7776000">90 days</option></select></label>
+      <label class="lite-row"><span><span class="lite-title">Read receipts</span><span class="lite-note">Group-chat receipts are always sent</span></span><input type="checkbox" id="privacy-receipts" class="switch" /></label>
+      <label class="lite-row"><span><span class="lite-title">Advanced privacy for new chats</span><span class="lite-note">Limit forwarding and attachment downloads by default</span></span><input type="checkbox" id="privacy-advanced" class="switch" /></label>
+      <label class="lite-row"><span><span class="lite-title">Silence unknown callers</span><span class="lite-note">Unknown calls will not ring</span></span><input type="checkbox" id="privacy-silence" class="switch" /></label>
+      <div class="settings-section-title">Chat lock</div>
+      <div class="setting-action chat-lock-setting"><span><strong id="chat-lock-status">Protect hidden chats with a separate PIN</strong><small id="chat-lock-note">Locked chats and previews stay hidden until this device session is unlocked.</small></span><span class="setting-buttons"><button class="btn-text" id="chat-lock-pin">Set lock PIN</button><button class="btn-text" id="chat-lock-unlock" hidden>Unlock</button><button class="btn-text" id="chat-lock-now" hidden>Lock now</button></span></div>
+      <div class="setting-action"><span><strong>Device biometric or passkey</strong><small>Uses your device screen lock, fingerprint, face, or security key through WebAuthn.</small></span><span class="setting-buttons"><button class="btn-text" id="chat-lock-passkey-add">Add passkey</button><button class="btn-text" id="chat-lock-passkey-unlock" hidden>Use passkey</button></span></div>
+      <div id="chat-lock-credentials" class="device-list"></div>
+      <div class="settings-section-title">Two-step verification</div>
+      <div class="setting-action"><span id="two-step-status">Add a PIN for extra account protection</span><span class="setting-buttons"><button class="btn-text" id="two-step-set">Set PIN</button><button class="btn-text danger" id="two-step-disable" hidden>Disable</button></span></div>
+      <div class="settings-section-title">Linked devices</div>
+      <div id="device-list" class="device-list"><div class="empty-list">Loading…</div></div>
+      <button class="drawer-action danger" id="devices-revoke-all">Log out all other devices</button>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Cancel</button><button class="btn-primary" id="privacy-save">Save</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-forward">
+  <div class="modal">
+    <div class="modal-head">Forward message</div>
+    <div class="modal-body"><div id="forward-list"></div><div class="lite-note" style="margin-top:12px">Choose up to 5 chats.</div></div>
+    <div class="modal-foot"><button class="btn-text" data-close>Cancel</button><button class="btn-primary" id="forward-send">Forward</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-group-settings">
+  <div class="modal">
+    <div class="modal-head">Group permissions</div>
+    <div class="modal-body group-settings-body">
+      <p class="setting-help">Choose what participants can do in this group.</p>
+      <label class="setting-field">Edit group info
+        <select id="group-permission-info"><option value="admins">Only admins</option><option value="members">All participants</option></select>
+      </label>
+      <label class="setting-field">Send messages
+        <select id="group-permission-send"><option value="members">All participants</option><option value="admins">Only admins</option></select>
+      </label>
+      <label class="setting-field">Add participants
+        <select id="group-permission-add"><option value="admins">Only admins</option><option value="members">All participants</option></select>
+      </label>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Cancel</button><button class="btn-primary" id="group-settings-save">Save</button></div>
   </div>
 </div>
 
@@ -344,22 +681,6 @@
   </div>
 </div>
 
-<div class="overlay" id="modal-wallpaper">
-  <div class="modal wallpaper-modal">
-    <div class="modal-head">Chat wallpaper</div>
-    <div class="modal-body">
-      <p class="wp-intro">Applies to every conversation on this device. Pick a colour, or use your own photo.</p>
-      <div class="wp-grid" id="wp-grid"></div>
-      <label class="wp-dim" id="wp-dim-row" hidden>
-        <span>Dim photo so messages stay readable</span>
-        <input type="range" id="wp-dim" min="15" max="75" value="40" />
-      </label>
-      <input type="file" id="wp-file" accept="image/*" hidden />
-    </div>
-    <div class="modal-foot"><button class="btn-text" data-close>Done</button></div>
-  </div>
-</div>
-
 <div class="ctx-menu" id="ctx-menu"></div>
 
 <div class="lightbox" id="lightbox">
@@ -369,6 +690,12 @@
     <a id="lb-download" download><svg class="icon"><use href="#i-download"/></svg></a>
   </div>
   <img id="lb-img" alt="" />
+</div>
+
+<div class="view-once-viewer" id="view-once-viewer" hidden>
+  <div class="view-once-head"><span>① View once</span><button id="view-once-close" type="button" aria-label="Close View Once media"><svg class="icon"><use href="#i-close"/></svg></button></div>
+  <div class="view-once-stage" id="view-once-stage"></div>
+  <p>This media closes when you leave this viewer. Vchat disables normal Save and forward actions, but screenshots and external capture cannot be technically prevented.</p>
 </div>
 
 <!-- ── Call ── -->
@@ -438,6 +765,88 @@
       <button class="btn-text" id="rate-skip">Not now</button>
       <button class="btn-primary" id="rate-send" disabled>Submit</button>
     </div>
+  </div>
+</div>
+
+
+<div class="overlay" id="modal-calls">
+  <div class="modal">
+    <div class="modal-head">Calls</div>
+    <div class="modal-body">
+      <p class="setting-explainer">WhatsApp-style history of voice and video calls on this account.</p>
+      <div id="call-history-list" class="hybrid-list"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-starred">
+  <div class="modal">
+    <div class="modal-head">Starred messages</div>
+    <div class="modal-body">
+      <p class="setting-explainer">Messages you star stay here, like WhatsApp starred and Telegram saved-from-chat.</p>
+      <div id="starred-list" class="hybrid-list"></div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-message-info">
+  <div class="modal">
+    <div class="modal-head">Message info</div>
+    <div class="modal-body" id="message-info-body"></div>
+    <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-get-app">
+  <div class="modal settings-modal">
+    <div class="modal-head">Get the VChat app</div>
+    <div class="modal-body">
+      <p class="setting-explainer">A PWA is still a website pinned to your home screen. A real app is an Android or desktop program with its own icon, no browser chrome, and phone camera/mic permissions.</p>
+      <div class="get-app-grid">
+        <article class="get-app-card navy">
+          <h3>Cloud · navy</h3>
+          <p>VChat Cloud messages use navy bubbles and travel over the internet, like iMessage. Works in groups, secret chats, and on every signed-in device.</p>
+        </article>
+        <article class="get-app-card orange">
+          <h3>SMS · orange</h3>
+          <p>SMS messages use orange bubbles and leave through Twilio as a real text. That is not your phone’s Messages app, and it is not free carrier SMS on this device.</p>
+        </article>
+        <article class="get-app-card">
+          <h3>Android app</h3>
+          <p>Open <code>native/android</code> in Android Studio, set your VChat server URL, and build an APK. Install it like WhatsApp. Play Store listing needs a Google Play developer account.</p>
+        </article>
+        <article class="get-app-card">
+          <h3>Desktop app</h3>
+          <p>The Electron shell in <code>native/desktop</code> is a real Windows / macOS / Linux window, not a browser tab. iOS needs a Mac, Xcode, and an Apple Developer account — sources are in <code>native/ios</code>.</p>
+        </article>
+      </div>
+      <p class="capture-disclosure" id="get-app-status">The native shell still talks to your VChat server. It does not replace Twilio, Apple iMessage, or a carrier SMS stack.</p>
+      <div class="business-dashboard-actions" style="justify-content:flex-start;margin-top:12px">
+        <button class="btn-primary" id="get-app-pwa" type="button">Install browser app</button>
+        <a class="btn-text" id="get-app-guide" href="/native-app.html">Build guide</a>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-backup">
+  <div class="modal">
+    <div class="modal-head">VChat Backup</div>
+    <div class="modal-body">
+      <p class="setting-explainer">Like iCloud: your theme, wallpaper, notification choices, and lite mode follow this account. Chat history already lives in VChat Cloud. Secret-chat keys stay on this device.</p>
+      <div class="drawer-label">Last cloud backup</div>
+      <div class="drawer-value" id="backup-last">Never</div>
+      <div class="business-dashboard-actions" style="justify-content:flex-start;margin-top:16px">
+        <button class="btn-primary" id="backup-now" type="button">Back up now</button>
+        <button class="btn-text" id="backup-restore" type="button">Restore settings</button>
+        <button class="btn-text" id="backup-download" type="button">Download file</button>
+      </div>
+      <p class="capture-disclosure" id="backup-status"></p>
+    </div>
+    <div class="modal-foot"><button class="btn-text" data-close>Close</button></div>
   </div>
 </div>
 

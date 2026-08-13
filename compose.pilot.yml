@@ -1,0 +1,33 @@
+# Single-node Vchat pilot. TLS must terminate in front of this process.
+# Copy .env.production.example to .env, fill secrets, then:
+#   docker compose -f compose.pilot.yml up --build
+services:
+  vchat:
+    build: .
+    image: vchat:pilot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      TRUST_PROXY: "1"
+      VCHAT_DATA_DIR: /var/lib/vchat
+    ports:
+      - "3000:3000"
+    volumes:
+      - vchat-data:/var/lib/vchat
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  vchat-data:

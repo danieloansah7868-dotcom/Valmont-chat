@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Parse JavaScript
+        run: npm run check
+      - name: Security and integration tests
+        run: npm test
+      - name: Production dependency audit
+        run: npm audit --omit=dev
+      - name: Pilot image builds
+        run: docker build -t vchat:ci .
