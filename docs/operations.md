@@ -91,6 +91,18 @@ docker compose -f compose.pilot.yml start vchat
 Store backups encrypted and off-host. Schema v2 never imports legacy
 `data/db.json`; restoring the wrong file starts a clean database.
 
+## Continuous integration
+
+`docs/ci.yml.example` is the GitHub Actions pipeline (syntax check, tests,
+`npm audit --omit=dev`, and a Docker image build). The connected GitHub App
+cannot write `.github/workflows/` until Arena is reconnected with **Workflows**
+permission. After that, copy the example into place:
+
+```bash
+mkdir -p .github/workflows
+cp docs/ci.yml.example .github/workflows/ci.yml
+```
+
 ## Health and logs
 
 - `GET /healthz` — liveness (`{ ok, service: "vchat" }`)
