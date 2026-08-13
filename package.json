@@ -21,7 +21,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@simplewebauthn/server": "^13.2.2",
+    "@simplewebauthn/server": "^13.3.2",
     "express": "^4.19.2",
     "express-rate-limit": "^8.6.2",
     "helmet": "^8.3.0",
