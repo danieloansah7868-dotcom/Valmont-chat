@@ -226,6 +226,7 @@ function previewOf(m) {
     if (t.startsWith('audio/')) return '🎵 Audio';
     return '📄 ' + m.file.name;
   }
+  if (m.encryption && !m.text) return m.decryptError ? '🔒 Unable to decrypt on this device' : '🔒 Encrypted message';
   return m.text;
 }
 
@@ -755,7 +756,8 @@ function connect() {
     if (activeId === chatId) { messages = []; renderMessages(); }
   });
 
-  socket.on('message:new', m => {
+  socket.on('message:new', async m => {
+    m = await hydrateSecretMessage(m);
     // Our own message coming back: the queued copy has served its purpose,
     // whether or not we ever saw the acknowledgement.
     if (m.senderId === me.id && m.clientId) {
@@ -862,7 +864,7 @@ function showMessageNotification(message, chat) {
   if (!notificationPrefs.desktop || !document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
   const mentioned = Array.isArray(message.mentions) && message.mentions.includes(me?.id);
   if (chat?.muted && !mentioned) return;
-  const privatePreview = chat?.advancedPrivacy || chat?.locked || !notificationPrefs.previews;
+  const privatePreview = chat?.advancedPrivacy || chat?.locked || chat?.type === 'secret' || !notificationPrefs.previews;
   const sender = message.sender?.username || chat?.name || 'Vchat';
   const title = privatePreview ? 'New Vchat message' : (mentioned ? `${sender} mentioned you` : (chat?.type === 'group' ? `${sender} · ${chat.name}` : sender));
   const body = privatePreview ? 'Open Vchat to read it' : previewOf(message);
@@ -1066,8 +1068,9 @@ function visibleChats() {
   if (filter === 'unread') list = list.filter(c => c.unread > 0 && !c.archived);
   else if (filter === 'favorites') list = list.filter(c => c.favorite && !c.archived);
   else if (filter === 'groups') list = list.filter(c => c.type === 'group' && !c.archived);
-  else if (filter === 'personal') list = list.filter(c => (c.type === 'dm' || c.type === 'saved') && !c.archived);
+  else if (filter === 'personal') list = list.filter(c => (c.type === 'dm' || c.type === 'saved' || c.type === 'secret') && !c.archived);
   else if (filter === 'calls') list = list.filter(c => c.lastMessage?.type === 'call' && !c.archived);
+  else if (filter === 'secret') list = list.filter(c => c.type === 'secret' && !c.archived);
   else if (filter === 'archived') list = list.filter(c => c.archived);
   else if (filter !== 'locked') list = list.filter(c => !c.archived);
 
@@ -1125,7 +1128,7 @@ function contactRow(u) {
 }
 
 function chatRow(c) {
-  const row = el('div', 'chat-row' + (c.id === activeId ? ' sel' : '') + (c.unread ? ' unread' : '') + (c.locked ? ' locked-chat-row' : '') + (c.type === 'saved' ? ' saved-row' : ''));
+  const row = el('div', 'chat-row' + (c.id === activeId ? ' sel' : '') + (c.unread ? ' unread' : '') + (c.locked ? ' locked-chat-row' : '') + (c.type === 'saved' ? ' saved-row' : '') + (c.type === 'secret' ? ' secret-row' : ''));
   const last = c.lastMessage;
   const isGroup = c.type === 'group';
   const entity = c.type === 'saved'
@@ -1256,10 +1259,11 @@ function openChat(chatId) {
   messages = pendingFor(chatId);
   renderMessages();
 
-  socket.emit('chat:open', { chatId }, res => {
+  socket.emit('chat:open', { chatId }, async res => {
     if (res?.error) return toast(res.error);
     if (activeId !== chatId) return;
     messages = [...(res.messages || []), ...pendingFor(chatId)];
+    await hydrateSecretThread();
     renderMessages();
     scrollBottom(true);
     $('msg-input').focus();
@@ -1288,14 +1292,18 @@ function updateHeaderForActive() {
   const c = activeChat();
   if (!c) return;
   updateComposerPermissions(c);
-  const entity = c.type === 'dm' ? (c.peer || { username: c.name }) : { name: c.name, type: 'group' };
-  setAvatar('peer-avatar', entity, 40, c.type === 'dm');
-  $('peer-name').textContent = c.name;
+  const entity = (c.type === 'dm' || c.type === 'secret') ? (c.peer || { username: c.name }) : { name: c.name, type: 'group' };
+  setAvatar('peer-avatar', entity, 40, c.type === 'dm' || c.type === 'secret');
+  $('peer-name').textContent = c.type === 'secret' ? `🔒 ${c.name}` : c.name;
 
   const typing = typingUsers.get(c.id);
   if (typing && typing.size) {
     const names = [...typing.values()].map(t => t.name);
     setPeerStatus(c.type === 'group' ? `${names.join(', ')} ${names.length > 1 ? 'are' : 'is'} typing…` : 'typing…', true);
+  } else if (c.type === 'secret') {
+    const ttl = c.disappearingSeconds || 0;
+    const ttlLabel = ttl === 0 ? 'off' : ttl < 60 ? `${ttl}s` : ttl < 3600 ? `${Math.round(ttl / 60)}m` : `${Math.round(ttl / 3600)}h`;
+    setPeerStatus(c.secret?.state === 'ready' ? `Secret chat · self-destruct ${ttlLabel}` : 'Waiting to be accepted');
   } else if (c.type === 'dm') {
     const peer = users.find(u => u.id === c.peer?.id) || c.peer;
     setPeerStatus(lastSeenText(peer));
@@ -1304,6 +1312,7 @@ function updateHeaderForActive() {
     setPeerStatus(names.join(', '));
   }
   updateCallButtons();
+  updateSecretBanner();
   renderChatList();
 }
 
@@ -1330,11 +1339,14 @@ function renderMessages() {
   const prevTop = box.scrollTop, prevH = box.scrollHeight;
   box.innerHTML = '';
   updatePinBar();
+  updateSecretBanner();
 
   if (!messages.length) {
     const c = activeChat();
     const empty = c?.type === 'saved'
       ? 'Saved Messages — send notes, links, and files to yourself.'
+      : c?.type === 'secret'
+      ? 'Secret chat — messages are encrypted on this device. The server only keeps ciphertext.'
       : c?.type === 'group'
       ? 'This is the beginning of the group. Say something!'
       : 'No messages yet — send the first one 👋';
@@ -1371,7 +1383,7 @@ function renderMessages() {
 function messageRow(m, grouped) {
   const out = m.senderId === me.id;
   const c = activeChat();
-  const row = el('div', `msg-row ${out ? 'out' : 'in'}${grouped ? ' grouped' : ''}${m.pending ? ' pending' : ''}${m.stuck ? ' stuck' : ''}`);
+  const row = el('div', `msg-row ${out ? 'out' : 'in'}${grouped ? ' grouped' : ''}${m.pending ? ' pending' : ''}${m.stuck ? ' stuck' : ''}${m.encryption ? ' secret-msg' : ''}${m.decryptError ? ' decrypt-error' : ''}`);
   row.dataset.id = m.id;
 
   let inner = '';
@@ -1598,7 +1610,8 @@ function openForward(message) {
   const picked = new Set();
   const list = $('forward-list');
   list.innerHTML = '';
-  chats.filter(chat => !chat.archived).forEach(chat => {
+  if (activeChat()?.type === 'secret' || message.encryption) return toast('Secret messages cannot be forwarded');
+  chats.filter(chat => !chat.archived && chat.type !== 'secret').forEach(chat => {
     const row = el('label', 'pick-row', `${avatarHTML(chat.type === 'dm' ? (chat.peer || { username: chat.name }) : { name: chat.name, type: 'group', id: chat.id }, 40)}<div class="pk-name">${esc(chat.name)}</div><input type="checkbox" />`);
     row.querySelector('input').onchange = event => {
       if (event.target.checked && picked.size >= 5) {
@@ -1652,12 +1665,17 @@ function updateSendBtn() {
   $('composer').classList.toggle('has-text', has);
 }
 
-function sendMessage(opts = {}) {
+async function sendMessage(opts = {}) {
   const input = $('msg-input');
   const text = input.value.trim();
   if ((!text && !pendingFile) || !activeId) return;
-  if (!canSendTo(activeChat())) return toast('Only group admins can send messages');
+  const chat = activeChat();
+  if (!canSendTo(chat)) return toast('Only group admins can send messages');
   hideMentionSuggest();
+  if (chat?.type === 'secret') {
+    if (chat.secret?.state !== 'ready') return toast('Wait for this secret chat to be accepted');
+    if (pendingFile) return toast('Secret chats are text-only so files never sit on the server');
+  }
 
   const payload = {
     chatId: activeId,
@@ -1668,6 +1686,14 @@ function sendMessage(opts = {}) {
     viewOnce: !!pendingFile && $('view-once-toggle').checked,
     silent: opts.silent === true,
   };
+  if (chat?.type === 'secret') {
+    try {
+      payload.encryption = await encryptSecretMessage(chat, text);
+      payload.plaintext = text;
+    } catch (error) {
+      return toast(error.message || 'Could not encrypt this secret message');
+    }
+  }
   // Everything goes through the outbox, connection or not. A message is only
   // dropped from it once the server has confirmed it, so a send that dies
   // halfway is retried instead of lost.
@@ -1838,9 +1864,10 @@ function outboxToMessage(item) {
     chatId: item.chatId,
     senderId: me.id,
     sender: { id: me.id, username: me.username, avatar: me.avatar, color: me.color },
-    text: item.text || '',
+    text: item.plaintext || item.text || '',
     file: item.file || null,
     type: item.type || 'text',
+    encryption: item.encryption || null,
     viewOnce: item.viewOnce === true,
     replyTo: item.replyTo || null,
     timestamp: item.queuedAt,
@@ -1892,11 +1919,13 @@ function sendQueued(item) {
     try {
       socket.emit('message:send', {
         chatId: item.chatId,
-        text: item.text,
+        text: item.encryption ? '' : item.text,
         file: item.file,
         type: item.type,
         replyTo: item.replyTo,
         viewOnce: item.viewOnce === true,
+        silent: item.silent === true,
+        encryption: item.encryption || undefined,
         tempId: item.tempId,
         clientId: item.clientId,
       }, res => {
@@ -2682,6 +2711,10 @@ function openNewChat() {
     }
     list.forEach(u => {
       const row = el('div', 'pick-row', `${avatarHTML(u, 40, true)}<div class="pk-name">${esc(u.username)}<div class="user-handle">${u.handle ? '@' + esc(u.handle) : ''}</div></div>`);
+      const lock = el('button', 'hdr-btn', icon('lock'));
+      lock.title = 'Start a secret chat';
+      lock.onclick = ev => { ev.stopPropagation(); startSecretChatWith(u); };
+      row.appendChild(lock);
       row.onclick = () => socket.emit('chat:startDM', { targetUserId: u.id }, res => { closeModal('modal-newchat'); if (res?.chat) openChat(res.chat.id); });
       box.appendChild(row);
     });
@@ -4163,6 +4196,217 @@ async function verifyReturnedBoostPayment() {
 }
 
 
+
+// ── Secret chats (device-held E2E) ─────────────────────────────────────
+const SECRET_DB_NAME = 'vchat-secret';
+const SECRET_DB_VERSION = 1;
+const secretKeyCache = new Map();
+
+function bytesToB64url(bytes) {
+  let bin = '';
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  view.forEach(b => { bin += String.fromCharCode(b); });
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function b64urlToBytes(value) {
+  const padded = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(padded + '==='.slice((padded.length + 3) % 4));
+  return Uint8Array.from(bin, ch => ch.charCodeAt(0));
+}
+function openSecretDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(SECRET_DB_NAME, SECRET_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('keys')) db.createObjectStore('keys');
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function loadSecretKeyPair(chatId) {
+  const cacheKey = `${me?.id}:${chatId}`;
+  if (secretKeyCache.has(cacheKey)) return secretKeyCache.get(cacheKey);
+  if (!me?.id || !window.indexedDB || !window.crypto?.subtle) return null;
+  const db = await openSecretDb();
+  const record = await new Promise((resolve, reject) => {
+    const tx = db.transaction('keys', 'readonly');
+    const req = tx.objectStore('keys').get(cacheKey);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+  if (!record?.privateJwk) return null;
+  const pair = {
+    privateKey: await crypto.subtle.importKey('jwk', record.privateJwk, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveKey']),
+    publicKey: record.publicKey,
+  };
+  secretKeyCache.set(cacheKey, pair);
+  return pair;
+}
+async function createSecretKeyPair(chatId) {
+  const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']);
+  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+  const publicKey = bytesToB64url(raw);
+  const privateJwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+  const cacheKey = `${me.id}:${chatId || 'pending'}`;
+  if (chatId) {
+    const db = await openSecretDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('keys', 'readwrite');
+      tx.objectStore('keys').put({ privateJwk, publicKey, ownerId: me.id, chatId }, cacheKey);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  const stored = { privateKey: pair.privateKey, publicKey };
+  secretKeyCache.set(cacheKey, stored);
+  return stored;
+}
+async function persistPendingSecretKey(chatId, pair) {
+  const cacheKey = `${me.id}:${chatId}`;
+  const privateJwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+  const db = await openSecretDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction('keys', 'readwrite');
+    tx.objectStore('keys').put({ privateJwk, publicKey: pair.publicKey, ownerId: me.id, chatId }, cacheKey);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  secretKeyCache.set(cacheKey, pair);
+}
+async function deriveSecretAesKey(chat) {
+  const pair = await loadSecretKeyPair(chat.id);
+  const remote = chat.secret?.remotePublicKey;
+  if (!pair || !remote) throw new Error('This device does not have the secret-chat key');
+  const publicKey = await crypto.subtle.importKey(
+    'raw',
+    b64urlToBytes(remote),
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    [],
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'ECDH', public: publicKey },
+    pair.privateKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+async function encryptSecretMessage(chat, plaintext) {
+  const key = await deriveSecretAesKey(chat);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const aad = new TextEncoder().encode(`${chat.id}:${me.id}`);
+  const ct = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: aad },
+    key,
+    new TextEncoder().encode(plaintext),
+  );
+  return { v: 1, alg: 'A256GCM', iv: bytesToB64url(iv), ct: bytesToB64url(new Uint8Array(ct)) };
+}
+async function decryptSecretMessage(chat, message) {
+  const key = await deriveSecretAesKey(chat);
+  const aad = new TextEncoder().encode(`${chat.id}:${message.senderId}`);
+  const pt = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: b64urlToBytes(message.encryption.iv), additionalData: aad },
+    key,
+    b64urlToBytes(message.encryption.ct),
+  );
+  return new TextDecoder().decode(pt);
+}
+async function hydrateSecretMessage(message) {
+  if (!message?.encryption || message.plaintext) {
+    if (message?.plaintext) message.text = message.plaintext;
+    return message;
+  }
+  const chat = chats.find(item => item.id === message.chatId);
+  if (!chat || chat.type !== 'secret') return message;
+  try {
+    message.text = await decryptSecretMessage(chat, message);
+    message.decrypted = true;
+  } catch {
+    message.decryptError = true;
+    message.text = '';
+  }
+  return message;
+}
+async function hydrateSecretThread() {
+  const chat = activeChat();
+  if (!chat || chat.type !== 'secret') return;
+  messages = await Promise.all(messages.map(hydrateSecretMessage));
+}
+
+async function startSecretChatWith(user) {
+  closeModal('modal-newchat');
+  try {
+    const pending = await createSecretKeyPair('pending');
+    socket.emit('chat:startSecret', { targetUserId: user.id, publicKey: pending.publicKey }, async res => {
+      if (res?.error) return toast(res.error);
+      await persistPendingSecretKey(res.chat.id, pending);
+      const idx = chats.findIndex(c => c.id === res.chat.id);
+      if (idx === -1) chats.unshift(res.chat); else chats[idx] = res.chat;
+      openChat(res.chat.id);
+    });
+  } catch (error) {
+    toast(error.message || 'This browser cannot create a secret chat');
+  }
+}
+
+function updateSecretBanner() {
+  const banner = $('secret-banner');
+  if (!banner) return;
+  const chat = activeChat();
+  if (!chat || chat.type !== 'secret') {
+    banner.hidden = true;
+    $('composer').classList.remove('read-only');
+    return;
+  }
+  banner.hidden = false;
+  const incoming = chat.secret?.state === 'pending' && chat.secret.peerId === me.id;
+  const waiting = chat.secret?.state === 'pending' && chat.secret.initiatorId === me.id;
+  $('secret-banner-title').textContent = incoming ? 'Incoming secret chat' : (waiting ? 'Waiting for acceptance' : 'Secret chat');
+  $('secret-banner-note').textContent = incoming
+    ? 'Accept only on this device. Messages never leave here as plaintext.'
+    : (waiting
+      ? 'The other person must accept before you can send encrypted messages.'
+      : 'End-to-end encrypted on this device. The server stores ciphertext only.');
+  $('secret-accept').hidden = !incoming;
+  $('secret-decline').hidden = !incoming;
+  $('secret-ttl').hidden = chat.secret?.state !== 'ready';
+  if (chat.secret?.state !== 'ready') {
+    $('composer').classList.add('read-only');
+    $('msg-input').disabled = true;
+  }
+}
+
+async function acceptActiveSecretChat() {
+  const chat = activeChat();
+  if (!chat) return;
+  try {
+    const pair = await createSecretKeyPair(chat.id);
+    socket.emit('chat:acceptSecret', { chatId: chat.id, publicKey: pair.publicKey }, res => {
+      if (res?.error) return toast(res.error);
+      Object.assign(chat, res.chat);
+      updateHeaderForActive();
+      updateSecretBanner();
+      toast('Secret chat is ready');
+    });
+  } catch (error) {
+    toast(error.message || 'Could not accept this secret chat');
+  }
+}
+
+function declineActiveSecretChat() {
+  const chat = activeChat();
+  if (!chat) return;
+  socket.emit('chat:declineSecret', { chatId: chat.id }, res => {
+    if (res?.error) return toast(res.error);
+    chats = chats.filter(c => c.id !== chat.id);
+    closeChat();
+    renderChatList();
+  });
+}
+
 // ── Hybrid WhatsApp + Telegram helpers ────────────────────────────────
 function openSavedMessages() {
   socket.emit('chat:startDM', { targetUserId: me.id }, res => {
@@ -4335,6 +4579,9 @@ function renderSharedMedia(container, chat) {
 }
 
 function wireHybrid() {
+  $('secret-accept').onclick = acceptActiveSecretChat;
+  $('secret-decline').onclick = declineActiveSecretChat;
+  $('secret-ttl').onclick = () => activeChat() && chooseDisappearing(activeChat());
   $('inchat-search-close').onclick = () => toggleInChatSearch(false);
   $('inchat-search-input').oninput = e => runInChatSearch(e.target.value);
   $('inchat-search-prev').onclick = () => stepInChatSearch(-1);
@@ -4489,6 +4736,7 @@ function mainMenu(e) {
     { label: 'Message info', fn: () => openMessageInfo(m) },
     { label: 'New group', fn: openNewGroup },
     { label: 'Saved Messages', fn: openSavedMessages },
+    { label: 'New secret chat', fn: openNewChat },
     { label: 'Starred messages', fn: openStarredMessages },
     { label: 'Calls', fn: openCallHistory },
     { label: 'Chat wallpaper', fn: openWallpaper },
@@ -4546,6 +4794,17 @@ function chatMenu(e) {
 }
 
 function chooseDisappearing(chat) {
+  if (chat.type === 'secret') {
+    const answer = prompt('Secret self-destruct: 0, 1, 5, 15, 60 seconds, or 300, 3600, 86400', String(chat.disappearingSeconds || 0));
+    if (answer == null) return;
+    const seconds = Number(answer);
+    if (![0, 1, 5, 15, 60, 300, 3600, 86400].includes(seconds)) return toast('Choose a supported secret-chat timer');
+    socket.emit('chat:setDisappearing', { chatId: chat.id, seconds }, result => {
+      if (result?.error) toast(result.error);
+      else { chat.disappearingSeconds = seconds; updateHeaderForActive(); updateSecretBanner(); }
+    });
+    return;
+  }
   const answer = prompt('Disappearing messages: enter 0 (off), 1 (day), 7 (days), or 90 (days)', String((chat.disappearingSeconds || 0) / 86400));
   if (answer == null) return;
   const days = Number(answer);

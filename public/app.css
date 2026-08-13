@@ -1714,3 +1714,17 @@ body.dark .mention { color: var(--brand-gold-light); }
   .bottom-nav .icon { width: 22px; height: 22px; }
   .chat-list { padding-bottom: 4px; }
 }
+
+.secret-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 14px; background: #111827; color: #f8fafc; z-index: 2;
+  border-bottom: 1px solid rgba(217,119,42,.35);
+}
+.secret-banner[hidden] { display: none !important; }
+.secret-banner strong { display: block; font-size: 13px; }
+.secret-banner span { display: block; color: rgba(248,250,252,.7); font-size: 11.5px; line-height: 1.4; }
+.secret-banner-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.secret-banner .btn-text { color: #f0b56a; }
+.chat-row.secret-row .row-name::before { content: '🔒 '; }
+.msg-row.secret-msg .bubble { box-shadow: inset 0 0 0 1px rgba(217,119,42,.28); }
+.decrypt-error { font-style: italic; color: var(--text-muted); }
