@@ -83,8 +83,13 @@ button { cursor: pointer; border: none; background: none; color: inherit; }
 /* ── Login (navy + orange — not the old white WhatsApp card) ── */
 #login {
   position: fixed; inset: 0; z-index: 100;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  display: flex; flex-direction: column; align-items: center;
   padding: 24px;
+  /* The account steps (especially "Create your account") are taller than a
+     short window. Center the card when it fits, but let the page scroll so
+     nothing is ever clipped — auto margins on the card handle both. */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background:
     radial-gradient(1100px 560px at 88% -8%, rgba(217, 119, 42, .34), transparent 58%),
     radial-gradient(800px 480px at -6% 108%, rgba(240, 181, 106, .16), transparent 52%),
@@ -93,12 +98,17 @@ button { cursor: pointer; border: none; background: none; color: inherit; }
 }
 #login::before {
   content: '';
-  position: absolute; inset: 0; pointer-events: none;
+  /* Fixed (not absolute) so the texture stays put while #login scrolls. */
+  position: fixed; inset: 0; pointer-events: none;
   opacity: .07;
   background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cpath fill='none' stroke='%23f0b56a' stroke-width='1' d='M20 20h20M20 20v20M100 20h20M120 20v20M20 100v20M20 120h20M100 120h20M120 100v20'/%3E%3C/svg%3E");
 }
 .login-card {
   position: relative; z-index: 1; width: min(92vw, 480px);
+  /* Centers the card when there is room and, once it is taller than the
+     viewport, collapses to zero so the top stays reachable and the card
+     scrolls within #login. */
+  margin: auto 0;
   background: linear-gradient(180deg, #132844 0%, var(--brand-navy) 100%);
   color: #f4f6fa;
   border: 1px solid rgba(240, 181, 106, .28);
@@ -559,7 +569,7 @@ body.dark .msg-tools button { background: #202c33; }
   display: flex; flex-direction: column; box-shadow: var(--shadow-lg); overflow: hidden;
 }
 .modal-head { padding: 20px 24px 14px; font-size: 18px; font-weight: 500; }
-.modal-body { padding: 0 24px; overflow-y: auto; flex: 1; }
+.modal-body { padding: 0 24px; overflow-y: auto; flex: 1; min-height: 0; }
 .modal-foot { padding: 16px 24px 20px; display: flex; justify-content: flex-end; gap: 10px; }
 .btn-text { padding: 10px 18px; border-radius: 20px; font-size: 14px; color: var(--text-secondary); }
 .btn-text:hover { background: var(--hover); }
