@@ -18,18 +18,88 @@ let searchQuery = '';
 let typingUsers = new Map();   // chatId -> Map(userId -> {name, timer})
 const typingTimers = {};
 let unseen = 0;
+let reels = [];
+let reelsCursor = null;
+let reelsLoading = false;
+let reelsReloadPending = false;
+let reelsExhausted = false;
+let reelsObserver = null;
+let reelsRefreshTimer = null;
+let reelMaxBytes = 50 * 1024 * 1024;
+let reelUploadFile = null;
+let reelUploadPreviewUrl = null;
+let reelUploadAbort = null;
+let reelUploadCleanup = null;
+let storyGroups = [];
+let storyAds = [];
+let storySequence = [];
+let storyIndex = -1;
+let storyPlayback = null;
+let storyViewerReturnFocus = null;
+let storiesLoading = false;
+let storiesRefreshTimer = null;
+let storyMaxBytes = 30 * 1024 * 1024;
+let storyReactions = ['❤️', '😂', '😮', '😢', '👏', '🔥'];
+let storyFile = null;
+let storyPreviewUrl = null;
+let storyBackground = 'jade';
+let storyPublishing = false;
+let storyUploadRequest = null;
+let storyPaymentConfigured = false;
+let storyAdAdmin = false;
+let registrationPhotoFile = null;
+let registrationPhotoPreviewUrl = null;
+let viewOnceObjectUrl = null;
+let chatLockCredentials = [];
 
 const AVATARS = ['😀','😎','🦊','🐼','🐯','🦁','🐸','🐵','🦄','🐙','🌟','🚀','🔥','🍀','🎧','⚽','🎸','🌺','🍕','🐨'];
+const NOTIFICATION_DEFAULTS = {
+  desktop: false,
+  previews: true,
+  messageSounds: true,
+  messageTone: 'chime',
+  callSounds: true,
+  ringtone: 'classic',
+  mediaVisibility: 'show',
+};
+let notificationPrefs = { ...NOTIFICATION_DEFAULTS };
+try {
+  notificationPrefs = { ...NOTIFICATION_DEFAULTS, ...JSON.parse(localStorage.getItem('vchat.notifications') || '{}') };
+} catch { /* corrupted local settings fall back safely */ }
+
 const EMOJI_GROUPS = {
-  'Smileys': ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩','😘','😗','😚','😙','😋','😛','😜','🤪','😝','🤗','🤭','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','😮','😯','😴','🥱','😌','😔','😪','🤤','😷','🤒','🤕','🤧','🥳','🥸','😎','🤓','🧐','😕','😟','🙁','😮‍💨','😢','😭','😤','😠','😡','🤬','😱','😨','😰','😥'],
-  'Gestures': ['👍','👎','👌','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','👇','☝️','✋','🤚','🖐️','🖖','👋','🤝','🙏','💪','🦾','👏','🙌','👐','🤲','✍️','💅'],
-  'Hearts': ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💯','💥','💫','⭐','🌟','✨','🔥','🎉','🎊','🎁'],
-  'Objects': ['📱','💻','⌨️','🖥️','🖨️','📷','🎥','📺','⏰','⏱️','📅','📌','📎','📁','📊','📈','💰','💳','🔑','🔒','📚','✏️','🖊️','📝','☕','🍵','🍕','🍔','🍟','🌮','🍎','🍌','⚽','🏀','🎮','🎧','🎸','🚗','✈️','🏠'],
+  'Smileys & emotion': ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','🫠','😉','😊','😇','🥰','😍','🤩','😘','😗','☺️','😚','😙','🥲','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🫢','🫣','🤫','🤔','🫡','🤐','🤨','😐','😑','😶','🫥','😏','😒','🙄','😬','😮‍💨','🤥','🫨','🙂‍↔️','🙂‍↕️','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🤧','🥵','🥶','🥴','😵','🤯','🤠','🥳','🥸','😎','🤓','🧐','😕','🫤','😟','🙁','☹️','😮','😯','😲','😳','🥺','🥹','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣','😞','😓','😩','😫','🥱','😤','😡','😠','🤬','😈','👿','💀','☠️','💩','🤡','👹','👺','👻','👽','🤖','😺','😸','😹','😻','😼','😽','🙀','😿','😾','❤️','🧡','💛','💚','💙','🩵','💜','🖤','🩶','🤍','🤎','💔','❤️‍🔥','❤️‍🩹','❣️','💕','💞','💓','💗','💖','💘','💝'],
+  'People & gestures': ['👋','🤚','🖐️','✋','🖖','🫱','🫲','🫳','🫴','🫷','🫸','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','🫵','👍','👎','✊','👊','🤛','🤜','👏','🙌','🫶','👐','🤲','🤝','🙏','✍️','💅','🤳','💪','🦾','🦿','🦵','🦶','👂','👃','🧠','🫀','🫁','🦷','👀','👁️','👅','👄','🫦','👶','🧒','👦','👧','🧑','👱','👨','🧔','👩','🧓','👴','👵','🙍','🙎','🙅','🙆','💁','🙋','🧏','🙇','🤦','🤷','👮','👷','💂','🕵️','👩‍⚕️','👩‍🌾','👩‍🍳','👩‍🎓','👩‍🎤','👩‍🏫','👩‍🏭','👩‍💻','👩‍💼','👩‍🔧','👩‍🔬','👩‍🎨','👩‍🚒','👩‍✈️','👩‍🚀','👩‍⚖️','🦸','🦹','🥷','🧙','🧚','🧛','🧜','🧝','🧞','🧟','💆','💇','🚶','🧍','🧎','🏃','💃','🕺','🕴️','👯','🧖','🧗','🤺','🏇','⛷️','🏂','🏌️','🏄','🚣','🏊','⛹️','🏋️','🚴','🤸','🤼','🤽','🤾','🤹','🧘','🛀','🛌','👭','👫','👬','💏','💑','👪'],
+  'Animals & nature': ['🐵','🐒','🦍','🦧','🐶','🐕','🦮','🐩','🐺','🦊','🦝','🐱','🐈','🦁','🐯','🐅','🐆','🐴','🫎','🫏','🐎','🦄','🦓','🦌','🦬','🐮','🐂','🐃','🐄','🐷','🐖','🐗','🐽','🐏','🐑','🐐','🐪','🐫','🦙','🦒','🐘','🦣','🦏','🦛','🐭','🐁','🐀','🐹','🐰','🐇','🐿️','🦫','🦔','🦇','🐻','🐨','🐼','🦥','🦦','🦨','🦘','🦡','🐾','🦃','🐔','🐓','🐣','🐤','🐥','🐦','🐧','🕊️','🦅','🦆','🦢','🦉','🦤','🪶','🦩','🦚','🦜','🪽','🐦‍⬛','🪿','🐦‍🔥','🐸','🐊','🐢','🦎','🐍','🐲','🐉','🦕','🦖','🐳','🐋','🐬','🦭','🐟','🐠','🐡','🦈','🐙','🐚','🪸','🪼','🐌','🦋','🐛','🐜','🐝','🪲','🐞','🦗','🪳','🕷️','🦂','🦟','🪰','🪱','🦠','💐','🌸','💮','🪷','🌹','🥀','🌺','🌻','🌼','🌷','🪻','🌱','🪴','🌲','🌳','🌴','🌵','🌾','🌿','☘️','🍀','🍁','🍂','🍃','🍄','🪨','🌍','🌎','🌏','🌙','☀️','⭐','🌟','✨','⚡','🔥','🌈','☁️','❄️','☔','💧','🌊'],
+  'Food & drink': ['🍏','🍎','🍐','🍊','🍋','🍋‍🟩','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🫛','🥬','🥒','🌶️','🫑','🌽','🥕','🫒','🧄','🧅','🥔','🍠','🫘','🌰','🥜','🍞','🥐','🥖','🫓','🥨','🥯','🥞','🧇','🧀','🍖','🍗','🥩','🥓','🍔','🍟','🍕','🌭','🥪','🌮','🌯','🫔','🥙','🧆','🥚','🍳','🥘','🍲','🫕','🥣','🥗','🍿','🧈','🧂','🥫','🍱','🍘','🍙','🍚','🍛','🍜','🍝','🍢','🍣','🍤','🍥','🥮','🍡','🥟','🥠','🥡','🦀','🦞','🦐','🦑','🦪','🍦','🍧','🍨','🍩','🍪','🎂','🍰','🧁','🥧','🍫','🍬','🍭','🍮','🍯','🍼','🥛','☕','🫖','🍵','🧃','🥤','🧋','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧉','🍾','🧊','🥄','🍴','🥢','🥡'],
+  'Activities': ['⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🥏','🎱','🪀','🏓','🏸','🏒','🏑','🥍','🏏','🪃','🥅','⛳','🪁','🏹','🎣','🤿','🥊','🥋','🎽','🛹','🛼','🛷','⛸️','🥌','🎿','⛷️','🏂','🪂','🏋️','🤼','🤸','⛹️','🤺','🤾','🏌️','🏇','🧘','🏄','🏊','🤽','🚣','🧗','🚵','🚴','🏆','🥇','🥈','🥉','🏅','🎖️','🏵️','🎗️','🎫','🎟️','🎪','🤹','🎭','🩰','🎨','🎬','🎤','🎧','🎼','🎹','🥁','🪘','🎷','🎺','🪗','🎸','🪕','🎻','🪈','🎲','♟️','🎯','🎳','🎮','🎰','🧩'],
+  'Travel & places': ['🚗','🚕','🚙','🚌','🚎','🏎️','🚓','🚑','🚒','🚐','🛻','🚚','🚛','🚜','🦯','🦽','🛴','🚲','🛵','🏍️','🛺','🚨','🚔','🚍','🚘','🚖','🚡','🚠','🚟','🚃','🚋','🚞','🚝','🚄','🚅','🚈','🚂','🚆','🚇','🚊','🚉','✈️','🛫','🛬','🛩️','💺','🛰️','🚀','🛸','🚁','🛶','⛵','🚤','🛥️','🛳️','⛴️','🚢','⚓','🛟','⛽','🚧','🚦','🗺️','🗿','🗽','🗼','🏰','🏯','🏟️','🎡','🎢','🎠','⛲','⛱️','🏖️','🏝️','🏜️','🌋','⛰️','🏕️','⛺','🛖','🏠','🏡','🏢','🏥','🏦','🏨','🏫','🏛️','⛪','🕌','🛕','🕍','🌅','🌄','🌠','🎇','🌇','🌆','🏙️','🌃'],
+  'Objects': ['⌚','📱','📲','💻','⌨️','🖥️','🖨️','🖱️','🕹️','💽','💾','💿','📀','🧮','🎥','🎞️','📽️','🎬','📺','📷','📸','📹','📼','🔍','🔎','🕯️','💡','🔦','🏮','🪔','📔','📕','📖','📗','📘','📙','📚','📓','📒','📃','📜','📄','📰','🗞️','📑','🔖','🏷️','💰','🪙','💴','💵','💶','💷','💸','💳','🧾','💹','✉️','📧','📨','📩','📤','📥','📦','📫','📮','📝','💼','📁','📅','📆','📇','📈','📉','📊','📋','📌','📍','📎','🖇️','📏','📐','✂️','🗃️','🗄️','🗑️','🔒','🔓','🔏','🔐','🔑','🗝️','🔨','🪓','⛏️','⚒️','🛠️','🗡️','⚔️','🔧','🪛','🔩','⚙️','🧱','⛓️','🧲','🔬','🔭','📡','💉','🩸','💊','🩹','🩺','🚪','🪑','🚽','🚿','🛁','🧹','🧺','🧻','🪣','🧼','🫧','🪥','🧽','🛒','🎁','🎈'],
+  'Symbols': ['❤️','💯','💢','💥','💫','💦','💨','🕳️','💬','👁️‍🗨️','🗨️','🗯️','💭','💤','✅','❌','❓','❗','‼️','⁉️','⭕','🚫','⛔','📛','🔞','📵','⚠️','🚸','🔱','⚜️','🔰','♻️','✳️','❇️','©️','®️','™️','🆕','🆓','🆙','🆒','🆗','🆘','🅰️','🅱️','🆎','🅾️','🧿','♾️','♀️','♂️','⚧️','✖️','➕','➖','➗','🟰','〰️','➰','✔️','☑️','🔘','🔴','🟠','🟡','🟢','🔵','🟣','🟤','⚫','⚪','🟥','🟧','🟨','🟩','🟦','🟪','🟫','⬛','⬜','◼️','◻️','🔈','🔉','🔊','🔇','📣','📢','🔔','🔕','🎵','🎶','💲','💱','➿','🔚','🔙','🔛','🔝','🔜'],
+  'Flags': ['🏁','🚩','🎌','🏴','🏳️','🏳️‍🌈','🏳️‍⚧️','🇬🇭','🇳🇬','🇨🇮','🇹🇬','🇧🇯','🇧🇫','🇸🇳','🇬🇲','🇸🇱','🇱🇷','🇬🇳','🇲🇱','🇳🇪','🇨🇲','🇰🇪','🇺🇬','🇹🇿','🇿🇦','🇪🇬','🇲🇦','🇪🇹','🇷🇼','🇿🇼','🇬🇧','🇺🇸','🇨🇦','🇲🇽','🇧🇷','🇦🇷','🇫🇷','🇩🇪','🇮🇹','🇪🇸','🇵🇹','🇳🇱','🇧🇪','🇨🇭','🇸🇪','🇳🇴','🇩🇰','🇫🇮','🇵🇱','🇺🇦','🇹🇷','🇸🇦','🇦🇪','🇮🇱','🇮🇳','🇵🇰','🇧🇩','🇱🇰','🇨🇳','🇯🇵','🇰🇷','🇸🇬','🇲🇾','🇮🇩','🇵🇭','🇹🇭','🇻🇳','🇦🇺','🇳🇿','🇺🇳'],
+};
+const EMOJI_CATEGORY_ICONS = ['😊','👋','🐻','🍕','⚽','✈️','💡','✅','🏳️'];
+const EMOJI_SEARCH_TERMS = {
+  love: ['❤️','🧡','💛','💚','💙','💜','💕','😍','🥰'], happy: ['😀','😃','😄','😁','😊','🥳'], sad: ['😢','😭','😞','💔'], laugh: ['😂','🤣','😹'],
+  yes: ['✅','👍','👌','🙌'], no: ['❌','👎','🚫','⛔'], thanks: ['🙏','❤️','🫶'], celebration: ['🎉','🎊','🥳','🎂','🥂'], fire: ['🔥','❤️‍🔥'], music: ['🎵','🎶','🎧','🎤','🎸'],
+  work: ['💼','💻','📊','🛠️'], money: ['💰','💵','💳','🪙'], phone: ['📱','☎️'], photo: ['📷','📸'], video: ['🎥','📹'], food: ['🍕','🍔','🍲','🍎'],
+  animal: ['🐶','🐱','🦁','🐼','🐻'], travel: ['✈️','🚗','🚆','🚀'], sport: ['⚽','🏀','🏈','🎾'], ghana: ['🇬🇭'], flag: ['🏁','🚩','🇬🇭','🇳🇬','🇬🇧','🇺🇸'], lock: ['🔒','🔐','🔑'], star: ['⭐','🌟','✨'],
 };
 
 // ── Tiny DOM helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 const el = (tag, cls, html) => { const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
+function makeKeyboardClickable(node, label) {
+  node.setAttribute('role', 'button');
+  node.tabIndex = 0;
+  if (label) node.setAttribute('aria-label', label);
+  node.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    node.click();
+  });
+  return node;
+}
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 const icon = (name, cls = 'icon') => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
 
@@ -88,8 +158,29 @@ function colorFor(id) {
 }
 const isEmojiOnly = t => t && /^[\p{Emoji_Presentation}\p{Extended_Pictographic}\u200d\ufe0f\s]+$/u.test(t) && [...t.replace(/\s/g, '')].length <= 6;
 
-function linkify(text) {
-  return esc(text).replace(/(https?:\/\/[^\s<]+)/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
+function formatMessage(text) {
+  const blocks = [];
+  let source = String(text || '').replace(/```([\s\S]*?)```/g, (_match, code) => {
+    blocks.push(`<pre class="msg-code">${esc(code.trim())}</pre>`);
+    return `\u0000BLOCK${blocks.length - 1}\u0000`;
+  });
+  source = source.replace(/`([^`\n]+)`/g, (_match, code) => {
+    blocks.push(`<code>${esc(code)}</code>`);
+    return `\u0000BLOCK${blocks.length - 1}\u0000`;
+  });
+  let html = esc(source);
+  html = html
+    .replace(/(^|\s)\*([^*\n]+)\*(?=\s|[.,!?;:]|$)/g, '$1<strong>$2</strong>')
+    .replace(/(^|\s)_([^_\n]+)_(?=\s|[.,!?;:]|$)/g, '$1<em>$2</em>')
+    .replace(/(^|\s)~([^~\n]+)~(?=\s|[.,!?;:]|$)/g, '$1<del>$2</del>')
+    .replace(/(https?:\/\/[^\s<]+)/g, url => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`)
+    .replace(/(^|\s)(@[\p{L}\p{N}_.-]{2,40})/gu, '$1<span class="mention">$2</span>');
+  html = html.split('\n').map(line => {
+    if (/^&gt;\s/.test(line)) return `<blockquote>${line.replace(/^&gt;\s?/, '')}</blockquote>`;
+    if (/^[-•]\s/.test(line)) return `<div class="msg-list-item">• ${line.replace(/^[-•]\s?/, '')}</div>`;
+    return line;
+  }).join('<br>');
+  return html.replace(/\u0000BLOCK(\d+)\u0000/g, (_match, index) => blocks[Number(index)] || '');
 }
 
 /** Replace the node with `id` by a freshly rendered avatar, keeping id + extra classes. */
@@ -108,10 +199,13 @@ function avatarHTML(entity, size = 40, showPresence = false) {
   const isUser = entity && 'username' in entity;
   const name = isUser ? entity.username : (entity?.name || '?');
   const emoji = entity?.avatar;
+  const photoUrl = entity?.photoUrl;
   const bg = entity?.color || colorFor(entity?.id || name);
-  const inner = emoji ? esc(emoji) : (entity?.type === 'group' ? icon('group', 'icon') : esc(initials(name)));
+  const inner = photoUrl
+    ? `<img class="avatar-photo" src="${esc(photoUrl)}" alt="" loading="lazy">`
+    : (emoji ? esc(emoji) : (entity?.type === 'group' ? icon('group', 'icon') : esc(initials(name))));
   const dot = showPresence ? `<span class="presence ${entity?.status === 'online' ? 'on' : ''}"></span>` : '';
-  return `<div class="avatar sz-${size}" style="background:${emoji ? 'var(--panel-alt)' : bg}">${inner}${dot}</div>`;
+  return `<div class="avatar sz-${size}" style="background:${photoUrl || emoji ? 'var(--panel-alt)' : bg}">${inner}${dot}</div>`;
 }
 
 function tickHTML(status) {
@@ -213,15 +307,17 @@ function showStep(id) {
   ['step-phone', 'step-code', 'step-profile'].forEach(s => { $(s).hidden = s !== id; });
 }
 
-async function api(path, body) {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+async function api(path, body, options = {}) {
+  const method = options.method || (body === undefined ? 'GET' : 'POST');
+  const init = { method, credentials: 'same-origin', headers: {} };
+  if (body !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, init);
   let data = {};
   try { data = await res.json(); } catch { /* empty body */ }
-  return { ok: res.ok, data };
+  return { ok: res.ok, status: res.status, data };
 }
 
 function initLogin() {
@@ -245,6 +341,43 @@ function initLogin() {
   const savedName = localStorage.getItem('vchat.name');
   if (savedName) $('name-input').value = savedName;
 
+  const accountTypeInputs = [...document.querySelectorAll('input[name="register-account-type"]')];
+  const updateAccountType = () => {
+    const business = accountTypeInputs.find(input => input.checked)?.value === 'business';
+    $('business-register-fields').hidden = !business;
+    accountTypeInputs.forEach(input => input.closest('.account-type-card')?.classList.toggle('selected', input.checked));
+  };
+  accountTypeInputs.forEach(input => input.onchange = updateAccountType);
+  updateAccountType();
+
+  const resetRegistrationPhoto = () => {
+    if (registrationPhotoPreviewUrl) URL.revokeObjectURL(registrationPhotoPreviewUrl);
+    registrationPhotoPreviewUrl = null;
+    registrationPhotoFile = null;
+    $('registration-photo-input').value = '';
+    $('registration-photo-preview').innerHTML = icon('photo');
+    $('registration-photo-name').textContent = 'You can replace or remove it later.';
+    $('registration-photo-remove').hidden = true;
+  };
+  const chooseRegistrationPhoto = () => $('registration-photo-input').click();
+  $('registration-photo-choose').onclick = chooseRegistrationPhoto;
+  $('registration-photo-button').onclick = chooseRegistrationPhoto;
+  $('registration-photo-remove').onclick = resetRegistrationPhoto;
+  $('registration-photo-input').onchange = event => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/i.test(file.type) || file.size > 5 * 1024 * 1024) {
+      resetRegistrationPhoto();
+      return toast('Choose a JPEG, PNG, or WebP image up to 5 MB');
+    }
+    if (registrationPhotoPreviewUrl) URL.revokeObjectURL(registrationPhotoPreviewUrl);
+    registrationPhotoFile = file;
+    registrationPhotoPreviewUrl = URL.createObjectURL(file);
+    $('registration-photo-preview').innerHTML = `<img src="${esc(registrationPhotoPreviewUrl)}" alt="Selected profile photo">`;
+    $('registration-photo-name').textContent = `${file.name} · ${fileSize(file.size)}`;
+    $('registration-photo-remove').hidden = false;
+  };
+
   const savedPhone = localStorage.getItem('vchat.phone');
   if (savedPhone) {
     const match = DIAL_CODES.filter(d => savedPhone.startsWith('+' + d[1]))
@@ -262,31 +395,18 @@ function initLogin() {
   initCodeBoxes();
 
   $('login-btn').onclick = submitProfile;
-  $('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('handle-input').focus(); });
-  $('handle-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitProfile(); });
-  $('handle-input').addEventListener('input', () => {
-    $('handle-input').value = $('handle-input').value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20);
-    $('profile-err').textContent = '';
-  });
-  $('name-input').addEventListener('input', () => {
-    const h = $('handle-input');
-    if (h.dataset.touched) return;
-    const fromName = $('name-input').value.toLowerCase().replace(/[^a-z0-9_]+/g, '').replace(/^[^a-z]+/, '').slice(0, 20);
-    h.value = fromName;
-  });
-  $('handle-input').addEventListener('focus', () => { $('handle-input').dataset.touched = '1'; });
+  $('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitProfile(); });
 
   $('phone-input').focus();
   restoreSession();
 }
 
-/** Silently resume an existing session so you are not asked to verify twice. */
+/** Silently resume the server-held HttpOnly session cookie. */
 async function restoreSession() {
-  const token = localStorage.getItem('vchat.token');
-  if (!token) return;
-  const { ok, data } = await api('/api/auth/session', { token });
-  if (ok && data.user) connect(token);
-  else localStorage.removeItem('vchat.token');
+  // Remove pre-security-release bearer tokens; they are intentionally invalid.
+  localStorage.removeItem('vchat.token');
+  const { ok, data } = await api('/api/auth/session');
+  if (ok && data.user) connect();
 }
 
 // ── Step 1: request a code ─────────────────────────────────────────────
@@ -312,7 +432,6 @@ async function requestCode(resend) {
   authPhone = data.phone;
   $('code-target').textContent = data.phone;
   localStorage.setItem('vchat.phone', data.phone);
-  if (data.username) $('name-input').value = data.username;
 
   // Dev mode: no SMS provider configured, so surface the code in the UI.
   const dev = $('dev-code');
@@ -415,6 +534,17 @@ async function submitCode() {
     $('name-input').focus();
     return;
   }
+  if (data.needsTwoStep) {
+    const pin = prompt('Enter your 6-digit two-step verification PIN');
+    if (!pin) return;
+    const result = await api('/api/auth/two-step', { phone: authPhone, pin });
+    if (!result.ok) {
+      $('code-err').textContent = result.data.error || 'Incorrect PIN';
+      return;
+    }
+    finishAuth(result.data);
+    return;
+  }
 
   finishAuth(data);
 }
@@ -422,51 +552,83 @@ async function submitCode() {
 // ── Step 3: name + avatar for first-time numbers ───────────────────────
 async function submitProfile() {
   const username = $('name-input').value.trim();
-  const handle = $('handle-input').value.trim();
-  if (username.length < 2) { $('profile-err').textContent = 'Please enter at least 2 characters for your name'; return; }
-  if (!/^[a-z][a-z0-9_]{2,19}$/.test(handle)) {
-    $('profile-err').textContent = 'Username must be 3–20 characters, start with a letter, and use only letters, numbers or _';
+  const accountType = document.querySelector('input[name="register-account-type"]:checked')?.value;
+  const businessName = $('business-name-input').value.trim();
+  if (username.length < 2) { $('profile-err').textContent = 'Please enter at least 2 characters'; return; }
+  if (!['personal', 'business'].includes(accountType)) {
+    $('profile-err').textContent = 'Choose Personal or Business to continue';
+    document.querySelector('input[name="register-account-type"]')?.focus();
+    return;
+  }
+  if (accountType === 'business' && businessName.length < 2) {
+    $('profile-err').textContent = 'Please enter a public business name';
+    $('business-name-input').focus();
     return;
   }
   $('profile-err').textContent = '';
   $('login-btn').disabled = true;
 
+  // Registration creates the HttpOnly session first. Only then can the
+  // optional profile image use the authenticated protected-media route.
   const { ok, data } = await api('/api/auth/register', {
-    phone: authPhone, username, handle, avatar: pickedAvatar,
+    phone: authPhone,
+    username,
+    avatar: pickedAvatar,
+    accountType,
+    businessProfile: accountType === 'business' ? {
+      name: businessName,
+      category: $('business-category-input').value,
+      description: $('business-description-input').value.trim(),
+    } : undefined,
   });
-  $('login-btn').disabled = false;
 
-  if (!ok) { $('profile-err').textContent = data.error || 'Could not create your account'; return; }
+  if (!ok) {
+    $('login-btn').disabled = false;
+    $('profile-err').textContent = data.error || 'Could not create your profile';
+    return;
+  }
+
+  if (registrationPhotoFile) {
+    try {
+      const form = new FormData();
+      form.append('photo', registrationPhotoFile, registrationPhotoFile.name);
+      const response = await fetch('/api/account/profile-photo', {
+        method: 'PUT', credentials: 'same-origin', body: form,
+      });
+      const photoData = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(photoData.error || 'Profile photo upload failed');
+      data.user = photoData.user || data.user;
+    } catch (error) {
+      toast(`${error.message}. Your account was created and you can add it later.`);
+    }
+  }
+  $('login-btn').disabled = false;
+  if (registrationPhotoPreviewUrl) URL.revokeObjectURL(registrationPhotoPreviewUrl);
+  registrationPhotoPreviewUrl = null;
+  registrationPhotoFile = null;
   finishAuth(data);
 }
 
-function finishAuth({ token, user }) {
-  localStorage.setItem('vchat.token', token);
+function finishAuth({ user }) {
   localStorage.setItem('vchat.name', user.username);
   localStorage.setItem('vchat.avatar', user.avatar || '');
-  connect(token);
+  connect();
 }
 
 // ── Socket ─────────────────────────────────────────────────────────────
-function connect(token) {
+function connect() {
   if (socket) socket.close();
-  socket = io({ transports: ['websocket', 'polling'], auth: { token } });
+  socket = io({ transports: ['websocket', 'polling'], withCredentials: true });
 
   socket.on('connect', () => {
-    socket.emit('user:join', { token }, (res) => {
+    socket.emit('user:join', {}, async (res) => {
       $('login-btn').disabled = false;
       if (!res || res.error) {
-        if (res?.signedOut) {           // token no longer valid → back to step 1
-          localStorage.removeItem('vchat.token');
-          socket.close();
-          showStep('step-phone');
-          $('login-err').textContent = 'Your session expired. Please sign in again.';
-          return;
-        }
         $('code-err').textContent = res?.error || 'Could not join';
         return;
       }
       me = res.user;
+      await loadOutbox(me.id);
       chats = res.chats;
       users = res.users;
       localStorage.setItem('vchat.name', me.username);
@@ -474,6 +636,7 @@ function connect(token) {
       $('login').style.display = 'none';
       document.body.classList.add('ready');
       renderMe();
+      renderChatLockState();
       renderChatList();
       if (!activeId && window.innerWidth > 900) {
         const first = chats[0];
@@ -481,7 +644,47 @@ function connect(token) {
       }
       updateOfflineBar();
       flushOutbox();
+      refreshIceServers();
+      verifyReturnedBoostPayment().catch(() => {});
+      const invite = new URLSearchParams(location.search).get('invite');
+      if (invite) {
+        socket.emit('chat:joinInvite', { code: invite }, result => {
+          if (result?.chat) {
+            history.replaceState({}, '', location.pathname);
+            openChat(result.chat.id);
+            toast(`Joined ${result.chat.name}`);
+          } else toast(result?.error || 'Invite link is invalid');
+        });
+      }
     });
+  });
+
+  socket.on('session:revoked', () => {
+    clearPrivateOutbox(me?.id).catch(() => {});
+    teardown();
+    socket.close();
+    closeModal('modal-reel-upload');
+    closeModal('modal-story-compose');
+    closeStories();
+    closeReels();
+    reels = [];
+    $('reels-feed').innerHTML = '';
+    $('login').style.display = '';
+    document.body.classList.remove('ready');
+    showStep('step-phone');
+    $('login-err').textContent = 'This device was signed out from your account.';
+  });
+
+  socket.on('connect_error', error => {
+    if (/Authentication required/i.test(error?.message || '')) {
+      clearPrivateOutbox(me?.id).catch(() => {});
+      teardown();
+      socket.close();
+      $('login').style.display = '';
+      document.body.classList.remove('ready');
+      showStep('step-phone');
+      $('login-err').textContent = 'Your session expired. Please sign in again.';
+    }
   });
 
   socket.on('disconnect', () => {
@@ -492,9 +695,27 @@ function connect(token) {
   });
 
   socket.on('chats:list', list => {
-    chats = list;
-    if (activeId && chats.some(c => c.id === activeId)) updateHeaderForActive();
-    else renderChatList();
+    const previousActive = activeChat();
+    chats = Array.isArray(list) ? list : [];
+    if (activeId && chats.some(c => c.id === activeId)) {
+      updateHeaderForActive();
+      renderChatList();
+    } else if (activeId && previousActive?.locked) {
+      // Automatic relocking must remove already-rendered content as well as
+      // hiding the row; leaving a stale thread in the DOM would leak it.
+      closeChat();
+      toast('Locked chats were hidden');
+    } else renderChatList();
+  });
+  socket.on('chat-lock:state', user => {
+    if (!user || user.id !== me?.id) return;
+    me = { ...me, ...user };
+    renderChatLockState();
+    if (!chatLockIsUnlocked() && call?.chatId && chats.some(c => c.id === call.chatId && c.locked)) {
+      teardown();
+      toast('Call ended because this chat relocked');
+    }
+    if (!chatLockIsUnlocked() && activeChat()?.locked) closeChat();
   });
   socket.on('chats:refresh', () => {});
   socket.on('users:list', list => {
@@ -503,6 +724,20 @@ function connect(token) {
     refreshDrawerIfOpen();
   });
   socket.on('presence:update', () => {});
+  socket.on('reels:changed', () => {
+    if (!document.body.classList.contains('reels-open')) return;
+    clearTimeout(reelsRefreshTimer);
+    reelsRefreshTimer = setTimeout(() => loadReels(true, true), 350);
+  });
+  socket.on('stories:changed', () => {
+    if (!$('stories-screen').classList.contains('open')) {
+      $('story-notice').hidden = false;
+      return;
+    }
+    if (!$('story-viewer').hidden) return;
+    clearTimeout(storiesRefreshTimer);
+    storiesRefreshTimer = setTimeout(() => loadStories({ quiet: true }), 350);
+  });
 
   socket.on('call:incoming', onCallIncoming);
   socket.on('call:accepted', onCallAccepted);
@@ -545,7 +780,14 @@ function connect(token) {
       const c = chats.find(x => x.id === m.chatId);
       if (!c?.muted) ping();
     }
-    if (m.senderId !== me.id && document.hidden) notifyTitle();
+    if (m.senderId !== me.id && document.hidden) {
+      const c = chats.find(x => x.id === m.chatId);
+      if (!c?.muted) {
+        if (m.chatId === activeId) ping();
+        showMessageNotification(m, c);
+      }
+      notifyTitle();
+    }
   });
 
   socket.on('message:updated', m => {
@@ -594,24 +836,76 @@ function connect(token) {
 
 // ── Notification helpers ───────────────────────────────────────────────
 let audioCtx = null;
-function ping() {
+let activeCallNotification = null;
+function ping(force = false) {
+  if (!force && !notificationPrefs.messageSounds) return;
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.connect(g); g.connect(audioCtx.destination);
-    o.frequency.value = 880; o.type = 'sine';
-    g.gain.setValueAtTime(0.0001, audioCtx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.06, audioCtx.currentTime + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.25);
-    o.start(); o.stop(audioCtx.currentTime + 0.26);
+    audioCtx.resume?.();
+    const tones = {
+      chime: [880, 1175],
+      soft: [520, 660],
+      bright: [990, 1320],
+    };
+    const notes = tones[notificationPrefs.messageTone] || tones.chime;
+    notes.forEach((frequency, index) => {
+      const start = audioCtx.currentTime + index * 0.13;
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.connect(g); g.connect(audioCtx.destination);
+      o.frequency.value = frequency; o.type = notificationPrefs.messageTone === 'soft' ? 'sine' : 'triangle';
+      g.gain.setValueAtTime(0.0001, start);
+      g.gain.exponentialRampToValueAtTime(0.045, start + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.2);
+      o.start(start); o.stop(start + 0.21);
+    });
   } catch (_) {}
 }
+
+function showMessageNotification(message, chat) {
+  if (!notificationPrefs.desktop || !document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
+  const privatePreview = chat?.advancedPrivacy || chat?.locked || !notificationPrefs.previews;
+  const sender = message.sender?.username || chat?.name || 'Vchat';
+  const title = privatePreview ? 'New Vchat message' : (chat?.type === 'group' ? `${sender} · ${chat.name}` : sender);
+  const body = privatePreview ? 'Open Vchat to read it' : previewOf(message);
+  try {
+    const notice = new Notification(title, { body, icon: '/icons/icon-192.png', tag: `chat-${message.chatId}` });
+    notice.onclick = () => { window.focus(); openChat(message.chatId); notice.close(); };
+  } catch { /* browser or OS declined the notification */ }
+}
+
+function showCallNotification(from, media) {
+  if (!notificationPrefs.desktop || !document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    activeCallNotification?.close();
+    activeCallNotification = new Notification(`Incoming ${media === 'video' ? 'video' : 'voice'} call`, {
+      body: notificationPrefs.previews ? (from?.username || 'Vchat contact') : 'Open Vchat to answer',
+      icon: '/icons/icon-192.png', tag: 'vchat-incoming-call', requireInteraction: true,
+    });
+    activeCallNotification.onclick = () => { window.focus(); activeCallNotification?.close(); };
+  } catch { /* unsupported notification options */ }
+}
+function closeCallNotification() {
+  activeCallNotification?.close();
+  activeCallNotification = null;
+}
+
 function notifyTitle() {
   unseen++;
   document.title = `(${unseen}) VChat`;
 }
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) { unseen = 0; document.title = 'VChat'; }
+  if (document.hidden) {
+    pauseReelVideos();
+    if (!$('view-once-viewer').hidden) closeViewOnce();
+  }
+  else {
+    unseen = 0;
+    document.title = 'VChat';
+    if (document.body.classList.contains('reels-open') && reelAutoplayEnabled()) {
+      const current = $('reels-feed')?.querySelector(`[data-id="${visibleReelId() || ''}"] video`);
+      current?.play().catch(() => {});
+    }
+  }
 });
 
 // ── Me / profile ───────────────────────────────────────────────────────
@@ -620,55 +914,155 @@ function renderMe() {
   if (node) { node.title = 'Profile'; node.onclick = openProfile; }
 }
 
+let profileModalCleanup = null;
 function openProfile() {
-  const pv = setAvatar('profile-avatar', me, 140);
-  if (pv) pv.style.margin = '8px auto 20px';
+  profileModalCleanup?.();
+  setAvatar('profile-avatar', me, 140);
   let picked = me.avatar;
+  let photoFile = null;
+  let photoAction = 'keep';
+  let previewUrl = null;
+
+  const clearPreview = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = null;
+  };
+  const cleanup = () => {
+    clearPreview();
+    photoFile = null;
+    if ($('profile-photo-input')) $('profile-photo-input').value = '';
+    if (profileModalCleanup === cleanup) profileModalCleanup = null;
+  };
+  profileModalCleanup = cleanup;
+
+  const showPhotoPreview = url => {
+    const node = $('profile-avatar');
+    node.innerHTML = `<img class="avatar-photo" src="${esc(url)}" alt="Profile photo preview">`;
+    node.style.background = 'var(--panel-alt)';
+  };
+
   buildAvatarPicker($('profile-avatar-picker'), me.avatar, a => {
     picked = a;
+    clearPreview();
+    photoFile = null;
+    photoAction = me.photoUrl ? 'remove' : 'keep';
     const node = $('profile-avatar');
     node.textContent = a;
     node.style.background = 'var(--panel-alt)';
+    $('profile-photo-remove').hidden = true;
   });
+
   $('profile-name').value = me.username;
-  const handleBox = $('profile-handle');
-  if (handleBox) {
-    handleBox.value = me.handle || '';
-    handleBox.oninput = () => {
-      handleBox.value = handleBox.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20);
-    };
-  }
   $('profile-about').value = me.about || '';
-  const phoneRow = $('profile-phone');
-  if (phoneRow) phoneRow.textContent = me.phone || 'Not linked';
-  $('profile-save').onclick = () => {
-    socket.emit('profile:update', {
-      username: $('profile-name').value.trim(),
-      handle: handleBox ? handleBox.value.trim() : me.handle,
-      avatar: picked,
-      about: $('profile-about').value.trim(),
-    }, res => {
-      if (res?.error) return toast(res.error);
-      if (!res?.user) return toast('Could not update profile');
-      me = res.user;
+  $('profile-photo-input').value = '';
+  $('profile-photo-remove').hidden = !me.photoUrl;
+  $('profile-phone').textContent = me.phone || 'Not linked';
+
+  $('profile-photo-choose').onclick = () => $('profile-photo-input').click();
+  $('profile-photo-input').onchange = () => {
+    const file = $('profile-photo-input').files?.[0];
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/i.test(file.type) || file.size > 5 * 1024 * 1024) {
+      $('profile-photo-input').value = '';
+      return toast('Choose a JPEG, PNG, or WebP image up to 5 MB');
+    }
+    clearPreview();
+    previewUrl = URL.createObjectURL(file);
+    photoFile = file;
+    photoAction = 'upload';
+    showPhotoPreview(previewUrl);
+    $('profile-photo-remove').hidden = false;
+  };
+  $('profile-photo-remove').onclick = () => {
+    clearPreview();
+    photoFile = null;
+    photoAction = 'remove';
+    const node = $('profile-avatar');
+    node.textContent = picked || initials(me.username);
+    node.style.background = 'var(--panel-alt)';
+    $('profile-photo-remove').hidden = true;
+  };
+  $('profile-name-emoji').onclick = event => {
+    const input = $('profile-name');
+    const emojis = ['😊','❤️','✨','🔥','👑','🌟','🎵','🌺','🦋','🚀','⚽','🎮'];
+    showCtxMenu(event, emojis.map(emoji => ({ label: emoji, fn: () => {
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? start;
+      input.setRangeText(emoji, start, end, 'end');
+      input.focus();
+    } })));
+  };
+
+  $('profile-save').onclick = async () => {
+    const name = $('profile-name').value.trim();
+    if (name.length < 2) return toast('Your name must be at least 2 characters');
+    const button = $('profile-save');
+    button.disabled = true;
+    const profileResult = await new Promise(resolve => {
+      const timer = setTimeout(() => resolve({ error: 'Profile update timed out. Check your connection.' }), 10000);
+      socket.emit('profile:update', {
+        username: name,
+        avatar: picked,
+        about: $('profile-about').value.trim(),
+      }, result => {
+        clearTimeout(timer);
+        resolve(result);
+      });
+    });
+    if (profileResult?.error || !profileResult?.user) {
+      button.disabled = false;
+      return toast(profileResult?.error || 'Could not update profile');
+    }
+
+    const applyLocalProfile = user => {
+      // Profile responses are merged defensively so unrelated session-scoped
+      // state (notably a temporary chat-lock unlock) cannot be discarded.
+      me = { ...me, ...(user || {}) };
       localStorage.setItem('vchat.name', me.username);
-      localStorage.setItem('vchat.handle', me.handle || '');
       localStorage.setItem('vchat.avatar', me.avatar || '');
       renderMe();
-      closeModal('modal-profile');
-      toast('Profile updated');
-    });
+    };
+    // Text/avatar details have committed even if the independent media request
+    // below fails. Reflect that partial success instead of leaving stale UI.
+    applyLocalProfile(profileResult.user);
+
+    try {
+      if (photoAction === 'upload' && photoFile) {
+        const form = new FormData();
+        form.append('photo', photoFile, photoFile.name);
+        const response = await fetch('/api/account/profile-photo', {
+          method: 'PUT', credentials: 'same-origin', body: form,
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'the photo could not be uploaded');
+        applyLocalProfile(data.user);
+      } else if (photoAction === 'remove') {
+        const result = await api('/api/account/profile-photo', {}, { method: 'DELETE' });
+        if (!result.ok) throw new Error(result.data.error || 'the photo could not be removed');
+        applyLocalProfile(result.data.user);
+      }
+    } catch (error) {
+      button.disabled = false;
+      return toast(`Profile details saved, but ${error.message}`);
+    }
+
+    button.disabled = false;
+    closeModal('modal-profile');
+    toast('Profile updated');
   };
   openModal('modal-profile');
 }
 
 // ── Chat list ──────────────────────────────────────────────────────────
 function visibleChats() {
-  let list = chats.slice();
-  if (filter === 'unread') list = list.filter(c => c.unread > 0);
-  else if (filter === 'groups') list = list.filter(c => c.type === 'group');
+  // Even during an unlocked session, locked chats live only behind the
+  // dedicated filter so names and previews never bleed into normal lists.
+  let list = filter === 'locked' ? chats.filter(c => c.locked) : chats.filter(c => !c.locked);
+  if (filter === 'unread') list = list.filter(c => c.unread > 0 && !c.archived);
+  else if (filter === 'favorites') list = list.filter(c => c.favorite && !c.archived);
+  else if (filter === 'groups') list = list.filter(c => c.type === 'group' && !c.archived);
   else if (filter === 'archived') list = list.filter(c => c.archived);
-  else list = list.filter(c => !c.archived);
+  else if (filter !== 'locked') list = list.filter(c => !c.archived);
 
   if (searchQuery) {
     const q = searchQuery.toLowerCase();
@@ -686,8 +1080,7 @@ function renderChatList() {
   // "Start a chat with" suggestions when searching
   if (searchQuery) {
     const q = searchQuery.toLowerCase();
-    const matches = users.filter(u => u.id !== me.id &&
-      ((u.handle && u.handle.includes(q)) || u.username.toLowerCase().includes(q)) &&
+    const matches = users.filter(u => u.id !== me.id && u.username.toLowerCase().includes(q) &&
       !chats.some(c => c.type === 'dm' && c.peer?.id === u.id));
     if (matches.length) {
       box.appendChild(el('div', 'list-section-title', 'Contacts'));
@@ -699,7 +1092,7 @@ function renderChatList() {
   if (!list.length && !box.children.length) {
     box.appendChild(el('div', 'empty-list',
       searchQuery ? 'No chats found.<br>Try a different search.'
-                  : 'No conversations yet.<br>Tap the new-chat icon to start one.'));
+                  : (filter === 'locked' ? 'No locked chats on this account.' : 'No conversations yet.<br>Tap the new-chat icon to start one.')));
     return;
   }
 
@@ -712,18 +1105,19 @@ function contactRow(u) {
     ${avatarHTML(u, 49, true)}
     <div class="body">
       <div class="row-top"><div class="row-name">${esc(u.username)}</div></div>
-      <div class="row-bottom"><div class="row-preview">${u.handle ? '@' + esc(u.handle) : esc(u.about || 'Hey there! I am using VChat.')}</div></div>
+      <div class="row-bottom"><div class="row-preview">${esc(u.about || 'Hey there! I am using VChat.')}</div></div>
     </div>`;
   row.onclick = () => {
     socket.emit('chat:startDM', { targetUserId: u.id }, res => {
       if (res?.chat) { $('search-input').value = ''; searchQuery = ''; openChat(res.chat.id); }
     });
   };
+  makeKeyboardClickable(row, `Start chat with ${u.username}`);
   return row;
 }
 
 function chatRow(c) {
-  const row = el('div', 'chat-row' + (c.id === activeId ? ' sel' : '') + (c.unread ? ' unread' : ''));
+  const row = el('div', 'chat-row' + (c.id === activeId ? ' sel' : '') + (c.unread ? ' unread' : '') + (c.locked ? ' locked-chat-row' : ''));
   const last = c.lastMessage;
   const isGroup = c.type === 'group';
   const entity = c.type === 'dm'
@@ -752,6 +1146,7 @@ function chatRow(c) {
       <div class="row-bottom">
         <div class="row-preview">${typingActive ? '' : prefix} ${previewText}</div>
         <div class="row-badges">
+          ${c.favorite ? `<span class="row-icon favorite">${icon('star', 'icon-sm')}</span>` : ''}
           ${c.pinned ? `<span class="row-icon">${icon('pin', 'icon-sm')}</span>` : ''}
           ${c.muted ? `<span class="row-icon">${icon('mute', 'icon-sm')}</span>` : ''}
           ${c.unread ? `<span class="unread-badge">${c.unread}</span>` : ''}
@@ -761,7 +1156,15 @@ function chatRow(c) {
     </div>`;
 
   row.onclick = () => openChat(c.id);
-  row.querySelector('.row-menu').onclick = e => { e.stopPropagation(); chatContextMenu(e, c); };
+  makeKeyboardClickable(row, `Open chat ${c.name}`);
+  row.setAttribute('aria-haspopup', 'menu');
+  const rowMenu = row.querySelector('.row-menu');
+  rowMenu.onclick = e => { e.stopPropagation(); chatContextMenu(e, c); };
+  row.addEventListener('keydown', event => {
+    if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+    event.preventDefault();
+    chatContextMenu(event, c);
+  });
   row.oncontextmenu = e => { e.preventDefault(); chatContextMenu(e, c); };
   return row;
 }
@@ -771,6 +1174,11 @@ function chatContextMenu(e, c) {
     { label: c.archived ? 'Unarchive chat' : 'Archive chat', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'archived', value: !c.archived }) },
     { label: c.muted ? 'Unmute notifications' : 'Mute notifications', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'muted', value: !c.muted }) },
     { label: c.pinned ? 'Unpin chat' : 'Pin chat', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'pinned', value: !c.pinned }) },
+    { label: c.favorite ? 'Remove from Favorites' : 'Add to Favorites', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'favorite', value: !c.favorite }) },
+    { label: c.unread ? 'Mark as read' : 'Mark as unread', fn: () => c.unread
+      ? socket.emit('messages:read', { chatId: c.id })
+      : socket.emit('chat:flag', { chatId: c.id, flag: 'manualUnread', value: true }) },
+    { label: c.locked ? 'Remove chat lock' : 'Lock and hide chat', fn: () => toggleChatLock(c) },
     { sep: true },
     { label: 'Clear messages', fn: () => { if (confirm(`Clear all messages in "${c.name}"?`)) socket.emit('chat:clear', { chatId: c.id }); } },
   ];
@@ -784,37 +1192,99 @@ function chatContextMenu(e, c) {
 
 // ── Context menu ───────────────────────────────────────────────────────
 let ctxOpenEvent = null;
+let ctxReturnFocus = null;
 function showCtxMenu(e, items, emojis) {
   const menu = $('ctx-menu');
   menu.innerHTML = '';
+  ctxReturnFocus = document.activeElement;
   if (emojis) {
     const bar = el('div', 'ctx-emoji');
-    emojis.forEach(({ emoji, fn }) => { const b = el('button', '', emoji); b.onclick = () => { hideCtx(); fn(); }; bar.appendChild(b); });
+    emojis.forEach(({ emoji, fn }) => {
+      const b = el('button', '', emoji);
+      b.type = 'button';
+      b.setAttribute('role', 'menuitem');
+      b.setAttribute('aria-label', `React with ${emoji}`);
+      b.onclick = event => { hideCtx(event.detail === 0); fn(); };
+      bar.appendChild(b);
+    });
     menu.appendChild(bar);
   }
   items.forEach(it => {
-    if (it.sep) { menu.appendChild(el('div', 'sep')); return; }
+    if (it.sep) {
+      const separator = el('div', 'sep');
+      separator.setAttribute('role', 'separator');
+      menu.appendChild(separator);
+      return;
+    }
     const b = el('button', it.danger ? 'danger' : '', esc(it.label));
-    b.onclick = () => { hideCtx(); it.fn(); };
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    b.onclick = event => { hideCtx(event.detail === 0); it.fn(); };
     menu.appendChild(b);
   });
   ctxOpenEvent = e;
   menu.classList.add('show');
+  menu.setAttribute('aria-hidden', 'false');
   const r = menu.getBoundingClientRect();
-  const x = Math.min(e.clientX, window.innerWidth - r.width - 12);
-  const y = Math.min(e.clientY, window.innerHeight - r.height - 12);
+  const anchor = e.currentTarget?.getBoundingClientRect?.();
+  const requestedX = Number.isFinite(e.clientX) && e.clientX > 0 ? e.clientX : (anchor?.left || 12);
+  const requestedY = Number.isFinite(e.clientY) && e.clientY > 0 ? e.clientY : (anchor?.bottom || 12);
+  const x = Math.max(12, Math.min(requestedX, window.innerWidth - r.width - 12));
+  const y = Math.max(12, Math.min(requestedY, window.innerHeight - r.height - 12));
   menu.style.left = x + 'px';
   menu.style.top = y + 'px';
+  requestAnimationFrame(() => menu.querySelector('[role="menuitem"]')?.focus());
 }
-const hideCtx = () => { ctxOpenEvent = null; $('ctx-menu').classList.remove('show'); };
+function hideCtx(restoreFocus = false) {
+  ctxOpenEvent = null;
+  const menu = $('ctx-menu');
+  menu.classList.remove('show');
+  menu.setAttribute('aria-hidden', 'true');
+  if (restoreFocus && ctxReturnFocus?.isConnected) requestAnimationFrame(() => ctxReturnFocus.focus());
+  ctxReturnFocus = null;
+}
 document.addEventListener('click', e => {
   if (e === ctxOpenEvent) { ctxOpenEvent = null; return; } // ignore the click that opened it
   if (!$('ctx-menu').contains(e.target)) hideCtx();
+});
+document.addEventListener('keydown', event => {
+  const menu = $('ctx-menu');
+  if (!menu.classList.contains('show')) return;
+  const items = [...menu.querySelectorAll('[role="menuitem"]')];
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    hideCtx(true);
+    return;
+  }
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || !items.length) return;
+  event.preventDefault();
+  const current = Math.max(0, items.indexOf(document.activeElement));
+  const next = event.key === 'Home' ? 0
+    : event.key === 'End' ? items.length - 1
+      : event.key === 'ArrowDown' ? (current + 1) % items.length
+        : (current - 1 + items.length) % items.length;
+  items[next].focus();
 });
 window.addEventListener('resize', hideCtx);
 
 // ── Open / close chat ──────────────────────────────────────────────────
 function activeChat() { return chats.find(c => c.id === activeId) || null; }
+function canSendTo(chat) {
+  if (!chat || chat.type !== 'group' || chat.permissions?.sendMessages !== 'admins') return true;
+  return (chat.admins || []).includes(me.id);
+}
+function updateComposerPermissions(chat) {
+  const allowed = canSendTo(chat);
+  $('composer').classList.toggle('read-only', !allowed);
+  $('msg-input').disabled = !allowed;
+  $('msg-input').placeholder = allowed ? 'Type a message' : 'Only group admins can send messages';
+  for (const id of ['btn-emoji', 'btn-attach', 'btn-send', 'btn-mic']) $(id).disabled = !allowed;
+  if (!allowed) {
+    $('attach-menu').classList.remove('show');
+    $('emoji-panel').classList.remove('show');
+    clearPendingFile();
+  }
+}
 
 function openChat(chatId) {
   activeId = chatId;
@@ -841,6 +1311,9 @@ function openChat(chatId) {
 }
 
 function closeChat() {
+  // Relocking or leaving a thread must also destroy any already-fetched
+  // View Once object URL so protected media cannot remain over the hidden chat.
+  if (!$('view-once-viewer').hidden) closeViewOnce();
   activeId = null;
   messages = [];
   $('chat-panel').style.display = 'none';
@@ -858,6 +1331,7 @@ function setPeerStatus(text, typing) {
 function updateHeaderForActive() {
   const c = activeChat();
   if (!c) return;
+  updateComposerPermissions(c);
   const entity = c.type === 'dm' ? (c.peer || { username: c.name }) : { name: c.name, type: 'group' };
   setAvatar('peer-avatar', entity, 40, c.type === 'dm');
   $('peer-name').textContent = c.name;
@@ -868,8 +1342,7 @@ function updateHeaderForActive() {
     setPeerStatus(c.type === 'group' ? `${names.join(', ')} ${names.length > 1 ? 'are' : 'is'} typing…` : 'typing…', true);
   } else if (c.type === 'dm') {
     const peer = users.find(u => u.id === c.peer?.id) || c.peer;
-    const seen = lastSeenText(peer);
-    setPeerStatus(peer?.handle ? `@${peer.handle}${seen ? ' · ' + seen : ''}` : seen);
+    setPeerStatus(lastSeenText(peer));
   } else {
     const names = c.members.map(id => (id === me.id ? 'You' : users.find(u => u.id === id)?.username)).filter(Boolean);
     setPeerStatus(names.join(', '));
@@ -954,12 +1427,25 @@ function messageRow(m, grouped) {
           <div class="rq-text">${esc(m.replyTo.text || m.replyTo.preview || 'Attachment')}</div>
         </div></div>`;
     }
-    if (m.file) {
-      const t = m.file.mimeType || '';
+    if (m.viewOnce) {
+      const mediaKind = /video/i.test(m.file?.mimeType || m.type || '') ? 'video' : 'photo';
+      const openedCount = Number(m.viewOnceOpenedCount) || 0;
+      const state = out
+        ? (openedCount ? `${openedCount} recipient${openedCount === 1 ? '' : 's'} opened` : (m.pending ? 'Sending…' : 'Sent'))
+        : (m.viewOnceOpened ? 'Opened' : `Tap to view ${mediaKind}`);
+      const canOpen = !out && !m.pending && !m.viewOnceOpened;
+      inner += `<button class="view-once-card" type="button"${canOpen ? ` data-view-once="${esc(m.id)}"` : ' disabled'}>
+        <span class="once-mark">1</span><span><strong>View once ${mediaKind}</strong><small>${esc(state)}</small></span>
+      </button>`;
+    } else if (m.file) {
+      const t = m.file.mimeType || m.file.type || '';
+      const protectedControls = c?.advancedPrivacy
+        ? ' controlslist="nodownload noremoteplayback" disableremoteplayback'
+        : '';
       if (t.startsWith('image/')) {
         // In lite mode a photo costs nothing until it is actually wanted.
-        inner += (lite && !shownPhotos.has(m.file.url))
-          ? `<button class="photo-hold" data-load="${esc(m.file.url)}">
+        inner += ((lite || notificationPrefs.mediaVisibility === 'tap') && !shownPhotos.has(m.file.url))
+          ? `<button class="photo-hold" type="button" data-load="${esc(m.file.url)}">
                <span class="ph-icon">${icon('photo', 'icon-sm')}</span>
                <span class="ph-label">Tap to load photo</span>
                <span class="ph-size">${fileSize(m.file.size)}</span>
@@ -967,37 +1453,39 @@ function messageRow(m, grouped) {
           : `<img class="photo" src="${esc(m.file.url)}" alt="${esc(m.file.name)}" data-photo="${esc(m.file.url)}" data-name="${esc(m.file.name)}" />`;
       } else if (t.startsWith('video/')) {
         // preload="none" in lite mode: metadata alone can be hundreds of KB.
-        inner += `<video class="clip" src="${esc(m.file.url)}" controls preload="${lite ? 'none' : 'metadata'}"></video>`;
+        inner += `<video class="clip" src="${esc(m.file.url)}" controls${protectedControls}${c?.advancedPrivacy ? ' disablepictureinpicture' : ''} preload="${lite ? 'none' : 'metadata'}"></video>`;
       } else if (m.file.voice) {
         inner += voiceHTML(m.file);
       } else if (t.startsWith('audio/')) {
-        inner += `<audio src="${esc(m.file.url)}" controls preload="metadata"></audio>`;
+        inner += `<audio src="${esc(m.file.url)}" controls${protectedControls} preload="metadata"></audio>`;
       } else {
-        inner += `<a class="file-card" href="${esc(m.file.url)}" target="_blank" rel="noopener" download>
+        inner += `<a class="file-card" href="${esc(m.file.url)}" target="_blank" rel="noopener"${c?.advancedPrivacy ? '' : ' download'}>
           <span class="fc-icon">${icon('doc', 'icon-sm')}</span>
-          <span><span class="fc-name">${esc(m.file.name)}</span><br><span class="fc-meta">${fileSize(m.file.size)} · ${esc((m.file.name.split('.').pop() || 'file'))}</span></span>
+          <span><span class="fc-name">${esc(m.file.name)}</span><br><span class="fc-meta">${fileSize(m.file.size)} · ${esc((m.file.name.split('.').pop() || 'file'))}${c?.advancedPrivacy ? ' · protected chat' : ''}</span></span>
         </a>`;
       }
     }
-    if (m.text) inner += `<div class="txt">${linkify(m.text)}</div>`;
+    if (m.forwarded) inner += '<div class="forwarded">↪ Forwarded</div>';
+    if (m.pinnedUntil && m.pinnedUntil > Date.now()) inner += '<div class="pinned-label">📌 Pinned</div>';
+    if (m.text) inner += `<div class="txt">${formatMessage(m.text)}</div>`;
   }
 
   const emojiOnly = !m.file && !m.deleted && isEmojiOnly(m.text);
   if (m.stuck) inner += `<div class="stuck-note">${icon('clock', 'icon-sm')} Waiting for a connection</div>`;
-  inner += `<span class="meta-line">${m.editedAt ? 'edited ' : ''}${timeOf(m.timestamp)} ${out ? tickHTML(m.status || 'sent') : ''}</span>`;
+  inner += `<span class="meta-line">${m.starred ? '★ ' : ''}${m.expiresAt ? '◷ ' : ''}${m.editedAt ? 'edited ' : ''}${timeOf(m.timestamp)} ${out ? tickHTML(m.status || 'sent') : ''}</span>`;
 
   const reactions = Object.entries(m.reactions || {});
   const reactHTML = reactions.length
     ? `<div class="reactions">${reactions.map(([e, ids]) =>
-        `<span class="reaction-pill ${ids.includes(me.id) ? 'mine' : ''}" title="${esc(ids.map(id => users.find(u => u.id === id)?.username || '?').join(', '))}">${e}${ids.length > 1 ? ' ' + ids.length : ''}</span>`).join('')}</div>`
+        `<span class="reaction-pill ${ids.includes(me.id) ? 'mine' : ''}" title="${esc(ids.map(id => users.find(u => u.id === id)?.username || '?').join(', '))}">${esc(e)}${ids.length > 1 ? ' ' + ids.length : ''}</span>`).join('')}</div>`
     : '';
 
   const bubble = el('div', `bubble${emojiOnly ? ' emoji-only' : ''}${m.deleted ? ' deleted' : ''}`, inner + reactHTML);
 
   const tools = el('div', 'msg-tools', `
-    <button data-act="react" title="React">${icon('emoji', 'icon-sm')}</button>
-    <button data-act="reply" title="Reply">${icon('reply', 'icon-sm')}</button>
-    <button data-act="more" title="More">${icon('chevron', 'icon-sm')}</button>`);
+    <button type="button" data-act="react" title="React" aria-label="React to message">${icon('emoji', 'icon-sm')}</button>
+    <button type="button" data-act="reply" title="Reply" aria-label="Reply to message">${icon('reply', 'icon-sm')}</button>
+    <button type="button" data-act="more" title="More" aria-label="More message actions">${icon('chevron', 'icon-sm')}</button>`);
 
   if (out) { row.appendChild(tools); row.appendChild(bubble); }
   else { row.appendChild(bubble); row.appendChild(tools); }
@@ -1008,15 +1496,20 @@ function messageRow(m, grouped) {
   row.oncontextmenu = e => { e.preventDefault(); messageMenu(e, m); };
 
   bubble.querySelectorAll('[data-voice]').forEach(wireVoice);
-  bubble.querySelector('[data-photo]')?.addEventListener('click', ev => {
-    openLightbox(ev.target.dataset.photo, ev.target.dataset.name);
-  });
+  bubble.querySelector('[data-view-once]')?.addEventListener('click', () => openViewOnce(m));
+  const photo = bubble.querySelector('[data-photo]');
+  if (photo) {
+    makeKeyboardClickable(photo, `Open ${photo.dataset.name || 'shared photo'}`);
+    photo.addEventListener('click', ev => openLightbox(ev.currentTarget.dataset.photo, ev.currentTarget.dataset.name));
+  }
   bubble.querySelector('[data-load]')?.addEventListener('click', ev => {
     // Tapped a held-back photo: remember it and swap the placeholder for the image.
     shownPhotos.add(ev.currentTarget.dataset.load);
     renderMessages();
   });
-  bubble.querySelector('[data-jump]')?.addEventListener('click', ev => {
+  const replyQuote = bubble.querySelector('[data-jump]');
+  if (replyQuote) makeKeyboardClickable(replyQuote, 'Jump to replied message');
+  replyQuote?.addEventListener('click', ev => {
     const target = $('messages').querySelector(`[data-id="${ev.currentTarget.dataset.jump}"]`);
     if (target) {
       target.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1049,14 +1542,89 @@ function messageMenu(e, m) {
   }
 
   const out = m.senderId === me.id;
+  const protectedChat = !!activeChat()?.advancedPrivacy;
   const items = [{ label: 'Reply', fn: () => startReply(m) }];
+  if (!m.deleted) items.push({ label: m.starred ? 'Unstar' : 'Star', fn: () => socket.emit('message:star', { chatId: activeId, messageId: m.id }) });
+  if (!m.deleted && !protectedChat && !m.viewOnce) items.push({ label: 'Forward', fn: () => openForward(m) });
+  if (!m.deleted) items.push({
+    label: m.pinnedUntil && m.pinnedUntil > Date.now() ? 'Unpin message' : 'Pin for 24 hours',
+    fn: () => socket.emit('message:pin', {
+      chatId: activeId, messageId: m.id,
+      durationSeconds: m.pinnedUntil && m.pinnedUntil > Date.now() ? 0 : 86400,
+    }, result => result?.error && toast(result.error)),
+  });
   if (m.text && !m.deleted) items.push({ label: 'Copy text', fn: () => { navigator.clipboard?.writeText(m.text); toast('Copied'); } });
   if (out && m.text && !m.deleted) items.push({ label: 'Edit message', fn: () => editMessage(m) });
-  if (m.file && !m.deleted) items.push({ label: 'Download', fn: () => { const a = document.createElement('a'); a.href = m.file.url; a.download = m.file.name; a.click(); } });
+  if (m.file && !m.deleted && !protectedChat && !m.viewOnce) items.push({ label: 'Download', fn: () => downloadAttachment(m.file) });
   items.push({ sep: true });
   items.push({ label: 'Delete for me', danger: true, fn: () => socket.emit('message:delete', { chatId: activeId, messageId: m.id, forEveryone: false }) });
   if (out && !m.deleted) items.push({ label: 'Delete for everyone', danger: true, fn: () => socket.emit('message:delete', { chatId: activeId, messageId: m.id, forEveryone: true }) });
   showCtxMenu(e, items, ['👍','❤️','😂','😮','😢','🙏'].map(emoji => ({ emoji, fn: () => socket.emit('message:react', { chatId: activeId, messageId: m.id, emoji }) })));
+}
+
+async function downloadAttachment(file) {
+  try {
+    const response = await fetch(file.url, { credentials: 'same-origin' });
+    if (!response.ok) throw new Error(response.status === 404 ? 'Attachment is unavailable' : 'Download failed');
+    const href = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = file.name || 'attachment';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 1000);
+  } catch (error) {
+    toast(error.message || 'Download failed');
+  }
+}
+
+function closeViewOnce() {
+  const viewer = $('view-once-viewer');
+  viewer.hidden = true;
+  viewer.setAttribute('aria-hidden', 'true');
+  viewer.querySelectorAll('video,audio').forEach(media => media.pause());
+  $('view-once-stage').innerHTML = '';
+  if (viewOnceObjectUrl) URL.revokeObjectURL(viewOnceObjectUrl);
+  viewOnceObjectUrl = null;
+}
+
+async function openViewOnce(message) {
+  if (!message || message.senderId === me.id || message.viewOnceOpened || !activeId) return;
+  const chatId = activeId;
+  const viewer = $('view-once-viewer');
+  viewer.hidden = false;
+  viewer.setAttribute('aria-hidden', 'false');
+  $('view-once-stage').innerHTML = '<span class="spinner"></span>';
+  try {
+    const opened = await api(`/api/messenger/messages/${encodeURIComponent(chatId)}/${encodeURIComponent(message.id)}/view-once`, {});
+    if (!opened.ok) throw new Error(opened.data.error || 'This View Once media is unavailable');
+    const response = await fetch(opened.data.mediaUrl, { credentials: 'same-origin', cache: 'no-store' });
+    if (!response.ok) throw new Error('This View Once media could not be loaded');
+    const blob = await response.blob();
+    if (!viewer.hidden && activeId === chatId) {
+      viewOnceObjectUrl = URL.createObjectURL(blob);
+      const isVideo = /^video\//i.test(opened.data.mimeType || blob.type);
+      const media = document.createElement(isVideo ? 'video' : 'img');
+      media.src = viewOnceObjectUrl;
+      media.alt = isVideo ? '' : (opened.data.name || 'View Once photo');
+      media.draggable = false;
+      media.oncontextmenu = event => event.preventDefault();
+      if (isVideo) {
+        media.controls = true;
+        media.autoplay = true;
+        media.playsInline = true;
+        media.disablePictureInPicture = true;
+        media.setAttribute('controlslist', 'nodownload noremoteplayback noplaybackrate');
+        media.setAttribute('disableremoteplayback', '');
+        media.play().catch(() => {});
+      }
+      $('view-once-stage').replaceChildren(media);
+    }
+  } catch (error) {
+    closeViewOnce();
+    toast(error.message || 'Could not open View Once media');
+  }
 }
 
 function editMessage(m) {
@@ -1064,6 +1632,36 @@ function editMessage(m) {
   if (text != null && text.trim() && text.trim() !== m.text) {
     socket.emit('message:edit', { chatId: activeId, messageId: m.id, text: text.trim() });
   }
+}
+
+function openForward(message) {
+  const picked = new Set();
+  const list = $('forward-list');
+  list.innerHTML = '';
+  chats.filter(chat => !chat.archived).forEach(chat => {
+    const row = el('label', 'pick-row', `${avatarHTML(chat.type === 'dm' ? (chat.peer || { username: chat.name }) : { name: chat.name, type: 'group', id: chat.id }, 40)}<div class="pk-name">${esc(chat.name)}</div><input type="checkbox" />`);
+    row.querySelector('input').onchange = event => {
+      if (event.target.checked && picked.size >= 5) {
+        event.target.checked = false;
+        return toast('You can forward to up to 5 chats at once');
+      }
+      if (event.target.checked) picked.add(chat.id); else picked.delete(chat.id);
+    };
+    list.appendChild(row);
+  });
+  $('forward-send').onclick = () => {
+    if (!picked.size) return toast('Choose at least one chat');
+    socket.emit('message:forward', {
+      chatId: message.chatId,
+      messageId: message.id,
+      targetChatIds: [...picked],
+    }, result => {
+      if (result?.error) return toast(result.error);
+      closeModal('modal-forward');
+      toast(`Forwarded to ${result?.count || 0} chat${result?.count === 1 ? '' : 's'}`);
+    });
+  };
+  openModal('modal-forward');
 }
 
 // ── Reply bar ──────────────────────────────────────────────────────────
@@ -1098,6 +1696,7 @@ function sendMessage() {
   const input = $('msg-input');
   const text = input.value.trim();
   if ((!text && !pendingFile) || !activeId) return;
+  if (!canSendTo(activeChat())) return toast('Only group admins can send messages');
 
   const payload = {
     chatId: activeId,
@@ -1105,6 +1704,7 @@ function sendMessage() {
     file: pendingFile,
     type: pendingFile ? (pendingFile.mimeType?.split('/')[0] || 'file') : 'text',
     replyTo,
+    viewOnce: !!pendingFile && $('view-once-toggle').checked,
   };
   // Everything goes through the outbox, connection or not. A message is only
   // dropped from it once the server has confirmed it, so a send that dies
@@ -1140,7 +1740,8 @@ function onInput() {
  * socket comes back. Ten seconds of signal is enough to empty a day of
  * writing.
  */
-const OUTBOX_KEY = 'vchat.outbox';
+const OUTBOX_DB_NAME = 'vchat-private-v1';
+const OUTBOX_DB_VERSION = 1;
 // A send is given this long to be acknowledged before we assume the phone lost
 // signal mid-flight. Short enough to notice a dead bundle, long enough that a
 // slow 2G round trip is not mistaken for failure.
@@ -1149,22 +1750,107 @@ const SEND_TIMEOUT_MS = 12000;
 // tries, then we back off instead of burning battery on a dead radio.
 const RETRY_BACKOFF_MS = [3000, 8000, 20000, 60000];
 let outbox = [];
+let outboxOwnerId = null;
+let outboxCryptoKey = null;
+let outboxSaveChain = Promise.resolve();
+let privateDbPromise = null;
 let flushing = false;
 let retryTimer = null;
 let inflight = null;     // resolver of the send we are currently waiting on
 let flushAgain = false;
 
-function loadOutbox() {
-  try { outbox = JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); }
-  catch { outbox = []; }
+function privateDb() {
+  if (!('indexedDB' in window) || !crypto?.subtle) return Promise.reject(new Error('Private browser storage unavailable'));
+  if (!privateDbPromise) privateDbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(OUTBOX_DB_NAME, OUTBOX_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains('keys')) db.createObjectStore('keys', { keyPath: 'userId' });
+      if (!db.objectStoreNames.contains('outboxes')) db.createObjectStore('outboxes', { keyPath: 'userId' });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Private storage failed'));
+    request.onblocked = () => reject(new Error('Private storage upgrade is blocked'));
+  });
+  return privateDbPromise;
+}
+
+async function privateStoreRequest(storeName, mode, operation) {
+  const db = await privateDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, mode);
+    const request = operation(tx.objectStore(storeName));
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Private storage operation failed'));
+    tx.onabort = () => reject(tx.error || new Error('Private storage transaction aborted'));
+  });
+}
+
+async function privateOutboxKey(userId) {
+  const existing = await privateStoreRequest('keys', 'readonly', store => store.get(userId));
+  if (existing?.key) return existing.key;
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  await privateStoreRequest('keys', 'readwrite', store => store.put({ userId, key, createdAt: Date.now() }));
+  return key;
+}
+
+async function loadOutbox(userId) {
+  outboxOwnerId = String(userId || '');
+  outbox = [];
+  outboxCryptoKey = null;
+  if (!outboxOwnerId) return;
+  try {
+    outboxCryptoKey = await privateOutboxKey(outboxOwnerId);
+    const record = await privateStoreRequest('outboxes', 'readonly', store => store.get(outboxOwnerId));
+    if (record?.ciphertext && record?.iv) {
+      const plaintext = await crypto.subtle.decrypt({
+        name: 'AES-GCM',
+        iv: record.iv,
+        additionalData: new TextEncoder().encode(outboxOwnerId),
+      }, outboxCryptoKey, record.ciphertext);
+      outbox = JSON.parse(new TextDecoder().decode(plaintext));
+    }
+  } catch {
+    // Corruption, an unavailable keystore, or a moved record must fail closed:
+    // never fall back to plaintext browser-global storage.
+    outbox = [];
+  }
   if (!Array.isArray(outbox)) outbox = [];
-  // Nothing is mid-flight after a reload, however it ended.
-  for (const i of outbox) i.sending = false;
+  for (const item of outbox) item.sending = false;
 }
 
 function saveOutbox() {
-  try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox)); }
-  catch { /* storage full or blocked — the queue stays in memory */ }
+  if (!outboxOwnerId || !outboxCryptoKey) return;
+  const ownerId = outboxOwnerId;
+  const key = outboxCryptoKey;
+  const snapshot = JSON.stringify(outbox);
+  outboxSaveChain = outboxSaveChain.catch(() => {}).then(async () => {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt({
+      name: 'AES-GCM',
+      iv,
+      additionalData: new TextEncoder().encode(ownerId),
+    }, key, new TextEncoder().encode(snapshot));
+    await privateStoreRequest('outboxes', 'readwrite', store => store.put({
+      userId: ownerId, iv, ciphertext, updatedAt: Date.now(),
+    }));
+  }).catch(() => { /* the in-memory queue remains available for this tab */ });
+}
+
+async function clearPrivateOutbox(userId = outboxOwnerId) {
+  const ownerId = String(userId || '');
+  outbox = [];
+  clearTimeout(retryTimer); retryTimer = null;
+  if (!ownerId) return;
+  await outboxSaveChain.catch(() => {});
+  await Promise.allSettled([
+    privateStoreRequest('outboxes', 'readwrite', store => store.delete(ownerId)),
+    privateStoreRequest('keys', 'readwrite', store => store.delete(ownerId)),
+  ]);
+  if (ownerId === outboxOwnerId) {
+    outboxOwnerId = null;
+    outboxCryptoKey = null;
+  }
 }
 
 function online() { return !!socket && socket.connected; }
@@ -1201,6 +1887,7 @@ function outboxToMessage(item) {
     text: item.text || '',
     file: item.file || null,
     type: item.type || 'text',
+    viewOnce: item.viewOnce === true,
     replyTo: item.replyTo || null,
     timestamp: item.queuedAt,
     reactions: {},
@@ -1255,12 +1942,18 @@ function sendQueued(item) {
         file: item.file,
         type: item.type,
         replyTo: item.replyTo,
+        viewOnce: item.viewOnce === true,
         tempId: item.tempId,
         clientId: item.clientId,
       }, res => {
         clearTimeout(bail);
-        // A rejection is permanent — retrying cannot fix a deleted chat.
-        if (res && res.error) { toast(res.error); done('drop'); return; }
+        // Authorization/content rejections are permanent. A persistence outage
+        // is explicitly retryable, so the encrypted outbox retains the item.
+        if (res && res.error) {
+          toast(res.error);
+          done(res.retryable === true ? false : 'drop');
+          return;
+        }
         done(true);
       });
     } catch {
@@ -1403,7 +2096,8 @@ function setLite(on) {
   document.body.classList.toggle('lite', lite);
   updateCallButtons();
   if (activeId) renderMessages();
-  toast(lite ? 'Lite mode on — photos load on tap' : 'Lite mode off');
+  if (document.body.classList.contains('reels-open')) renderReels(visibleReelId());
+  toast(lite ? 'Lite mode on — media loads only when requested' : 'Lite mode off');
 }
 
 function openLiteMode() {
@@ -1495,6 +2189,7 @@ async function uploadFile(file) {
 
   const fd = new FormData();
   fd.append('file', file);
+  fd.append('chatId', activeId || '');
   const saved = original - file.size;
   addSaved(saved);
   toast(saved > 50 * 1024 ? `Uploading… (saved ${fileSize(saved)})` : 'Uploading…');
@@ -1509,6 +2204,9 @@ async function uploadFile(file) {
       ? `<img src="${data.url}" alt="" />`
       : (data.mimeType?.startsWith('video/') ? '🎥' : data.mimeType?.startsWith('audio/') ? '🎵' : '📄');
     $('file-bar').classList.add('show');
+    const viewOnceEligible = /^(image|video)\//i.test(data.mimeType || '');
+    $('view-once-choice').hidden = !viewOnceEligible;
+    $('view-once-toggle').checked = false;
     updateSendBtn();
     $('msg-input').focus();
   } catch (err) {
@@ -1650,6 +2348,7 @@ async function finishRecording() {
   // Voice notes send immediately — no preview step, like WhatsApp.
   const fd = new FormData();
   fd.append('file', file);
+  fd.append('chatId', activeId || '');
   try {
     const res = await fetch('/api/messenger/upload', { method: 'POST', body: fd });
     const data = await res.json();
@@ -1728,28 +2427,82 @@ function clearPendingFile() {
   pendingFile = null;
   $('file-bar').classList.remove('show');
   $('file-input').value = '';
+  $('view-once-toggle').checked = false;
+  $('view-once-choice').hidden = true;
   updateSendBtn();
 }
 
 // ── Emoji panel ────────────────────────────────────────────────────────
 function buildEmojiPanel() {
-  const p = $('emoji-panel');
-  p.innerHTML = '';
-  for (const [group, list] of Object.entries(EMOJI_GROUPS)) {
-    p.appendChild(el('div', 'grp-title', group));
-    const grid = el('div', 'grid');
-    list.forEach(e => {
-      const b = el('button', '', e);
-      b.onclick = () => {
-        const input = $('msg-input');
-        input.value += e;
-        input.focus();
-        updateSendBtn();
-      };
-      grid.appendChild(b);
-    });
-    p.appendChild(grid);
-  }
+  const panel = $('emoji-panel');
+  panel.innerHTML = '';
+  let selectedGroup = Object.keys(EMOJI_GROUPS)[0];
+  const tools = el('div', 'emoji-tools');
+  const search = el('input', 'emoji-search');
+  search.type = 'search';
+  search.placeholder = 'Search emoji';
+  search.setAttribute('aria-label', 'Search emoji');
+  tools.appendChild(search);
+  const categories = el('div', 'emoji-categories');
+  const results = el('div', 'emoji-results');
+
+  const insertEmoji = emoji => {
+    const input = $('msg-input');
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    input.setRangeText(emoji, start, end, 'end');
+    input.focus();
+    updateSendBtn();
+  };
+  const drawResults = () => {
+    const query = search.value.trim().toLowerCase();
+    results.innerHTML = '';
+    let groups;
+    if (!query) groups = [[selectedGroup, EMOJI_GROUPS[selectedGroup]]];
+    else {
+      const keywordMatches = Object.entries(EMOJI_SEARCH_TERMS)
+        .filter(([term]) => term.includes(query) || query.includes(term))
+        .flatMap(([, emojis]) => emojis);
+      groups = Object.entries(EMOJI_GROUPS).map(([name, emojis]) => {
+        const list = name.toLowerCase().includes(query)
+          ? emojis
+          : emojis.filter(emoji => emoji.includes(query) || keywordMatches.includes(emoji));
+        return [name, [...new Set(list)]];
+      }).filter(([, emojis]) => emojis.length);
+    }
+    if (!groups.length) {
+      results.appendChild(el('div', 'empty-list', 'No emoji found. Try words like love, food, travel, music, or Ghana.'));
+      return;
+    }
+    for (const [name, emojis] of groups) {
+      results.appendChild(el('div', 'grp-title', esc(name)));
+      const grid = el('div', 'grid');
+      emojis.forEach(emoji => {
+        const button = el('button', '', emoji);
+        button.type = 'button';
+        button.title = name;
+        button.onclick = () => insertEmoji(emoji);
+        grid.appendChild(button);
+      });
+      results.appendChild(grid);
+    }
+  };
+  Object.keys(EMOJI_GROUPS).forEach((name, index) => {
+    const button = el('button', index === 0 ? 'selected' : '', EMOJI_CATEGORY_ICONS[index] || '•');
+    button.type = 'button';
+    button.title = name;
+    button.setAttribute('aria-label', name);
+    button.onclick = () => {
+      selectedGroup = name;
+      search.value = '';
+      categories.querySelectorAll('button').forEach(item => item.classList.toggle('selected', item === button));
+      drawResults();
+    };
+    categories.appendChild(button);
+  });
+  search.oninput = drawResults;
+  panel.append(tools, categories, results);
+  drawResults();
 }
 
 // ── Drawer (contact / group info) ──────────────────────────────────────
@@ -1758,6 +2511,9 @@ function openDrawer() {
   if (!c) return;
   const body = $('drawer-body');
   body.innerHTML = '';
+  const isGroupAdmin = c.type === 'group' && (c.admins || []).includes(me.id);
+  const canEditGroupInfo = c.type === 'group' && (c.permissions?.editInfo !== 'admins' || isGroupAdmin);
+  const canAddGroupMembers = c.type === 'group' && (c.permissions?.addMembers !== 'admins' || isGroupAdmin);
   $('drawer-title').textContent = c.type === 'group' ? 'Group info' : 'Contact info';
 
   const entity = c.type === 'dm' ? (users.find(u => u.id === c.peer?.id) || c.peer) : { name: c.name, type: 'group', id: c.id };
@@ -1770,14 +2526,32 @@ function openDrawer() {
   head.querySelector('.avatar').style.margin = '0 auto';
   body.appendChild(head);
 
+  if (c.type === 'group' && (c.about || canEditGroupInfo)) {
+    const info = el('div', 'drawer-block left', `<div class="drawer-label">Group description</div><div class="drawer-value">${esc(c.about || 'Add a group description')}</div>`);
+    if (canEditGroupInfo) {
+      info.style.cursor = 'pointer';
+      info.onclick = () => {
+        const about = prompt('Group description', c.about || '');
+        if (about != null) socket.emit('group:update', { chatId: c.id, about }, result => result?.error && toast(result.error));
+      };
+      makeKeyboardClickable(info, 'Edit group description');
+    }
+    body.appendChild(info);
+  }
+
   if (c.type === 'dm') {
     body.appendChild(el('div', 'drawer-block left', `
       <div class="drawer-label">About</div>
       <div class="drawer-value">${esc(entity?.about || 'Hey there! I am using VChat.')}</div>`));
-    if (entity?.handle) {
+    if (entity?.phone) {
       body.appendChild(el('div', 'drawer-block left', `
-        <div class="drawer-label">Username</div>
-        <div class="drawer-value">@${esc(entity.handle)}</div>`));
+        <div class="drawer-label">Phone number</div>
+        <div class="drawer-value">${esc(entity.phone)}</div>`));
+    }
+    if (entity?.accountType === 'business') {
+      const businessPage = el('button', 'drawer-action', `${icon('info')} View public business page`);
+      businessPage.onclick = () => openBusinessPage(entity.id);
+      body.appendChild(businessPage);
     }
   } else {
     const members = el('div', 'drawer-block left');
@@ -1789,13 +2563,41 @@ function openDrawer() {
       const row = el('div', 'member-row', `
         ${avatarHTML(u, 40, true)}
         <div class="mr-name">${esc(u.id === me.id ? 'You' : u.username)}<div style="font-size:12.5px;color:var(--text-secondary)">${esc(u.about || '')}</div></div>
-        ${c.createdBy === u.id ? '<span class="mr-tag">Admin</span>' : ''}`);
-      if (u.id !== me.id) row.onclick = () => socket.emit('chat:startDM', { targetUserId: u.id }, r => r?.chat && openChat(r.chat.id));
+        ${(c.admins || []).includes(u.id) ? '<span class="mr-tag">Admin</span>' : ''}`);
+      if (u.id !== me.id) {
+        row.onclick = () => socket.emit('chat:startDM', { targetUserId: u.id }, r => r?.chat && openChat(r.chat.id));
+        makeKeyboardClickable(row, `Start chat with ${u.username}`);
+        if (isGroupAdmin) {
+          row.oncontextmenu = event => {
+            event.preventDefault();
+            const admin = (c.admins || []).includes(u.id);
+            showCtxMenu(event, [
+              { label: admin ? 'Dismiss as admin' : 'Make group admin', fn: () => socket.emit('group:setAdmin', { chatId: c.id, memberId: u.id, makeAdmin: !admin }, result => result?.error && toast(result.error)) },
+              { label: 'Remove from group', danger: true, fn: () => socket.emit('group:removeMember', { chatId: c.id, memberId: u.id }, result => result?.error && toast(result.error)) },
+            ]);
+          };
+        }
+      }
       members.appendChild(row);
     });
-    const add = el('button', 'drawer-action', `<span style="color:var(--wa-green)">${icon('group')}</span> Add participants`);
-    add.onclick = () => openAddMembers(c);
-    members.appendChild(add);
+    if (canAddGroupMembers) {
+      const add = el('button', 'drawer-action', `<span style="color:var(--wa-green)">${icon('group')}</span> Add participants`);
+      add.onclick = () => openAddMembers(c);
+      members.appendChild(add);
+    }
+    if (isGroupAdmin) {
+      const settings = el('button', 'drawer-action', `<span style="color:var(--wa-green)">${icon('info')}</span> Group permissions`);
+      settings.onclick = () => openGroupSettings(c);
+      members.appendChild(settings);
+      const invite = el('button', 'drawer-action', `<span style="color:var(--wa-green)">${icon('copy')}</span> Copy new invite link`);
+      invite.onclick = () => socket.emit('chat:createInvite', { chatId: c.id }, result => {
+        if (result?.error) return toast(result.error);
+        const url = new URL(result.path, location.origin).href;
+        navigator.clipboard?.writeText(url);
+        toast('Invite link copied');
+      });
+      members.appendChild(invite);
+    }
     body.appendChild(members);
   }
 
@@ -1804,9 +2606,37 @@ function openDrawer() {
   mute.onclick = () => { socket.emit('chat:flag', { chatId: c.id, flag: 'muted', value: !c.muted }); setTimeout(openDrawer, 150); };
   const pin = el('button', 'drawer-action', `${icon('pin')} ${c.pinned ? 'Unpin chat' : 'Pin chat'}`);
   pin.onclick = () => { socket.emit('chat:flag', { chatId: c.id, flag: 'pinned', value: !c.pinned }); setTimeout(openDrawer, 150); };
+  const archive = el('button', 'drawer-action', `${icon('archive')} ${c.archived ? 'Unarchive chat' : 'Archive chat'}`);
+  archive.onclick = () => { socket.emit('chat:flag', { chatId: c.id, flag: 'archived', value: !c.archived }); $('drawer').classList.remove('open'); closeChat(); };
+  const lock = el('button', 'drawer-action', `${icon('lock')} ${c.locked ? 'Remove chat lock' : 'Lock and hide chat'}`);
+  lock.onclick = () => toggleChatLock(c);
   const clear = el('button', 'drawer-action danger', `${icon('trash')} Clear messages`);
   clear.onclick = () => { if (confirm('Clear all messages in this chat?')) socket.emit('chat:clear', { chatId: c.id }); };
-  actions.append(mute, pin, clear);
+  actions.append(mute, pin, archive, lock);
+  if (c.type === 'dm' && entity?.id) {
+    const isBlocked = (me.blocked || []).includes(entity.id);
+    const block = el('button', 'drawer-action danger', `${icon('close')} ${isBlocked ? 'Unblock' : 'Block'} ${esc(entity.username || 'contact')}`);
+    block.onclick = async () => {
+      const { ok, data } = await api(`/api/account/block/${encodeURIComponent(entity.id)}`, { blocked: !isBlocked });
+      if (!ok) return toast(data.error || 'Could not update block list');
+      const set = new Set(me.blocked || []);
+      if (isBlocked) set.delete(entity.id); else set.add(entity.id);
+      me.blocked = [...set];
+      toast(isBlocked ? 'Contact unblocked' : 'Contact blocked');
+      if (document.body.classList.contains('reels-open')) loadReels(true, true).catch(() => {});
+      if ($('stories-screen').classList.contains('open')) loadStories({ quiet: true }).catch(() => {});
+      openDrawer();
+    };
+    const report = el('button', 'drawer-action danger', `${icon('info')} Report contact`);
+    report.onclick = async () => {
+      const reason = prompt('Why are you reporting this contact?', 'Spam');
+      if (!reason) return;
+      const { ok, data } = await api(`/api/account/report/${encodeURIComponent(entity.id)}`, { chatId: c.id, reason });
+      toast(ok ? 'Report submitted' : (data.error || 'Could not submit report'));
+    };
+    actions.append(block, report);
+  }
+  actions.append(clear);
   if (c.id !== 'general') {
     const leave = el('button', 'drawer-action danger', `${icon('logout')} ${c.type === 'group' ? 'Exit group' : 'Delete chat'}`);
     leave.onclick = () => { if (confirm('Are you sure?')) { socket.emit('chat:leave', { chatId: c.id }); $('drawer').classList.remove('open'); } };
@@ -1819,45 +2649,152 @@ function openDrawer() {
 function refreshDrawerIfOpen() { if ($('drawer').classList.contains('open')) openDrawer(); }
 
 // ── Modals ─────────────────────────────────────────────────────────────
-function openModal(id) { $(id).classList.add('show'); }
-function closeModal(id) { $(id).classList.remove('show'); }
-document.querySelectorAll('.overlay').forEach(o => {
-  o.addEventListener('click', e => {
-    if (e.target !== o) return;
-    o.classList.remove('show');
-    if (o.id === 'modal-rate') rating = null;
+const modalFocusSelector = [
+  'a[href]', 'button:not([disabled])', 'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])', 'textarea:not([disabled])', '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+function openModal(id) {
+  const overlay = $(id);
+  if (!overlay) return;
+  overlay._returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  overlay.classList.add('show');
+  overlay.setAttribute('aria-hidden', 'false');
+  const dialog = overlay.querySelector('.modal');
+  const first = dialog?.querySelector(modalFocusSelector);
+  requestAnimationFrame(() => (first || dialog)?.focus());
+}
+function closeModal(id) {
+  const overlay = $(id);
+  if (!overlay) return;
+  overlay.classList.remove('show');
+  overlay.setAttribute('aria-hidden', 'true');
+  const returnFocus = overlay._returnFocus;
+  overlay._returnFocus = null;
+  if (returnFocus?.isConnected) requestAnimationFrame(() => returnFocus.focus());
+  if (id === 'modal-profile') profileModalCleanup?.();
+  if (id === 'modal-reel-upload') reelUploadCleanup?.();
+  if (id === 'modal-story-compose') cleanupStoryComposer();
+  if (id === 'modal-rate') rating = null;
+}
+document.querySelectorAll('.overlay').forEach((overlay, index) => {
+  const dialog = overlay.querySelector('.modal');
+  const heading = dialog?.querySelector('.modal-head');
+  if (dialog) {
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.tabIndex = -1;
+    if (heading) {
+      heading.id ||= `${overlay.id || `modal-${index}`}-title`;
+      dialog.setAttribute('aria-labelledby', heading.id);
+    } else {
+      dialog.setAttribute('aria-label', 'Dialog');
+    }
+  }
+  overlay.setAttribute('aria-hidden', overlay.classList.contains('show') ? 'false' : 'true');
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay) closeModal(overlay.id);
   });
-  o.querySelectorAll('[data-close]').forEach(b => b.onclick = () => o.classList.remove('show'));
+  overlay.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeModal(overlay.id);
+      return;
+    }
+    if (event.key !== 'Tab' || !dialog) return;
+    const focusable = [...dialog.querySelectorAll(modalFocusSelector)]
+      .filter(node => node.getClientRects().length && node.getAttribute('aria-hidden') !== 'true');
+    if (!focusable.length) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+  overlay.querySelectorAll('[data-close]').forEach(button => {
+    button.onclick = () => closeModal(overlay.id);
+  });
 });
 
+const businessCategoryLabel = value => String(value || 'other').replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+async function openBusinessPage(userId = me?.id) {
+  if (!userId) return;
+  const result = await api(`/api/business/${encodeURIComponent(userId)}`);
+  if (!result.ok) return toast(result.data.error || 'Business page is unavailable');
+  const business = result.data.business;
+  const owner = business.owner || {};
+  const profile = business.profile || {};
+  $('business-page-head').innerHTML = `${avatarHTML(owner, 64)}<h2>${esc(profile.name || owner.username || 'Business')}</h2><p>${esc(businessCategoryLabel(profile.category))} · Public business-purpose page</p>`;
+  const ownerFields = $('business-owner-fields');
+  const details = $('business-public-details');
+  ownerFields.hidden = !business.canEdit;
+  if (business.canEdit) {
+    $('business-page-name').value = profile.name || '';
+    $('business-page-category').value = profile.category || 'other';
+    $('business-page-description').value = profile.description || '';
+    $('business-page-address').value = profile.address || '';
+    $('business-page-hours').value = profile.hours || '';
+    $('business-page-website').value = profile.website || '';
+    details.innerHTML = '<p class="capture-disclosure">This page describes your business purpose. Vchat does not add catalogs, carts, or shopping tools.</p>';
+    $('business-page-save').onclick = async () => {
+      const name = $('business-page-name').value.trim();
+      if (name.length < 2) return toast('Business name must be at least 2 characters');
+      const save = await api('/api/account/business-profile', {
+        name,
+        category: $('business-page-category').value,
+        description: $('business-page-description').value.trim(),
+        address: $('business-page-address').value.trim(),
+        hours: $('business-page-hours').value.trim(),
+        website: $('business-page-website').value.trim(),
+      }, { method: 'PUT' });
+      if (!save.ok) return toast(save.data.error || 'Could not save business page');
+      me = { ...me, ...(save.data.user || {}) };
+      toast('Business page updated');
+      openBusinessPage(me.id);
+    };
+    $('business-open-boosts').onclick = () => {
+      closeModal('modal-business');
+      openStoryBoosts();
+    };
+  } else {
+    const website = /^https:\/\//i.test(profile.website || '')
+      ? `<p><strong>Website</strong><br><a href="${esc(profile.website)}" target="_blank" rel="noopener noreferrer">${esc(profile.website)}</a></p>` : '';
+    details.innerHTML = `<div class="business-public-card">
+      <p><strong>Business purpose</strong><br>${esc(profile.description || 'No business purpose has been added yet.')}</p>
+      ${profile.address ? `<p><strong>Service area or address</strong><br>${esc(profile.address)}</p>` : ''}
+      ${profile.hours ? `<p><strong>Hours</strong><br>${esc(profile.hours)}</p>` : ''}
+      ${website}
+      <small>Public business page · No catalog, cart, or Vchat shopping features</small>
+    </div>`;
+  }
+  openModal('modal-business');
+}
+
 function openNewChat() {
-  const render = (list, q = '') => {
+  const render = (q = '') => {
     const box = $('newchat-list');
     box.innerHTML = '';
-    if (!q.trim()) {
-      box.innerHTML = '<div class="empty-list">Search by username to find friends.<br>They do not need to share a phone number.</div>';
-      return;
-    }
-    if (!list.length) {
-      box.innerHTML = `<div class="empty-list">No one named <b>@${esc(q.replace(/^@/, ''))}</b>.<br>Check the spelling — usernames are unique.</div>`;
-      return;
-    }
+    const list = users.filter(u => u.id !== me.id && u.username.toLowerCase().includes(q.toLowerCase()));
+    if (!list.length) { box.innerHTML = '<div class="empty-list">No other people online yet.<br>Open a second browser window with another name.</div>'; return; }
     list.forEach(u => {
-      const row = el('div', 'pick-row', `${avatarHTML(u, 40, true)}<div class="pk-name">${esc(u.username)}<div class="user-handle">${u.handle ? '@' + esc(u.handle) : ''}</div></div>`);
+      const row = el('div', 'pick-row', `${avatarHTML(u, 40, true)}<div class="pk-name">${esc(u.username)}<div style="font-size:12.5px;color:var(--text-secondary)">${esc(u.about || '')}</div></div>`);
       row.onclick = () => socket.emit('chat:startDM', { targetUserId: u.id }, res => { closeModal('modal-newchat'); if (res?.chat) openChat(res.chat.id); });
+      makeKeyboardClickable(row, `Start chat with ${u.username}`);
       box.appendChild(row);
     });
   };
   $('newchat-search').value = '';
-  $('newchat-search').placeholder = 'Search @username';
-  let t = null;
-  $('newchat-search').oninput = e => {
-    const q = e.target.value.trim();
-    clearTimeout(t);
-    if (q.length < 2) { render([], q); return; }
-    t = setTimeout(() => socket.emit('users:lookup', { query: q }, list => render(list || [], q)), 160);
-  };
-  render([], '');
+  $('newchat-search').oninput = e => render(e.target.value);
+  render();
   openModal('modal-newchat');
 }
 
@@ -1883,7 +2820,9 @@ function openNewGroup() {
     [...picked].forEach(id => {
       const u = users.find(x => x.id === id);
       if (!u) return;
-      const chip = el('span', 'sc', `${avatarHTML(u, 32)}<span>${esc(u.username)}</span>`);
+      const chip = el('button', 'sc', `${avatarHTML(u, 32)}<span>${esc(u.username)}</span>`);
+      chip.type = 'button';
+      chip.setAttribute('aria-label', `Remove ${u.username} from group`);
       chip.onclick = () => { picked.delete(id); renderChips(); renderList(); };
       box.appendChild(chip);
     });
@@ -1901,6 +2840,28 @@ function openNewGroup() {
   openModal('modal-group');
 }
 
+function openGroupSettings(c) {
+  if (!c || !(c.admins || []).includes(me.id)) return;
+  $('group-permission-info').value = c.permissions?.editInfo || 'admins';
+  $('group-permission-send').value = c.permissions?.sendMessages || 'members';
+  $('group-permission-add').value = c.permissions?.addMembers || 'admins';
+  $('group-settings-save').onclick = () => {
+    socket.emit('group:update', {
+      chatId: c.id,
+      permissions: {
+        editInfo: $('group-permission-info').value,
+        sendMessages: $('group-permission-send').value,
+        addMembers: $('group-permission-add').value,
+      },
+    }, result => {
+      if (result?.error) return toast(result.error);
+      closeModal('modal-group-settings');
+      toast('Group permissions updated');
+    });
+  };
+  openModal('modal-group-settings');
+}
+
 function openAddMembers(c) {
   const picked = new Set();
   const box = $('addmembers-list');
@@ -1913,22 +2874,57 @@ function openAddMembers(c) {
     box.appendChild(row);
   });
   $('addmembers-save').onclick = () => {
-    if (picked.size) socket.emit('chat:addMembers', { chatId: c.id, members: [...picked] });
-    closeModal('modal-addmembers');
+    if (!picked.size) return closeModal('modal-addmembers');
+    socket.emit('chat:addMembers', { chatId: c.id, members: [...picked] }, result => {
+      if (result?.error) return toast(result.error);
+      closeModal('modal-addmembers');
+    });
   };
   openModal('modal-addmembers');
 }
 
 // ── Lightbox ───────────────────────────────────────────────────────────
 function openLightbox(url, name) {
+  const lightbox = $('lightbox');
+  lightbox._returnFocus = document.activeElement;
   $('lb-img').src = url;
-  $('lb-name').textContent = name || '';
+  $('lb-img').alt = name || 'Shared image';
+  $('lb-name').textContent = name || 'Shared image';
   $('lb-download').href = url;
   $('lb-download').download = name || 'image';
-  $('lightbox').classList.add('show');
+  $('lb-download').hidden = !!activeChat()?.advancedPrivacy;
+  lightbox.classList.add('show');
+  lightbox.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => $('lb-close').focus());
 }
-$('lb-close').onclick = () => $('lightbox').classList.remove('show');
-$('lightbox').onclick = e => { if (e.target.id === 'lightbox') $('lightbox').classList.remove('show'); };
+function closeLightbox() {
+  const lightbox = $('lightbox');
+  lightbox.classList.remove('show');
+  lightbox.setAttribute('aria-hidden', 'true');
+  const returnFocus = lightbox._returnFocus;
+  lightbox._returnFocus = null;
+  if (returnFocus?.isConnected) requestAnimationFrame(() => returnFocus.focus());
+}
+$('lb-close').onclick = closeLightbox;
+$('lightbox').onclick = e => { if (e.target.id === 'lightbox') closeLightbox(); };
+$('lightbox').addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeLightbox();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const focusable = [...$('lightbox').querySelectorAll(modalFocusSelector)].filter(node => !node.hidden && node.getClientRects().length);
+  if (!focusable.length) return;
+  const current = focusable.indexOf(document.activeElement);
+  if (event.shiftKey && current <= 0) {
+    event.preventDefault();
+    focusable[focusable.length - 1].focus();
+  } else if (!event.shiftKey && current === focusable.length - 1) {
+    event.preventDefault();
+    focusable[0].focus();
+  }
+});
 
 // ── In-chat search ─────────────────────────────────────────────────────
 function runGlobalSearch(q) {
@@ -1942,148 +2938,1493 @@ function runGlobalSearch(q) {
         <div class="sr-top"><span class="sr-name">${esc(r.chat.name)}</span><span>${rowTime(r.message.timestamp)}</span></div>
         <div class="sr-text">${r.message.senderId === me.id ? 'You: ' : esc(r.message.sender?.username || '') + ': '}${hl}</div>`);
       row.onclick = () => { $('search-input').value = ''; searchQuery = ''; openChat(r.chat.id); };
+      makeKeyboardClickable(row, `Open search result in ${r.chat.name}`);
       box.appendChild(row);
     });
   });
 }
 
-// ── Chat wallpaper ─────────────────────────────────────────────────────
-const WP_KEY = 'vchat.wallpaper';
-const WALLPAPERS = [
-  { id: 'default', name: 'Doodle' },
-  { id: 'navy', name: 'Navy' },
-  { id: 'dusk', name: 'Dusk' },
-  { id: 'ember', name: 'Ember' },
-  { id: 'kente', name: 'Kente' },
-  { id: 'grid', name: 'Grid' },
-  { id: 'mist', name: 'Mist' },
-  { id: 'plain', name: 'Plain' },
-];
-
-function loadWallpaper() {
-  try { return JSON.parse(localStorage.getItem(WP_KEY) || '{}'); }
-  catch { return {}; }
+// ── Privacy, account security and linked devices ─────────────────────
+async function openPrivacy() {
+  const privacy = me.privacy || {};
+  $('privacy-last-seen').value = privacy.lastSeen || 'contacts';
+  $('privacy-online').value = privacy.online || 'same-as-last-seen';
+  $('privacy-photo').value = privacy.profilePhoto || 'everyone';
+  $('privacy-about').value = privacy.about || 'everyone';
+  $('privacy-timer').value = String(privacy.defaultDisappearingSeconds || 0);
+  $('privacy-receipts').checked = privacy.readReceipts !== false;
+  $('privacy-advanced').checked = !!privacy.advancedChatPrivacy;
+  $('privacy-silence').checked = privacy.silenceUnknownCallers !== false;
+  $('two-step-status').textContent = me.twoStepEnabled ? 'PIN is enabled' : 'Add a PIN for extra account protection';
+  $('two-step-set').textContent = me.twoStepEnabled ? 'Change PIN' : 'Set PIN';
+  $('two-step-disable').hidden = !me.twoStepEnabled;
+  renderChatLockState();
+  openModal('modal-privacy');
+  await Promise.all([loadDevices(), loadChatLockState()]);
 }
 
-function saveWallpaper(state) {
-  try { localStorage.setItem(WP_KEY, JSON.stringify(state)); }
-  catch { toast('Could not save wallpaper — storage is full'); }
+function chatLockIsUnlocked() {
+  return Number(me?.chatLockUnlockedUntil) > Date.now();
 }
 
-function applyWallpaper() {
-  const state = loadWallpaper();
-  const id = WALLPAPERS.some(w => w.id === state.id) || state.id === 'custom' ? state.id : 'default';
-  const panel = $('chat-panel');
-  if (!panel) return;
-  panel.dataset.wp = id;
-  if (id === 'custom' && state.photo) {
-    panel.style.setProperty('--wp-photo', `url("${state.photo}")`);
-    panel.style.setProperty('--wp-dim', String((state.dim ?? 40) / 100));
-  } else {
-    panel.style.removeProperty('--wp-photo');
-    panel.style.removeProperty('--wp-dim');
+function renderChatLockState() {
+  if (!me) return;
+  const enabled = me.chatLockEnabled === true;
+  const unlocked = enabled && chatLockIsUnlocked();
+  const count = Math.max(0, Number(me.lockedChatCount) || 0);
+  const filterButton = $('locked-chats-filter');
+  filterButton.hidden = !enabled;
+  $('locked-chat-count').textContent = count ? String(count) : '';
+  $('chat-lock-status').textContent = enabled
+    ? (unlocked ? 'Locked chats are unlocked on this device' : 'Locked chats are hidden')
+    : 'Protect hidden chats with a separate PIN';
+  $('chat-lock-note').textContent = unlocked
+    ? `Automatically locks again ${new Date(me.chatLockUnlockedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+    : 'Locked chats and previews stay hidden until this device session is unlocked.';
+  $('chat-lock-pin').textContent = enabled ? 'Change lock PIN' : 'Set lock PIN';
+  $('chat-lock-unlock').hidden = !enabled || unlocked;
+  $('chat-lock-now').hidden = !unlocked;
+  $('chat-lock-passkey-add').hidden = !enabled || !unlocked || !window.PublicKeyCredential
+    || Number(me.chatLockPasskeyCount) >= 10;
+  $('chat-lock-passkey-unlock').hidden = !enabled || unlocked || !(Number(me.chatLockPasskeyCount) > 0);
+  if (!unlocked && filter === 'locked') {
+    filter = 'all';
+    document.querySelectorAll('.chip').forEach(chip => chip.classList.toggle('on', chip.dataset.filter === 'all'));
   }
 }
 
-function setWallpaper(id, extra = {}) {
-  const prev = loadWallpaper();
-  const next = { ...prev, id, ...extra };
-  if (id !== 'custom') delete next.photo;
-  saveWallpaper(next);
-  applyWallpaper();
-  renderWallpaperGrid();
+async function loadChatLockState() {
+  const { ok, data } = await api('/api/account/chat-lock');
+  if (!ok) return;
+  me = { ...me, ...(data.user || {}) };
+  chatLockCredentials = Array.isArray(data.credentials) ? data.credentials : [];
+  renderChatLockCredentials();
+  renderChatLockState();
 }
 
-function renderWallpaperGrid() {
-  const box = $('wp-grid');
-  if (!box) return;
-  const state = loadWallpaper();
-  const current = state.id || 'default';
-  box.innerHTML = '';
-
-  WALLPAPERS.forEach(w => {
-    const b = el('button', 'wp-tile' + (current === w.id ? ' on' : ''));
-    b.type = 'button';
-    b.innerHTML = `<span class="wp-swatch ${w.id}"></span><span class="wp-name">${esc(w.name)}</span>`;
-    b.onclick = () => { setWallpaper(w.id); toast(`${w.name} wallpaper`); };
-    box.appendChild(b);
-  });
-
-  const upload = el('button', 'wp-tile upload' + (current === 'custom' ? ' on' : ''));
-  upload.type = 'button';
-  upload.innerHTML = `${icon('camera')}<span class="wp-name">${current === 'custom' ? 'Change photo' : 'Your photo'}</span>`;
-  upload.onclick = () => $('wp-file').click();
-  if (current === 'custom' && state.photo) {
-    upload.style.backgroundImage = `url("${state.photo}")`;
-    upload.style.backgroundSize = 'cover';
-    upload.style.backgroundPosition = 'center';
-    upload.style.color = '#fff';
+function renderChatLockCredentials() {
+  const list = $('chat-lock-credentials');
+  list.innerHTML = '';
+  if (!chatLockCredentials.length) {
+    list.innerHTML = '<div class="empty-list">No passkeys added. Your separate chat-lock PIN remains the fallback.</div>';
+    return;
   }
-  box.appendChild(upload);
-
-  const dimRow = $('wp-dim-row');
-  const dim = $('wp-dim');
-  const showDim = current === 'custom' && !!state.photo;
-  dimRow.hidden = !showDim;
-  if (showDim) dim.value = String(state.dim ?? 40);
-}
-
-async function onWallpaperFile(file) {
-  if (!file || !file.type.startsWith('image/')) return toast('Pick a photo');
-  toast('Preparing wallpaper…');
-  try {
-    const dataUrl = await wallpaperToDataUrl(file);
-    setWallpaper('custom', { photo: dataUrl, dim: Number($('wp-dim').value) || 40 });
-    toast('Wallpaper updated');
-  } catch (err) {
-    toast(err.message || 'Could not use that photo');
-  }
-}
-
-/** Shrink a photo so it fits in localStorage — no server, no build. */
-function wallpaperToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const max = 1400;
-      const scale = Math.min(1, max / Math.max(img.width, img.height));
-      const w = Math.max(1, Math.round(img.width * scale));
-      const h = Math.max(1, Math.round(img.height * scale));
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      const data = canvas.toDataURL('image/jpeg', 0.72);
-      if (data.length > 1.6 * 1024 * 1024) return reject(new Error('That photo is still too large'));
-      resolve(data);
+  chatLockCredentials.forEach(credential => {
+    const row = el('div', 'device-row', `<div>${icon('lock')}<span><strong>${esc(credential.name || 'Device passkey')}</strong><small>Added ${esc(new Date(credential.createdAt).toLocaleDateString())}</small></span></div>`);
+    const remove = el('button', 'btn-text danger', 'Remove');
+    remove.onclick = async () => {
+      const pin = prompt('Enter your separate 6-digit chat-lock PIN to remove this passkey');
+      if (pin == null) return;
+      const result = await api(`/api/account/chat-lock/passkey/${encodeURIComponent(credential.id)}`, { pin }, { method: 'DELETE' });
+      if (!result.ok) return toast(result.data.error || 'Could not remove passkey');
+      chatLockCredentials = result.data.credentials || [];
+      me.chatLockPasskeyCount = chatLockCredentials.length;
+      renderChatLockCredentials();
+      renderChatLockState();
+      toast('Passkey removed');
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read that photo')); };
-    img.src = url;
+    row.appendChild(remove);
+    list.appendChild(row);
   });
 }
 
-function openWallpaper() {
-  renderWallpaperGrid();
-  openModal('modal-wallpaper');
+async function setChatLockPin() {
+  const wasEnabled = me.chatLockEnabled === true;
+  const currentPin = wasEnabled ? prompt('Enter your current separate chat-lock PIN') : null;
+  if (wasEnabled && currentPin == null) return false;
+  const pin = prompt(wasEnabled
+    ? 'Choose a new 6-digit chat-lock PIN (different from two-step verification)'
+    : 'Choose a separate 6-digit PIN for locked chats');
+  if (pin == null) return false;
+  if (!/^\d{6}$/.test(pin)) { toast('The chat-lock PIN must contain exactly 6 digits'); return false; }
+  const result = await api('/api/account/chat-lock/pin', { pin, currentPin }, { method: 'PUT' });
+  if (!result.ok) { toast(result.data.error || 'Could not set chat-lock PIN'); return false; }
+  me = { ...me, ...(result.data.user || {}) };
+  chatLockCredentials = result.data.credentials || chatLockCredentials;
+  renderChatLockCredentials();
+  renderChatLockState();
+  toast(wasEnabled ? 'Chat-lock PIN updated' : 'Chat lock enabled');
+  return true;
+}
+
+async function unlockChatLockWithPin() {
+  if (!me.chatLockEnabled) return setChatLockPin();
+  const pin = prompt('Enter your separate 6-digit chat-lock PIN');
+  if (pin == null) return false;
+  const result = await api('/api/account/chat-lock/unlock', { pin });
+  if (!result.ok) { toast(result.data.error || 'Could not unlock chats'); return false; }
+  me = { ...me, ...(result.data.user || {}) };
+  renderChatLockState();
+  toast('Locked chats unlocked temporarily');
+  return true;
+}
+
+const bytesFromBase64url = value => {
+  const base64 = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(base64 + '='.repeat((4 - base64.length % 4) % 4));
+  return Uint8Array.from(binary, char => char.charCodeAt(0));
+};
+const base64urlFromBytes = value => {
+  if (value == null) return null;
+  const bytes = new Uint8Array(value);
+  let binary = '';
+  bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+};
+function publicKeyCreateOptions(options) {
+  return {
+    ...options,
+    challenge: bytesFromBase64url(options.challenge),
+    user: { ...options.user, id: bytesFromBase64url(options.user.id) },
+    excludeCredentials: (options.excludeCredentials || []).map(item => ({ ...item, id: bytesFromBase64url(item.id) })),
+  };
+}
+function publicKeyRequestOptions(options) {
+  return {
+    ...options,
+    challenge: bytesFromBase64url(options.challenge),
+    allowCredentials: (options.allowCredentials || []).map(item => ({ ...item, id: bytesFromBase64url(item.id) })),
+  };
+}
+function serializePasskeyCredential(credential) {
+  const response = credential.response;
+  const serialized = {
+    id: credential.id,
+    rawId: base64urlFromBytes(credential.rawId),
+    type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment || undefined,
+    clientExtensionResults: credential.getClientExtensionResults?.() || {},
+    response: { clientDataJSON: base64urlFromBytes(response.clientDataJSON) },
+  };
+  if ('attestationObject' in response) {
+    serialized.response.attestationObject = base64urlFromBytes(response.attestationObject);
+    serialized.response.transports = response.getTransports?.() || [];
+  } else {
+    serialized.response.authenticatorData = base64urlFromBytes(response.authenticatorData);
+    serialized.response.signature = base64urlFromBytes(response.signature);
+    serialized.response.userHandle = base64urlFromBytes(response.userHandle);
+  }
+  return serialized;
+}
+
+async function addChatLockPasskey() {
+  if (!window.PublicKeyCredential || !navigator.credentials) return toast('Passkeys are not supported by this browser');
+  if (!chatLockIsUnlocked() && !(await unlockChatLockWithPin())) return;
+  try {
+    const optionsResult = await api('/api/account/chat-lock/passkey/register/options', {});
+    if (!optionsResult.ok) throw new Error(optionsResult.data.error || 'Could not begin passkey setup');
+    const credential = await navigator.credentials.create({ publicKey: publicKeyCreateOptions(optionsResult.data) });
+    if (!credential) throw new Error('Passkey setup was cancelled');
+    const name = /Mobile|Android|iPhone/i.test(navigator.userAgent) ? 'Mobile device passkey' : 'Desktop device passkey';
+    const verified = await api('/api/account/chat-lock/passkey/register/verify', {
+      credential: serializePasskeyCredential(credential), name,
+    });
+    if (!verified.ok) throw new Error(verified.data.error || 'Passkey could not be verified');
+    chatLockCredentials = verified.data.credentials || [];
+    me.chatLockPasskeyCount = chatLockCredentials.length;
+    renderChatLockCredentials();
+    renderChatLockState();
+    toast('Device passkey added');
+  } catch (error) {
+    toast(error.name === 'NotAllowedError' ? 'Passkey setup was cancelled' : (error.message || 'Could not add passkey'));
+  }
+}
+
+async function unlockChatLockWithPasskey() {
+  if (!window.PublicKeyCredential || !navigator.credentials) return toast('Passkeys are not supported by this browser'), false;
+  try {
+    const optionsResult = await api('/api/account/chat-lock/passkey/authenticate/options', {});
+    if (!optionsResult.ok) throw new Error(optionsResult.data.error || 'No passkey is available');
+    const credential = await navigator.credentials.get({ publicKey: publicKeyRequestOptions(optionsResult.data) });
+    if (!credential) throw new Error('Passkey unlock was cancelled');
+    const verified = await api('/api/account/chat-lock/passkey/authenticate/verify', {
+      credential: serializePasskeyCredential(credential),
+    });
+    if (!verified.ok) throw new Error(verified.data.error || 'Passkey unlock failed');
+    me = { ...me, ...(verified.data.user || {}) };
+    renderChatLockState();
+    toast('Locked chats unlocked temporarily');
+    return true;
+  } catch (error) {
+    toast(error.name === 'NotAllowedError' ? 'Passkey unlock was cancelled' : (error.message || 'Could not use passkey'));
+    return false;
+  }
+}
+
+async function lockChatsNow() {
+  const result = await api('/api/account/chat-lock/lock', {});
+  if (!result.ok) return toast(result.data.error || 'Could not lock chats');
+  me = { ...me, ...(result.data.user || {}) };
+  if (activeChat()?.locked) closeChat();
+  renderChatLockState();
+  renderChatList();
+  toast('Locked chats hidden');
+}
+
+async function toggleChatLock(chat) {
+  if (!chat) return;
+  if (!me.chatLockEnabled && !(await setChatLockPin())) return;
+  if (!chatLockIsUnlocked() && !(await unlockChatLockWithPin())) return;
+  const result = await api(`/api/messenger/chats/${encodeURIComponent(chat.id)}/lock`, { locked: !chat.locked }, { method: 'PUT' });
+  if (!result.ok) return toast(result.data.error || 'Could not change chat lock');
+  me = { ...me, ...(result.data.user || {}) };
+  if (result.data.locked) {
+    if (activeId === chat.id) closeChat();
+    setFilter('all');
+    toast('Chat locked and moved to Locked');
+  } else toast('Chat removed from Locked');
+  renderChatLockState();
+}
+
+async function loadDevices() {
+  const list = $('device-list');
+  list.innerHTML = '<div class="empty-list">Loading…</div>';
+  const { ok, data } = await api('/api/account/devices');
+  if (!ok || !Array.isArray(data)) {
+    list.innerHTML = '<div class="empty-list">Could not load linked devices.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  data.forEach(device => {
+    const name = /Mobile|Android|iPhone/i.test(device.userAgent || '') ? 'Mobile browser' : 'Desktop browser';
+    const row = el('div', 'device-row', `<div>${icon('newchat')}<span><strong>${esc(name)}${device.current ? ' · This device' : ''}</strong><small>Last active ${esc(new Date(device.lastUsedAt).toLocaleString())}</small></span></div>`);
+    if (!device.current) {
+      const remove = el('button', 'btn-text', 'Log out');
+      remove.onclick = async () => {
+        const result = await api(`/api/account/devices/${encodeURIComponent(device.id)}`, undefined, { method: 'DELETE' });
+        if (!result.ok) return toast(result.data.error || 'Could not log out device');
+        loadDevices();
+      };
+      row.appendChild(remove);
+    }
+    list.appendChild(row);
+  });
+}
+
+$('privacy-save').onclick = async () => {
+  const patch = {
+    lastSeen: $('privacy-last-seen').value,
+    online: $('privacy-online').value,
+    profilePhoto: $('privacy-photo').value,
+    about: $('privacy-about').value,
+    defaultDisappearingSeconds: Number($('privacy-timer').value),
+    readReceipts: $('privacy-receipts').checked,
+    advancedChatPrivacy: $('privacy-advanced').checked,
+    silenceUnknownCallers: $('privacy-silence').checked,
+  };
+  const { ok, data } = await api('/api/account/privacy', patch, { method: 'PATCH' });
+  if (!ok) return toast(data.error || 'Could not save privacy settings');
+  me.privacy = data.privacy;
+  closeModal('modal-privacy');
+  toast('Privacy settings saved');
+};
+
+$('two-step-set').onclick = async () => {
+  const currentPin = me.twoStepEnabled ? prompt('Enter your current 6-digit PIN') : null;
+  if (me.twoStepEnabled && currentPin == null) return;
+  const pin = prompt(me.twoStepEnabled ? 'Choose a new 6-digit PIN' : 'Choose a 6-digit two-step verification PIN');
+  if (pin == null) return;
+  const { ok, data } = await api('/api/account/two-step', { pin, currentPin }, { method: 'PUT' });
+  if (!ok) return toast(data.error || 'Could not set PIN');
+  me.twoStepEnabled = true;
+  $('two-step-status').textContent = 'PIN is enabled';
+  $('two-step-set').textContent = 'Change PIN';
+  $('two-step-disable').hidden = false;
+  toast('Two-step verification enabled');
+};
+
+$('account-export').onclick = async () => {
+  const button = $('account-export');
+  const currentPin = me.twoStepEnabled
+    ? prompt('Enter your current two-step PIN to download your account data') : '';
+  if (currentPin == null) return;
+  button.disabled = true;
+  button.textContent = 'Preparing…';
+  try {
+    const response = await fetch('/api/account/export', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ currentPin }),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || 'Could not prepare your account export');
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition') || '';
+    const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || 'vchat-account.json';
+    const url = URL.createObjectURL(blob);
+    const download = el('a');
+    download.href = url;
+    download.download = filename;
+    document.body.appendChild(download);
+    download.click();
+    download.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast('Account data downloaded');
+  } catch (error) {
+    toast(error.message || 'Could not download account data');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Download';
+  }
+};
+
+$('account-delete').onclick = async () => {
+  if (!confirm('Permanently delete this Vchat account? This cannot be undone. Download your account data first if you need a copy.')) return;
+  const confirmation = prompt('Type DELETE to permanently remove your account and sign out every device');
+  if (confirmation == null) return;
+  if (confirmation !== 'DELETE') return toast('Account deletion cancelled: confirmation did not match DELETE');
+  const currentPin = me.twoStepEnabled
+    ? prompt('Enter your current two-step PIN to delete this account') : '';
+  if (currentPin == null) return;
+  const button = $('account-delete');
+  button.disabled = true;
+  button.textContent = 'Deleting…';
+  try {
+    const { ok, data } = await api('/api/account', { confirmation, currentPin }, { method: 'DELETE' });
+    if (!ok) throw new Error(data.error || 'Could not delete your account');
+    await clearPrivateOutbox(me?.id).catch(() => {});
+    ['vchat.token', 'vchat.outbox', 'vchat.phone', 'vchat.name', 'vchat.avatar']
+      .forEach(key => localStorage.removeItem(key));
+    socket?.close();
+    location.reload();
+  } catch (error) {
+    toast(error.message || 'Could not delete your account');
+    button.disabled = false;
+    button.textContent = 'Delete account';
+  }
+};
+
+$('two-step-disable').onclick = async () => {
+  const pin = prompt('Enter your current PIN to disable two-step verification');
+  if (pin == null) return;
+  const { ok, data } = await api('/api/account/two-step', { pin }, { method: 'DELETE' });
+  if (!ok) return toast(data.error || 'Could not disable two-step verification');
+  me.twoStepEnabled = false;
+  $('two-step-status').textContent = 'Add a PIN for extra account protection';
+  $('two-step-set').textContent = 'Set PIN';
+  $('two-step-disable').hidden = true;
+  toast('Two-step verification disabled');
+};
+
+$('devices-revoke-all').onclick = async () => {
+  if (!confirm('Log out every other linked device?')) return;
+  const { ok, data } = await api('/api/account/devices', undefined, { method: 'DELETE' });
+  if (!ok) return toast(data.error || 'Could not log out devices');
+  toast(`${data.revoked || 0} device${data.revoked === 1 ? '' : 's'} logged out`);
+  loadDevices();
+};
+
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  installPrompt = event;
+});
+async function installApp() {
+  if (!installPrompt) return toast('Use your browser menu to install VChat');
+  installPrompt.prompt();
+  await installPrompt.userChoice;
+  installPrompt = null;
+}
+
+// ── Notification, ringtone and media preferences (per linked device) ──
+function notificationPermissionText() {
+  if (!('Notification' in window)) return 'Desktop notifications are not supported by this browser';
+  if (Notification.permission === 'granted') return 'Enabled while Vchat is open on this device';
+  if (Notification.permission === 'denied') return 'Blocked in browser settings';
+  return 'Allow browser alerts while Vchat is open';
+}
+
+function readNotificationDraft() {
+  return {
+    desktop: $('notify-desktop').checked,
+    previews: $('notify-preview').checked,
+    messageSounds: $('notify-sounds').checked,
+    messageTone: $('notify-tone').value,
+    callSounds: $('notify-call-sounds').checked,
+    ringtone: $('notify-ringtone').value,
+    mediaVisibility: $('media-visibility').value,
+  };
+}
+
+function openNotifications() {
+  $('notify-desktop').checked = notificationPrefs.desktop;
+  $('notify-preview').checked = notificationPrefs.previews;
+  $('notify-sounds').checked = notificationPrefs.messageSounds;
+  $('notify-tone').value = notificationPrefs.messageTone;
+  $('notify-call-sounds').checked = notificationPrefs.callSounds;
+  $('notify-ringtone').value = notificationPrefs.ringtone;
+  $('media-visibility').value = notificationPrefs.mediaVisibility;
+  $('notification-permission-status').textContent = notificationPermissionText();
+  $('notify-desktop').disabled = !('Notification' in window) || Notification.permission === 'denied';
+
+  $('notify-desktop').onchange = async () => {
+    if (!$('notify-desktop').checked || !('Notification' in window)) return;
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') $('notify-desktop').checked = false;
+    } catch {
+      $('notify-desktop').checked = false;
+    }
+    $('notification-permission-status').textContent = notificationPermissionText();
+  };
+  $('notify-test').onclick = () => {
+    const previous = notificationPrefs.messageTone;
+    notificationPrefs.messageTone = $('notify-tone').value;
+    ping(true);
+    notificationPrefs.messageTone = previous;
+  };
+  $('ringtone-test').onclick = () => {
+    if (ringTone) return callToneStop();
+    const previous = notificationPrefs.ringtone;
+    notificationPrefs.ringtone = $('notify-ringtone').value;
+    callTone('ring', true);
+    notificationPrefs.ringtone = previous;
+    setTimeout(callToneStop, 4200);
+  };
+  $('notifications-save').onclick = () => {
+    notificationPrefs = { ...NOTIFICATION_DEFAULTS, ...readNotificationDraft() };
+    localStorage.setItem('vchat.notifications', JSON.stringify(notificationPrefs));
+    callToneStop();
+    if (activeId) renderMessages();
+    closeModal('modal-notifications');
+    toast('Notification and media settings saved');
+  };
+  openModal('modal-notifications');
+}
+
+// ── Reels companion pane ──────────────────────────────────────────────
+function visibleReelId() {
+  const feed = $('reels-feed');
+  const cards = [...feed.querySelectorAll('.reel-card')];
+  if (!cards.length) return null;
+  return cards.reduce((best, card) => (
+    Math.abs(card.offsetTop - feed.scrollTop) < Math.abs(best.offsetTop - feed.scrollTop) ? card : best
+  )).dataset.id;
+}
+
+function pauseReelVideos() {
+  $('reels-feed')?.querySelectorAll('video').forEach(video => video.pause());
+}
+
+function reelAutoplayEnabled() {
+  return !lite && !document.hidden && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+async function loadReels(reset = false, preservePosition = false) {
+  if (reelsLoading) {
+    if (reset) reelsReloadPending = true;
+    return;
+  }
+  const keepId = preservePosition ? visibleReelId() : null;
+  reelsLoading = true;
+  if (reset) {
+    reelsCursor = null;
+    reelsExhausted = false;
+  }
+  if (!reels.length) $('reels-feed').innerHTML = '<div class="reels-loading">Loading reels…</div>';
+  try {
+    const query = new URLSearchParams({ limit: '10' });
+    if (!reset && reelsCursor) query.set('cursor', reelsCursor);
+    const response = await fetch(`/api/reels?${query}`, { credentials: 'same-origin' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Could not load reels');
+    const incoming = Array.isArray(data.items) ? data.items : [];
+    if (Number.isFinite(data.maxUploadBytes) && data.maxUploadBytes > 0) reelMaxBytes = data.maxUploadBytes;
+    if (reset) reels = incoming;
+    else {
+      const known = new Set(reels.map(reel => reel.id));
+      reels.push(...incoming.filter(reel => !known.has(reel.id)));
+    }
+    reelsCursor = data.nextCursor || null;
+    reelsExhausted = !reelsCursor;
+    if (document.body.classList.contains('reels-open')) renderReels(keepId);
+  } catch (error) {
+    if (!reels.length) {
+      $('reels-feed').innerHTML = `<div class="reels-empty"><strong>Reels unavailable</strong><span>${esc(error.message)}</span><button class="btn-text" type="button" id="reels-retry">Try again</button></div>`;
+      $('reels-retry').onclick = () => loadReels(true);
+    } else toast(error.message);
+  } finally {
+    reelsLoading = false;
+    if (reelsReloadPending) {
+      reelsReloadPending = false;
+      if (document.body.classList.contains('reels-open')) loadReels(true, true);
+    }
+  }
+}
+
+function renderReels(keepId = null) {
+  const feed = $('reels-feed');
+  reelsObserver?.disconnect();
+  reelsObserver = null;
+  feed.innerHTML = '';
+
+  if (!reels.length) {
+    feed.innerHTML = '<div class="reels-empty"><strong>No reels yet</strong><span>Post a short video and keep chatting while everyone scrolls.</span><button class="btn-text" type="button" id="reels-empty-upload">Post the first reel</button></div>';
+    $('reels-empty-upload').onclick = chooseReelFile;
+    return;
+  }
+
+  for (const reel of reels) {
+    const owner = reel.owner || { id: '', username: 'Vchat user', avatar: '🎬' };
+    const mine = owner.id === me.id;
+    const card = el('article', 'reel-card paused');
+    card.dataset.id = reel.id;
+    card.innerHTML = `
+      <video class="reel-video" src="${esc(reel.videoUrl)}" muted loop playsinline preload="${lite ? 'none' : 'metadata'}" aria-label="Reel by ${esc(owner.username)}"></video>
+      <div class="reel-play-state">${icon('play')}</div>
+      <div class="reel-shade"></div>
+      <div class="reel-meta">
+        <button class="reel-owner" type="button" data-reel-action="chat" ${mine ? 'disabled' : ''}>${avatarHTML(owner, 32)}<span>${esc(mine ? 'You' : owner.username)}</span></button>
+        ${reel.caption ? `<div class="reel-caption">${esc(reel.caption)}</div>` : ''}
+        <span class="reel-date">${esc(dayLabel(reel.createdAt))} · ${esc(timeOf(reel.createdAt))}</span>
+      </div>
+      <div class="reel-actions">
+        <button class="reel-action ${reel.liked ? 'on' : ''}" type="button" data-reel-action="like" aria-label="${reel.liked ? 'Unlike' : 'Like'} reel"><span aria-hidden="true">♥</span><span class="reel-action-count">${Number(reel.likeCount) || 0}</span></button>
+        <button class="reel-action" type="button" data-reel-action="play" aria-label="Play reel">${icon('play')}</button>
+        ${mine
+          ? `<button class="reel-action" type="button" data-reel-action="delete" aria-label="Delete reel">${icon('trash')}</button>`
+          : `<button class="reel-action" type="button" data-reel-action="chat" aria-label="Chat with ${esc(owner.username)}">${icon('chat')}</button>`}
+        <button class="reel-action" type="button" data-reel-action="sound" aria-label="Turn sound on"><span aria-hidden="true">🔇</span></button>
+      </div>`;
+
+    const video = card.querySelector('video');
+    const playButton = card.querySelector('[data-reel-action="play"]');
+    const setPlaying = playing => {
+      card.classList.toggle('paused', !playing);
+      playButton.innerHTML = icon(playing ? 'pause' : 'play');
+      playButton.setAttribute('aria-label', playing ? 'Pause reel' : 'Play reel');
+    };
+    video.onclick = () => video.paused ? video.play().catch(() => {}) : video.pause();
+    video.onplay = () => setPlaying(true);
+    video.onpause = () => setPlaying(false);
+    video.onerror = () => card.classList.add('reel-error');
+    playButton.onclick = event => {
+      event.stopPropagation();
+      if (video.paused) video.play().catch(() => {});
+      else video.pause();
+    };
+
+    card.querySelectorAll('[data-reel-action="chat"]').forEach(button => {
+      if (!mine) button.onclick = event => { event.stopPropagation(); chatWithReelOwner(owner.id); };
+    });
+    card.querySelector('[data-reel-action="like"]').onclick = event => {
+      event.stopPropagation();
+      updateReelLike(reel, card);
+    };
+    card.querySelector('[data-reel-action="sound"]').onclick = event => {
+      event.stopPropagation();
+      video.muted = !video.muted;
+      event.currentTarget.firstElementChild.textContent = video.muted ? '🔇' : '🔊';
+      event.currentTarget.setAttribute('aria-label', video.muted ? 'Turn sound on' : 'Mute reel');
+      if (video.paused) video.play().catch(() => {});
+    };
+    if (mine) card.querySelector('[data-reel-action="delete"]').onclick = event => {
+      event.stopPropagation();
+      removeReel(reel.id);
+    };
+    feed.appendChild(card);
+  }
+
+  reelsObserver = new IntersectionObserver(entries => {
+    if (!document.body.classList.contains('reels-open')) return;
+    for (const entry of entries) {
+      const video = entry.target.querySelector('video');
+      if (entry.isIntersecting && entry.intersectionRatio >= 0.65) {
+        feed.querySelectorAll('video').forEach(other => { if (other !== video) other.pause(); });
+        if (reelAutoplayEnabled()) video.play().catch(() => entry.target.classList.add('paused'));
+      } else if (entry.intersectionRatio < 0.35) video.pause();
+    }
+  }, { root: feed, threshold: [0.2, 0.35, 0.65, 0.85] });
+  feed.querySelectorAll('.reel-card').forEach(card => reelsObserver.observe(card));
+
+  requestAnimationFrame(() => {
+    const target = keepId && feed.querySelector(`[data-id="${CSS.escape(keepId)}"]`);
+    if (target) feed.scrollTop = target.offsetTop;
+  });
+}
+
+async function updateReelLike(reel, card) {
+  const button = card.querySelector('[data-reel-action="like"]');
+  if (button.disabled) return;
+  button.disabled = true;
+  const desired = !reel.liked;
+  reel.liked = desired;
+  reel.likeCount = Math.max(0, (Number(reel.likeCount) || 0) + (desired ? 1 : -1));
+  button.classList.toggle('on', desired);
+  button.setAttribute('aria-label', desired ? 'Unlike reel' : 'Like reel');
+  button.querySelector('.reel-action-count').textContent = reel.likeCount;
+  try {
+    const { ok, data } = await api(`/api/reels/${encodeURIComponent(reel.id)}/like`, { liked: desired }, { method: 'PUT' });
+    if (!ok) throw new Error(data.error || 'Could not update like');
+    Object.assign(reel, data.reel);
+    button.querySelector('.reel-action-count').textContent = reel.likeCount;
+  } catch (error) {
+    reel.liked = !desired;
+    reel.likeCount = Math.max(0, reel.likeCount + (desired ? -1 : 1));
+    button.classList.toggle('on', reel.liked);
+    button.querySelector('.reel-action-count').textContent = reel.likeCount;
+    toast(error.message || 'Could not update like');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function chatWithReelOwner(ownerId) {
+  if (!ownerId || ownerId === me.id) return;
+  socket.emit('chat:startDM', { targetUserId: ownerId }, result => {
+    if (result?.error) return toast(result.error);
+    if (result?.chat) openChat(result.chat.id);
+  });
+}
+
+async function removeReel(reelId) {
+  if (!confirm('Delete this reel permanently?')) return;
+  try {
+    const { ok, data } = await api(`/api/reels/${encodeURIComponent(reelId)}`, {}, { method: 'DELETE' });
+    if (!ok) throw new Error(data.error || 'Could not delete reel');
+    const keep = visibleReelId();
+    reels = reels.filter(reel => reel.id !== reelId);
+    renderReels(keep === reelId ? null : keep);
+    toast('Reel deleted');
+  } catch (error) {
+    toast(error.message || 'Could not delete reel');
+  }
+}
+
+function openReels() {
+  document.body.classList.add('reels-open');
+  $('reels-panel').setAttribute('aria-hidden', 'false');
+  $('btn-reels').setAttribute('aria-expanded', 'true');
+  $('btn-reels-chat').setAttribute('aria-expanded', 'true');
+  $('drawer').classList.remove('open');
+  loadReels(true);
+}
+
+function closeReels() {
+  clearTimeout(reelsRefreshTimer);
+  reelsReloadPending = false;
+  document.body.classList.remove('reels-open');
+  $('reels-panel').setAttribute('aria-hidden', 'true');
+  $('btn-reels').setAttribute('aria-expanded', 'false');
+  $('btn-reels-chat').setAttribute('aria-expanded', 'false');
+  pauseReelVideos();
+}
+
+function toggleReels() {
+  if (document.body.classList.contains('reels-open')) closeReels();
+  else openReels();
+}
+
+function chooseReelFile() {
+  $('reel-file-input').value = '';
+  $('reel-file-input').click();
+}
+
+function prepareReelUpload(file) {
+  if (!file) return;
+  if (!['video/mp4', 'video/quicktime', 'video/webm'].includes(file.type) || file.size > reelMaxBytes) {
+    return toast(`Choose an MP4, MOV, or WebM video up to ${fileSize(reelMaxBytes)}`);
+  }
+  reelUploadCleanup?.();
+  reelUploadFile = file;
+  reelUploadPreviewUrl = URL.createObjectURL(file);
+  $('reel-upload-preview').src = reelUploadPreviewUrl;
+  $('reel-file-summary').textContent = `${file.name} · ${fileSize(file.size)}`;
+  $('reel-caption').value = '';
+  $('reel-upload-status').textContent = '';
+  $('reel-publish').disabled = false;
+  const cleanup = () => {
+    reelUploadAbort?.abort();
+    reelUploadAbort = null;
+    $('reel-upload-preview').pause();
+    $('reel-upload-preview').removeAttribute('src');
+    $('reel-upload-preview').load();
+    if (reelUploadPreviewUrl) URL.revokeObjectURL(reelUploadPreviewUrl);
+    reelUploadPreviewUrl = null;
+    reelUploadFile = null;
+    $('reel-file-input').value = '';
+    if (reelUploadCleanup === cleanup) reelUploadCleanup = null;
+  };
+  reelUploadCleanup = cleanup;
+  openModal('modal-reel-upload');
+}
+
+async function publishReel() {
+  if (!reelUploadFile || reelUploadAbort) return;
+  const button = $('reel-publish');
+  const status = $('reel-upload-status');
+  const form = new FormData();
+  form.append('video', reelUploadFile, reelUploadFile.name);
+  form.append('caption', $('reel-caption').value.trim());
+  const request = new XMLHttpRequest();
+  reelUploadAbort = request;
+  button.disabled = true;
+  status.textContent = 'Uploading securely… 0%';
+  status.style.color = 'var(--text-secondary)';
+  try {
+    const data = await new Promise((resolve, reject) => {
+      request.open('POST', '/api/reels');
+      request.withCredentials = true;
+      request.responseType = 'json';
+      request.upload.onprogress = event => {
+        if (event.lengthComputable) status.textContent = `Uploading securely… ${Math.min(99, Math.round((event.loaded / event.total) * 100))}%`;
+      };
+      request.onerror = () => reject(new Error('Network error while uploading'));
+      request.onabort = () => reject(Object.assign(new Error('Upload cancelled'), { name: 'AbortError' }));
+      request.onload = () => {
+        const body = request.response && typeof request.response === 'object' ? request.response : {};
+        if (request.status >= 200 && request.status < 300) resolve(body);
+        else reject(new Error(body.error || 'Could not post reel'));
+      };
+      request.send(form);
+    });
+    if (!data.reel) throw new Error('The server did not return the published reel');
+    reelUploadAbort = null;
+    closeModal('modal-reel-upload');
+    openReels();
+    toast('Reel posted');
+  } catch (error) {
+    if (error.name === 'AbortError') return;
+    reelUploadAbort = null;
+    button.disabled = false;
+    status.style.color = 'var(--danger)';
+    status.textContent = error.message || 'Could not post reel';
+  }
+}
+
+// ── Status stories and sponsored playback ─────────────────────────────
+function storyBackgroundClass(background) {
+  return `story-bg-${['jade', 'ocean', 'sunset', 'violet', 'charcoal'].includes(background) ? background : 'jade'}`;
+}
+
+function setStoriesOpen(open) {
+  $('stories-screen').classList.toggle('open', open);
+  $('stories-screen').setAttribute('aria-hidden', String(!open));
+  if (!open) {
+    closeStoryViewer();
+    clearTimeout(storiesRefreshTimer);
+  }
+}
+
+async function openStories() {
+  closeReels();
+  setStoriesOpen(true);
+  $('story-notice').hidden = true;
+  await loadStories();
+}
+
+function closeStories() {
+  setStoriesOpen(false);
+}
+
+async function loadStories({ quiet = false } = {}) {
+  if (storiesLoading || !me) return;
+  storiesLoading = true;
+  if (!quiet) $('stories-loading').hidden = false;
+  try {
+    const { ok, data } = await api('/api/stories');
+    if (!ok) throw new Error(data.error || 'Could not load status updates');
+    storyGroups = Array.isArray(data.groups) ? data.groups : [];
+    storyAds = Array.isArray(data.ads) ? data.ads : [];
+    storyReactions = Array.isArray(data.reactions) ? data.reactions : storyReactions;
+    storyMaxBytes = Number(data.maxUploadBytes) || storyMaxBytes;
+    storyPaymentConfigured = data.paymentConfigured === true;
+    storyAdAdmin = data.adAdmin === true;
+    $('story-review-button').hidden = !storyAdAdmin;
+    renderStoryTray();
+  } catch (error) {
+    if (!quiet) toast(error.message || 'Could not load status updates');
+  } finally {
+    storiesLoading = false;
+    $('stories-loading').hidden = true;
+  }
+}
+
+function openSponsoredStory(item) {
+  if (!item) return;
+  storyViewerReturnFocus = document.activeElement;
+  storySequence = [{ ...item, kind: 'ad' }];
+  $('stories-home').hidden = true;
+  $('story-viewer').hidden = false;
+  storyIndex = 0;
+  renderCurrentStory();
+  requestAnimationFrame(() => $('story-viewer-close').focus());
+}
+
+function renderSponsoredDiscovery() {
+  const section = $('sponsored-discovery');
+  const tray = $('sponsored-story-tray');
+  const ads = storyAds.filter(Boolean);
+  tray.innerHTML = '';
+  section.hidden = ads.length === 0;
+  ads.forEach(item => {
+    const card = el('button', `story-tray-card sponsored-tray-card unseen${item.type === 'text' ? ` story-bg-${item.background || 'jade'}` : ''}`);
+    card.type = 'button';
+    card.setAttribute('role', 'listitem');
+    card.setAttribute('aria-label', `Sponsored Status from ${item.advertiser?.username || 'a business'}`);
+    card.innerHTML = `${avatarHTML(item.advertiser, 40)}<span class="story-tray-name">${esc(item.advertiser?.username || 'Business')}</span><span class="story-tray-meta">${esc(item.cta || 'View sponsored Status')}</span>`;
+    card.onclick = () => openSponsoredStory(item);
+    tray.appendChild(card);
+  });
+}
+
+function renderStoryTray() {
+  const tray = $('story-tray');
+  tray.innerHTML = '';
+  renderSponsoredDiscovery();
+  const own = storyGroups.find(group => group.mine);
+  if (!own) {
+    const add = el('button', 'story-tray-card add-card');
+    add.type = 'button';
+    add.innerHTML = `${avatarHTML(me, 40)}<span class="story-tray-name">Your status</span><span class="story-tray-meta">Tap to add an update</span>`;
+    add.onclick = openStoryComposer;
+    tray.appendChild(add);
+  }
+  for (const group of storyGroups) {
+    const card = el('button', `story-tray-card${group.unseenCount ? ' unseen' : ''}`);
+    card.type = 'button';
+    card.setAttribute('role', 'listitem');
+    const latest = group.items[group.items.length - 1];
+    card.innerHTML = `${avatarHTML(group.owner, 40)}<span class="story-tray-name">${esc(group.mine ? 'Your status' : group.owner?.username)}</span><span class="story-tray-meta">${group.unseenCount ? `${group.unseenCount} new · ` : ''}${esc(rowTime(latest?.createdAt || Date.now()))}</span>`;
+    card.onclick = () => openStoryViewer(group.owner?.id);
+    tray.appendChild(card);
+  }
+  const friendCount = storyGroups.filter(group => !group.mine).length;
+  $('stories-empty').hidden = friendCount > 0 || Boolean(own);
+}
+
+function buildStorySequence(ownerId) {
+  const selectedIndex = storyGroups.findIndex(group => group.owner?.id === ownerId);
+  if (selectedIndex < 0) return [];
+  const selected = storyGroups[selectedIndex];
+  const groups = selected.mine
+    ? [selected]
+    : storyGroups.slice(selectedIndex).filter(group => !group.mine);
+  const organic = groups.flatMap(group => group.items.map(item => ({ ...item, kind: 'story' })));
+  if (selected.mine || !organic.length || !storyAds.length) return organic;
+  const firstAdAfter = organic.length > 3 ? 3 : Math.max(1, organic.length - 1);
+  const sequence = [];
+  let sinceAd = 0;
+  let adIndex = 0;
+  for (const item of organic) {
+    sequence.push(item);
+    sinceAd += 1;
+    const threshold = adIndex === 0 ? firstAdAfter : 3;
+    if (sinceAd >= threshold && adIndex < storyAds.length) {
+      sequence.push({ ...storyAds[adIndex], kind: 'ad' });
+      adIndex += 1;
+      sinceAd = 0;
+    }
+  }
+  return sequence;
+}
+
+function openStoryViewer(ownerId) {
+  storySequence = buildStorySequence(ownerId);
+  if (!storySequence.length) return;
+  storyViewerReturnFocus = document.activeElement;
+  $('stories-home').hidden = true;
+  $('story-viewer').hidden = false;
+  storyIndex = 0;
+  renderCurrentStory();
+  requestAnimationFrame(() => $('story-viewer-close').focus());
+}
+
+function closeStoryViewer() {
+  stopStoryPlayback();
+  $('story-stage').querySelectorAll('video').forEach(video => video.pause());
+  $('story-viewer').hidden = true;
+  $('stories-home').hidden = false;
+  storySequence = [];
+  storyIndex = -1;
+  const returnFocus = storyViewerReturnFocus;
+  storyViewerReturnFocus = null;
+  if (returnFocus?.isConnected) requestAnimationFrame(() => returnFocus.focus());
+  if ($('stories-screen').classList.contains('open')) loadStories({ quiet: true }).catch(() => {});
+}
+
+function renderStoryProgress() {
+  $('story-progress').innerHTML = storySequence.map((_item, index) => `<span class="story-progress-part${index < storyIndex ? ' done' : ''}"><span class="story-progress-fill"></span></span>`).join('');
+}
+
+function updateStoryPauseControl() {
+  const paused = storyPlayback?.paused === true;
+  const button = $('story-pause');
+  button.setAttribute('aria-label', paused ? 'Resume status playback' : 'Pause status playback');
+  button.setAttribute('aria-pressed', String(paused));
+  button.innerHTML = icon(paused ? 'play' : 'pause');
+}
+
+function stopStoryPlayback() {
+  if (storyPlayback?.raf) cancelAnimationFrame(storyPlayback.raf);
+  storyPlayback = null;
+  updateStoryPauseControl();
+}
+
+function setStoryPlaybackPaused(paused) {
+  if (!storyPlayback) return;
+  storyPlayback.paused = paused;
+  storyPlayback.last = performance.now();
+  const video = $('story-stage').querySelector('video');
+  if (video) {
+    if (paused) video.pause();
+    else video.play().catch(() => { video.controls = true; });
+  }
+  updateStoryPauseControl();
+}
+
+function toggleStoryPlayback() {
+  setStoryPlaybackPaused(storyPlayback?.paused !== true);
+}
+
+function startStoryPlayback(duration) {
+  stopStoryPlayback();
+  const index = storyIndex;
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+  const state = {
+    duration: Math.max(1000, duration), elapsed: 0, last: performance.now(), raf: 0, paused: reducedMotion,
+  };
+  storyPlayback = state;
+  updateStoryPauseControl();
+  const fill = $('story-progress').children[index]?.firstElementChild;
+  const tick = now => {
+    if (storyPlayback !== state || index !== storyIndex) return;
+    const delta = Math.min(250, now - state.last);
+    state.last = now;
+    if (!document.hidden && !state.paused) state.elapsed += delta;
+    if (fill) fill.style.width = `${Math.min(100, (state.elapsed / state.duration) * 100)}%`;
+    if (storySequence[index]?.kind === 'ad') $('story-ad-countdown').textContent = `${Math.max(0, Math.ceil((state.duration - state.elapsed) / 1000))}s`;
+    if (state.elapsed >= state.duration) return showNextStory(true);
+    state.raf = requestAnimationFrame(tick);
+  };
+  state.raf = requestAnimationFrame(tick);
+}
+
+function renderCurrentStory() {
+  stopStoryPlayback();
+  if (storyIndex < 0 || storyIndex >= storySequence.length) return closeStoryViewer();
+  const item = storySequence[storyIndex];
+  const isAd = item.kind === 'ad';
+  const owner = isAd ? item.advertiser : item.owner;
+  renderStoryProgress();
+  $('story-viewer-avatar').innerHTML = avatarHTML(owner || { id: 'vchat', username: 'Vchat', avatar: '💬' }, 40);
+  $('story-viewer-name').textContent = owner?.username || 'Vchat';
+  $('story-viewer-time').textContent = isAd ? 'Promoted story' : rowTime(item.createdAt);
+  $('story-sponsored').hidden = !isAd;
+  $('story-ad-countdown').hidden = !isAd;
+  $('story-delete').hidden = isAd || !item.mine;
+  $('story-save').hidden = isAd || item.mine || item.canSave !== true;
+  $('story-save').title = item.canSave === true
+    ? 'Save a copy permitted by the Status owner'
+    : 'The Status owner has not enabled saving';
+  $('story-insight').hidden = isAd || !item.mine;
+  $('story-insight').textContent = item.mine ? `${Number(item.viewCount) || 0} view${Number(item.viewCount) === 1 ? '' : 's'} · ${Number(item.reactionCount) || 0} reactions` : '';
+  $('story-reactions').hidden = isAd || item.mine;
+  $('story-reactions').innerHTML = isAd || item.mine ? '' : storyReactions.map(reaction => `<button class="story-reaction${item.myReaction === reaction ? ' selected' : ''}" type="button" data-reaction="${reaction}" aria-label="React ${reaction}">${reaction}</button>`).join('');
+  $('story-reactions').querySelectorAll('.story-reaction').forEach(button => {
+    button.onclick = () => reactToStory(item, button.dataset.reaction);
+  });
+
+  const cta = $('story-ad-cta');
+  const destination = isAd && /^https?:\/\//i.test(item.destinationUrl || '') ? item.destinationUrl : null;
+  const internalAction = isAd && ['profile_visits', 'messages'].includes(item.objective)
+    && item.advertiser?.id && item.advertiser.id !== me.id;
+  cta.hidden = !destination && !internalAction;
+  cta.textContent = item.cta || (item.objective === 'messages' ? 'Send message' : 'Learn more');
+  cta.href = destination || '#';
+  cta.target = destination ? '_blank' : '';
+  cta.onclick = destination ? () => {
+    api(`/api/story-ads/${encodeURIComponent(item.id)}/click`, {}).catch(() => {});
+  } : (internalAction ? event => {
+    event.preventDefault();
+    api(`/api/story-ads/${encodeURIComponent(item.id)}/click`, {}).catch(() => {});
+    closeStories();
+    socket.emit('chat:startDM', { targetUserId: item.advertiser.id }, result => {
+      if (result?.error) return toast(result.error);
+      if (!result?.chat) return;
+      openChat(result.chat.id);
+      if (item.objective === 'profile_visits') {
+        if (item.advertiser.accountType === 'business') openBusinessPage(item.advertiser.id);
+        else setTimeout(openDrawer, 0);
+      }
+    });
+  } : null);
+
+  const stage = $('story-stage');
+  stage.innerHTML = '';
+  if (item.type === 'image' && item.mediaUrl) {
+    const image = el('img', 'story-stage-media');
+    image.alt = item.text || `${owner?.username || 'Contact'} status`;
+    image.src = item.mediaUrl;
+    stage.appendChild(image);
+    if (item.text) stage.appendChild(el('div', 'story-stage-caption', esc(item.text)));
+    startStoryPlayback(isAd ? 30000 : 6500);
+  } else if (item.type === 'video' && item.mediaUrl) {
+    const video = el('video', 'story-stage-media');
+    video.src = item.mediaUrl;
+    video.playsInline = true;
+    video.preload = lite ? 'none' : 'metadata';
+    video.loop = isAd;
+    video.onloadedmetadata = () => {
+      const normalDuration = Number.isFinite(video.duration) ? Math.min(60000, Math.max(3000, video.duration * 1000)) : 10000;
+      if (!isAd) startStoryPlayback(normalDuration);
+      if (storyPlayback?.paused) video.pause();
+      else video.play().catch(() => { video.controls = true; });
+    };
+    video.onerror = () => toast('This status video is unavailable');
+    stage.appendChild(video);
+    if (item.text) stage.appendChild(el('div', 'story-stage-caption', esc(item.text)));
+    startStoryPlayback(isAd ? 30000 : 10000);
+  } else {
+    const headline = isAd && item.headline ? `<div>${esc(item.headline)}</div>` : '';
+    const detail = item.text ? `<small>${esc(item.text)}</small>` : '';
+    const text = el('div', `story-stage-text ${storyBackgroundClass(item.background)}`, `${headline || (!isAd ? esc(item.text) : '')}${isAd ? detail : ''}`);
+    stage.appendChild(text);
+    startStoryPlayback(isAd ? 30000 : 6500);
+  }
+
+  if (isAd) {
+    api(`/api/story-ads/${encodeURIComponent(item.id)}/impression`, {}).catch(() => {});
+  } else if (!item.mine) {
+    api(`/api/stories/${encodeURIComponent(item.id)}/view`, {}).then(({ ok, data }) => {
+      if (ok && storySequence[storyIndex]?.id === item.id) Object.assign(item, data.story || {}, { seen: true });
+    }).catch(() => {});
+  }
+}
+
+function showNextStory(adFinished = false) {
+  if (storySequence[storyIndex]?.kind === 'ad' && !adFinished) {
+    toast(`Sponsored story · ${$('story-ad-countdown').textContent || '30s'} remaining`);
+    return;
+  }
+  if (storyIndex >= storySequence.length - 1) {
+    closeStoryViewer();
+    loadStories({ quiet: true });
+    return;
+  }
+  storyIndex += 1;
+  renderCurrentStory();
+}
+
+function showPreviousStory() {
+  if (storySequence[storyIndex]?.kind === 'ad') {
+    toast(`Sponsored story · ${$('story-ad-countdown').textContent || '30s'} remaining`);
+    return;
+  }
+  if (storyIndex <= 0) return;
+  storyIndex -= 1;
+  renderCurrentStory();
+}
+
+async function reactToStory(item, reaction) {
+  const desired = item.myReaction === reaction ? null : reaction;
+  const { ok, data } = await api(`/api/stories/${encodeURIComponent(item.id)}/reaction`, { reaction: desired }, { method: 'PUT' });
+  if (!ok) return toast(data.error || 'Could not send reaction');
+  Object.assign(item, data.story || {});
+  renderCurrentStory();
+  toast(desired ? `Reacted ${desired}` : 'Reaction removed');
+}
+
+async function saveCurrentStory() {
+  const item = storySequence[storyIndex];
+  if (!item || item.kind === 'ad' || item.mine || item.canSave !== true) {
+    return toast('The Status owner has not allowed saving');
+  }
+  const button = $('story-save');
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/stories/${encodeURIComponent(item.id)}/save`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || 'Saving is no longer allowed');
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition') || '';
+    const matchedName = disposition.match(/filename="?([^";]+)"?/i)?.[1];
+    const extension = item.type === 'text' ? 'txt'
+      : item.mimeType === 'image/png' ? 'png'
+        : item.mimeType === 'image/webp' ? 'webp'
+          : item.mimeType === 'image/jpeg' ? 'jpg'
+            : item.mimeType === 'video/webm' ? 'webm'
+              : item.mimeType === 'video/quicktime' ? 'mov' : 'mp4';
+    const url = URL.createObjectURL(blob);
+    const download = el('a');
+    download.href = url;
+    download.download = matchedName || `vchat-status-${item.id}.${extension}`;
+    document.body.appendChild(download);
+    download.click();
+    download.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast('Status saved with the owner’s permission');
+  } catch (error) {
+    toast(error.message || 'Could not save this Status');
+    loadStories({ quiet: true }).catch(() => {});
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function deleteCurrentStory() {
+  const item = storySequence[storyIndex];
+  if (!item?.mine || !confirm('Delete this status?')) return;
+  const { ok, data } = await api(`/api/stories/${encodeURIComponent(item.id)}`, {}, { method: 'DELETE' });
+  if (!ok) return toast(data.error || 'Could not delete status');
+  toast('Status deleted');
+  closeStoryViewer();
+  loadStories();
+}
+
+function cleanupStoryComposer() {
+  storyUploadRequest?.abort();
+  storyUploadRequest = null;
+  storyPublishing = false;
+  if (storyPreviewUrl) URL.revokeObjectURL(storyPreviewUrl);
+  storyPreviewUrl = null;
+  storyFile = null;
+  $('story-file-input').value = '';
+}
+
+function updateStoryComposePreview() {
+  const preview = $('story-compose-preview');
+  preview.className = `story-compose-preview ${storyBackgroundClass(storyBackground)}`;
+  preview.innerHTML = '';
+  if (storyFile) {
+    const media = document.createElement(storyFile.type.startsWith('video/') ? 'video' : 'img');
+    media.src = storyPreviewUrl;
+    if (media.tagName === 'VIDEO') { media.muted = true; media.loop = true; media.autoplay = true; media.playsInline = true; }
+    media.alt = '';
+    preview.appendChild(media);
+  } else {
+    const text = $('story-text').value.trim();
+    preview.textContent = text || 'Write a status or choose a photo or video';
+  }
+}
+
+function openStoryComposer() {
+  cleanupStoryComposer();
+  storyBackground = 'jade';
+  $('story-text').value = '';
+  $('story-file-name').textContent = '';
+  $('story-media-remove').hidden = true;
+  $('story-allow-save').checked = false;
+  $('story-boost-toggle').checked = false;
+  $('story-boost-fields').hidden = true;
+  $('boost-objective').value = 'profile_visits';
+  $('boost-url-row').hidden = true;
+  $('boost-url').value = '';
+  $('boost-budget').value = '30';
+  $('boost-days').value = '7';
+  $('boost-email').value = '';
+  $('story-publish-status').textContent = '';
+  $('story-publish').disabled = false;
+  document.querySelectorAll('[data-story-color]').forEach(button => button.classList.toggle('selected', button.dataset.storyColor === 'jade'));
+  updateStoryBoostDisclosure();
+  updateBoostEstimate();
+  updateStoryComposePreview();
+  openModal('modal-story-compose');
+}
+
+function chooseStoryMedia(file) {
+  if (!file) return;
+  const supported = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/quicktime', 'video/webm'];
+  if (!supported.includes(file.type) || file.size > storyMaxBytes) return toast(`Choose a supported photo or video up to ${fileSize(storyMaxBytes)}`);
+  if (storyPreviewUrl) URL.revokeObjectURL(storyPreviewUrl);
+  storyFile = file;
+  storyPreviewUrl = URL.createObjectURL(file);
+  $('story-file-name').textContent = `${file.name} · ${fileSize(file.size)}`;
+  $('story-media-remove').hidden = false;
+  updateStoryComposePreview();
+}
+
+function removeStoryMedia() {
+  if (storyPreviewUrl) URL.revokeObjectURL(storyPreviewUrl);
+  storyPreviewUrl = null;
+  storyFile = null;
+  $('story-file-input').value = '';
+  $('story-file-name').textContent = '';
+  $('story-media-remove').hidden = true;
+  updateStoryComposePreview();
+}
+
+function updateStoryBoostDisclosure() {
+  $('story-boost-disclosure').textContent = storyPaymentConfigured
+    ? 'Boosts require ad review and confirmed payment before delivery. Posting your normal status does not depend on approval.'
+    : 'Billing is not configured. Your status can still post, but this boost will not deliver unless an authorized administrator intentionally grants account credit.';
+}
+
+function updateBoostEstimate() {
+  const budget = Math.max(0, Number($('boost-budget').value) || 0);
+  const days = Math.max(1, Number($('boost-days').value) || 1);
+  $('boost-estimate').textContent = `Pilot reservation: GHS ${budget.toLocaleString()} for up to ${days} day${days === 1 ? '' : 's'} after activation. No delivery forecast or result is guaranteed.`;
+}
+
+async function publishStory() {
+  if (storyPublishing) return;
+  const text = $('story-text').value.trim();
+  const boosted = $('story-boost-toggle').checked;
+  const status = $('story-publish-status');
+  if (!storyFile && !text) { status.textContent = 'Write something or choose a photo or video.'; return; }
+  if (boosted) {
+    if (!/^\S+@\S+\.\S+$/.test($('boost-email').value.trim())) { status.textContent = 'Enter a billing email for your boost.'; return; }
+    if ($('boost-objective').value === 'website_visits' && !/^https?:\/\//i.test($('boost-url').value.trim())) { status.textContent = 'Enter a complete http or https website address.'; return; }
+    const budget = Number($('boost-budget').value);
+    if (!Number.isFinite(budget) || budget < 10 || budget > 10000) { status.textContent = 'Choose a budget from GHS 10 to GHS 10,000.'; return; }
+  }
+  const form = new FormData();
+  form.append('type', storyFile ? (storyFile.type.startsWith('video/') ? 'video' : 'image') : 'text');
+  form.append('text', text);
+  form.append('background', storyBackground);
+  form.append('allowSave', String($('story-allow-save').checked));
+  if (storyFile) form.append('media', storyFile, storyFile.name);
+  form.append('boost', String(boosted));
+  if (boosted) {
+    form.append('objective', $('boost-objective').value);
+    form.append('cta', $('boost-cta').value);
+    form.append('destinationUrl', $('boost-url').value.trim());
+    form.append('adAudience', $('boost-audience').value);
+    form.append('budgetGhs', $('boost-budget').value);
+    form.append('durationDays', $('boost-days').value);
+    form.append('billingEmail', $('boost-email').value.trim());
+  }
+  const request = new XMLHttpRequest();
+  storyUploadRequest = request;
+  storyPublishing = true;
+  $('story-publish').disabled = true;
+  status.style.color = 'var(--text-secondary)';
+  status.textContent = 'Publishing securely… 0%';
+  try {
+    const data = await new Promise((resolve, reject) => {
+      request.open('POST', '/api/stories');
+      request.withCredentials = true;
+      request.responseType = 'json';
+      request.upload.onprogress = event => {
+        if (event.lengthComputable) status.textContent = `Publishing securely… ${Math.min(99, Math.round((event.loaded / event.total) * 100))}%`;
+      };
+      request.onerror = () => reject(new Error('Network error while publishing'));
+      request.onabort = () => reject(Object.assign(new Error('Publishing cancelled'), { name: 'AbortError' }));
+      request.onload = () => {
+        const body = request.response && typeof request.response === 'object' ? request.response : {};
+        if (request.status >= 200 && request.status < 300) resolve(body);
+        else reject(new Error(body.error || 'Could not publish status'));
+      };
+      request.send(form);
+    });
+    storyUploadRequest = null;
+    storyPublishing = false;
+    closeModal('modal-story-compose');
+    await loadStories();
+    if (data.boostError) toast(data.boostError);
+    else toast(data.campaign ? 'Status posted · boost saved for review and payment' : 'Status posted');
+    if (data.payment?.authorizationUrl && confirm('Your status is live. Continue to ValmontPay to pay for this boost?')) {
+      location.assign(data.payment.authorizationUrl);
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') return;
+    storyUploadRequest = null;
+    storyPublishing = false;
+    $('story-publish').disabled = false;
+    status.style.color = 'var(--danger)';
+    status.textContent = error.message || 'Could not publish status';
+  }
+}
+
+function campaignStatusLabel(status) {
+  return String(status || 'pending').replaceAll('_', ' ');
+}
+
+function campaignCard(campaign, admin = false) {
+  const card = el('article', 'campaign-card');
+  const advertiser = admin ? `<p>Advertiser: <strong>${esc(campaign.advertiser?.username || 'Unknown')}</strong></p>` : '';
+  const payment = campaign.paymentStatus ? `<p>Payment: ${esc(campaignStatusLabel(campaign.paymentStatus))} · Review: ${esc(campaignStatusLabel(campaign.reviewStatus))}</p>` : '';
+  card.innerHTML = `<div class="campaign-card-head"><div><h3>${esc(campaign.text || 'Media status promotion')}</h3>${advertiser}<p>${esc(campaign.objective?.replaceAll('_', ' ') || 'Sponsored status')} · GHS ${Number(campaign.budgetGhs || 0).toFixed(2)} · ${Number(campaign.durationDays) || 0} day${Number(campaign.durationDays) === 1 ? '' : 's'}</p>${payment}</div><span class="campaign-state ${esc(campaign.status)}">${esc(campaignStatusLabel(campaign.status))}</span></div><div class="campaign-metrics"><div class="campaign-metric"><strong>${Number(campaign.reachCount) || 0}</strong><span>Reach</span></div><div class="campaign-metric"><strong>${Number(campaign.impressionCount) || 0}</strong><span>Impressions</span></div><div class="campaign-metric"><strong>${Number(campaign.clickCount) || 0}</strong><span>Clicks</span></div></div>`;
+  const actions = el('div', 'campaign-actions');
+  if (!admin && campaign.status === 'active') {
+    const pause = el('button', '', 'Pause delivery');
+    pause.type = 'button';
+    pause.onclick = () => controlStoryCampaign(campaign.id, 'pause');
+    actions.appendChild(pause);
+  }
+  if (!admin && campaign.status === 'paused') {
+    const resume = el('button', '', 'Resume delivery');
+    resume.type = 'button';
+    resume.onclick = () => controlStoryCampaign(campaign.id, 'resume');
+    actions.appendChild(resume);
+  }
+  if (!admin && !['completed', 'expired', 'rejected', 'stopped'].includes(campaign.status)) {
+    const stop = el('button', '', 'Stop campaign');
+    stop.type = 'button';
+    stop.onclick = () => controlStoryCampaign(campaign.id, 'stop');
+    actions.appendChild(stop);
+  }
+  if (!admin && campaign.checkoutUrl && !['paid', 'waived'].includes(campaign.paymentStatus)) {
+    const pay = el('a', '', 'Continue secure payment');
+    pay.href = campaign.checkoutUrl;
+    pay.rel = 'noopener noreferrer';
+    actions.appendChild(pay);
+  } else if (!admin && storyPaymentConfigured && ['failed', 'configuration_required'].includes(campaign.paymentStatus)
+      && !['completed', 'expired', 'rejected', 'stopped'].includes(campaign.status)) {
+    const retry = el('button', '', 'Start ValmontPay checkout');
+    retry.type = 'button';
+    retry.onclick = () => initializeStoryBoostPayment(campaign.id, retry);
+    actions.appendChild(retry);
+  }
+  if (campaign.reviewNote) actions.appendChild(el('span', '', `Review note: ${esc(campaign.reviewNote)}`));
+  if (campaign.reviewer) {
+    const reviewedWhen = campaign.reviewedAt ? ` · ${esc(new Date(campaign.reviewedAt).toLocaleString())}` : '';
+    actions.appendChild(el('span', '', `Reviewed by ${esc(campaign.reviewer.username || 'administrator')}${reviewedWhen}`));
+  }
+  if (campaign.stopNote || campaign.stopActor) {
+    const stoppedWhen = campaign.stoppedAt ? ` · ${esc(new Date(campaign.stoppedAt).toLocaleString())}` : '';
+    const stoppedBy = campaign.stopActor?.username ? ` by ${esc(campaign.stopActor.username)}` : '';
+    actions.appendChild(el('span', '', `Stopped${stoppedBy}${stoppedWhen}${campaign.stopNote ? ` · ${esc(campaign.stopNote)}` : ''}`));
+  }
+  if (admin && ['active', 'paused'].includes(campaign.status)) {
+    const stop = el('button', '', 'Stop delivery');
+    stop.type = 'button';
+    stop.onclick = () => controlStoryCampaign(campaign.id, 'stop', true);
+    actions.appendChild(stop);
+  }
+  if (admin && campaign.reviewStatus === 'pending' && campaign.status !== 'stopped') {
+    const approve = el('button', '', 'Approve');
+    approve.onclick = () => reviewCampaign(campaign.id, 'approve', false);
+    const reject = el('button', '', 'Reject');
+    reject.onclick = () => reviewCampaign(campaign.id, 'reject', false);
+    actions.appendChild(approve);
+    if (campaign.paymentStatus !== 'paid') {
+      const credit = el('button', '', 'Approve with account credit');
+      credit.onclick = () => reviewCampaign(campaign.id, 'approve', true);
+      actions.appendChild(credit);
+    }
+    actions.appendChild(reject);
+  }
+  if (actions.childNodes.length) card.appendChild(actions);
+  return card;
+}
+
+async function initializeStoryBoostPayment(campaignId, button) {
+  button.disabled = true;
+  const { ok, data } = await api(
+    `/api/story-ads/${encodeURIComponent(campaignId)}/payment/initialize`,
+    {},
+    { method: 'POST' },
+  );
+  if (!ok) {
+    button.disabled = false;
+    return toast(data.error || 'ValmontPay checkout could not be started');
+  }
+  if (!data.payment?.authorizationUrl) {
+    button.disabled = false;
+    return toast('ValmontPay did not return a checkout address');
+  }
+  location.assign(data.payment.authorizationUrl);
+}
+
+async function controlStoryCampaign(campaignId, action, asAdmin = false) {
+  let note = '';
+  if (asAdmin) {
+    note = prompt('Safety reason shown to the advertiser:', 'Advertising policy or safety action');
+    if (note == null || !note.trim()) return;
+  } else {
+    const warning = action === 'stop'
+      ? 'Stop this campaign permanently? This does not automatically issue a payment refund.'
+      : `${action === 'pause' ? 'Pause' : 'Resume'} this campaign?`;
+    if (!confirm(warning)) return;
+  }
+  const { ok, data } = await api(
+    `/api/story-ads/${encodeURIComponent(campaignId)}/control`,
+    { action, note },
+    { method: 'PUT' },
+  );
+  if (!ok) return toast(data.error || 'Could not update campaign delivery');
+  toast(`Campaign ${campaignStatusLabel(data.campaign.status)}`);
+  if (asAdmin) await openStoryReview();
+  else await openStoryBoosts();
+}
+
+async function openStoryBoosts() {
+  openModal('modal-story-boosts');
+  $('story-campaign-list').innerHTML = '<div class="empty-list">Loading boosts…</div>';
+  const { ok, data } = await api('/api/story-ads/campaigns');
+  if (!ok) { $('story-campaign-list').innerHTML = `<div class="empty-list">${esc(data.error || 'Could not load boosts')}</div>`; return; }
+  const list = $('story-campaign-list');
+  list.innerHTML = '';
+  if (!data.campaigns?.length) list.innerHTML = '<div class="empty-list">No boosted status posts yet.</div>';
+  else data.campaigns.forEach(campaign => list.appendChild(campaignCard(campaign)));
+}
+
+async function openStoryReview() {
+  if (!storyAdAdmin) return;
+  openModal('modal-story-review');
+  $('story-review-list').innerHTML = '<div class="empty-list">Loading review queue…</div>';
+  const { ok, data } = await api('/api/story-ads/review');
+  if (!ok) { $('story-review-list').innerHTML = `<div class="empty-list">${esc(data.error || 'Could not load review queue')}</div>`; return; }
+  const list = $('story-review-list');
+  list.innerHTML = '';
+  if (!data.campaigns?.length) list.innerHTML = '<div class="empty-list">No campaigns to review.</div>';
+  else data.campaigns.forEach(campaign => list.appendChild(campaignCard(campaign, true)));
+}
+
+async function reviewCampaign(id, decision, waivePayment) {
+  const message = waivePayment
+    ? 'Granting account credit intentionally waives payment and may activate this ad. Continue?'
+    : `${decision === 'approve' ? 'Approve' : 'Reject'} this campaign?`;
+  if (!confirm(message)) return;
+  let note = '';
+  if (waivePayment) note = prompt('Required account-credit authorization reason:', 'Approved promotional account credit');
+  else if (decision === 'reject') note = prompt('Reason shown to the advertiser:', 'Creative does not meet advertising policy');
+  if ((waivePayment || decision === 'reject') && (note == null || !note.trim())) return;
+  const { ok, data } = await api(`/api/story-ads/${encodeURIComponent(id)}/review`, { decision, waivePayment, note }, { method: 'PUT' });
+  if (!ok) return toast(data.error || 'Could not review campaign');
+  toast(waivePayment ? 'Approved with documented account credit' : `Campaign ${decision}d`);
+  openStoryReview();
+}
+
+async function verifyReturnedBoostPayment() {
+  const params = new URLSearchParams(location.search);
+  if (params.get('boost_return') !== '1') return;
+  const reference = params.get('reference') || params.get('ref');
+  params.delete('boost_return');
+  params.delete('reference');
+  params.delete('ref');
+  params.delete('status');
+  params.delete('merchant');
+  const remaining = params.toString();
+  history.replaceState({}, '', `${location.pathname}${remaining ? `?${remaining}` : ''}${location.hash}`);
+  if (!reference) return toast('Returned from checkout without a payment reference');
+  const { ok, data } = await api(`/api/story-ads/payment/verify?reference=${encodeURIComponent(reference)}`);
+  toast(ok ? 'Boost payment confirmed. Delivery starts after ad review.' : (data.error || 'Payment could not be verified'));
+  if (ok) openStoryBoosts();
 }
 
 // ── Main menu ──────────────────────────────────────────────────────────
 function mainMenu(e) {
   showCtxMenu(e, [
     { label: 'New group', fn: openNewGroup },
+    { label: 'Status updates', fn: openStories },
+    { label: document.body.classList.contains('reels-open') ? 'Close reels' : 'Reels · scroll while chatting', fn: toggleReels },
     { label: 'Profile', fn: openProfile },
-    { label: 'Chat wallpaper', fn: openWallpaper },
+    ...(me?.accountType === 'business' ? [{ label: 'Business page & dashboard', fn: () => openBusinessPage(me.id) }] : []),
+    { label: 'Privacy & security', fn: openPrivacy },
+    { label: 'Notifications & media', fn: openNotifications },
     { label: 'Archived', fn: () => setFilter('archived') },
     { label: 'Call quality', fn: openCallQuality },
+    { label: 'Install app', fn: installApp },
     { label: lite ? 'Lite mode: on' : 'Lite mode: off', fn: openLiteMode },
     { sep: true },
     { label: document.body.classList.contains('dark') ? 'Light mode' : 'Dark mode', fn: toggleTheme },
     { sep: true },
     { label: 'Log out', danger: true, fn: async () => {
-      const token = localStorage.getItem('vchat.token');
       localStorage.removeItem('vchat.token');
-      try { await api('/api/auth/logout', { token }); } catch { /* offline */ }
+      await clearPrivateOutbox(me?.id).catch(() => {});
+      teardown();
+      try { await api('/api/auth/logout', {}); } catch { /* offline */ }
       location.reload();
     } },
   ]);
@@ -2092,18 +4433,49 @@ function mainMenu(e) {
 function chatMenu(e) {
   const c = activeChat();
   if (!c) return;
+  const canManagePrivacy = c.type !== 'group' || (c.admins || []).includes(me.id);
   showCtxMenu(e, [
     { label: c.type === 'group' ? 'Group info' : 'Contact info', fn: openDrawer },
-    { label: 'Wallpaper', fn: openWallpaper },
     { label: c.muted ? 'Unmute notifications' : 'Mute notifications', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'muted', value: !c.muted }) },
+    { label: c.pinned ? 'Unpin chat' : 'Pin chat', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'pinned', value: !c.pinned }) },
+    { label: c.favorite ? 'Remove from Favorites' : 'Add to Favorites', fn: () => socket.emit('chat:flag', { chatId: c.id, flag: 'favorite', value: !c.favorite }) },
     { label: c.archived ? 'Unarchive chat' : 'Archive chat', fn: () => { socket.emit('chat:flag', { chatId: c.id, flag: 'archived', value: !c.archived }); closeChat(); } },
+    { label: c.locked ? 'Remove chat lock' : 'Lock and hide chat', fn: () => toggleChatLock(c) },
+    ...(canManagePrivacy ? [{ label: 'Disappearing messages', fn: () => chooseDisappearing(c) }] : []),
+    ...(canManagePrivacy ? [{
+      label: c.advancedPrivacy ? 'Turn off advanced chat privacy' : 'Turn on advanced chat privacy',
+      fn: () => {
+        const enabled = !c.advancedPrivacy;
+        const detail = enabled
+          ? 'This limits forwarding and attachment downloads from this chat. Turn it on?'
+          : 'Allow forwarding and attachment downloads from this chat again?';
+        if (!confirm(detail)) return;
+        socket.emit('chat:setAdvancedPrivacy', { chatId: c.id, enabled }, result => result?.error && toast(result.error));
+      },
+    }] : []),
     { sep: true },
     { label: 'Clear messages', danger: true, fn: () => { if (confirm('Clear all messages?')) socket.emit('chat:clear', { chatId: c.id }); } },
     ...(c.id !== 'general' ? [{ label: c.type === 'group' ? 'Exit group' : 'Delete chat', danger: true, fn: () => { if (confirm('Are you sure?')) socket.emit('chat:leave', { chatId: c.id }); } }] : []),
   ]);
 }
 
-function setFilter(f) {
+function chooseDisappearing(chat) {
+  const answer = prompt('Disappearing messages: enter 0 (off), 1 (day), 7 (days), or 90 (days)', String((chat.disappearingSeconds || 0) / 86400));
+  if (answer == null) return;
+  const days = Number(answer);
+  if (![0, 1, 7, 90].includes(days)) return toast('Choose 0, 1, 7, or 90 days');
+  socket.emit('chat:setDisappearing', { chatId: chat.id, seconds: days * 86400 }, result => {
+    if (result?.error) toast(result.error);
+  });
+}
+
+async function setFilter(f) {
+  if (f === 'locked' && !chatLockIsUnlocked()) {
+    const usePasskey = Number(me?.chatLockPasskeyCount) > 0
+      && confirm('Unlock locked chats with your device passkey? Choose Cancel to use the separate chat-lock PIN.');
+    const unlocked = usePasskey ? await unlockChatLockWithPasskey() : await unlockChatLockWithPin();
+    if (!unlocked) return;
+  }
   filter = f;
   document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.filter === f));
   renderChatList();
@@ -2115,9 +4487,15 @@ function toggleTheme() {
 }
 
 // ── Calls (WebRTC) ─────────────────────────────────────────────────────
-const ICE_SERVERS = [
-  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+let ICE_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302'] },
 ];
+async function refreshIceServers() {
+  try {
+    const { ok, data } = await api('/api/calls/ice');
+    if (ok && Array.isArray(data.iceServers) && data.iceServers.length) ICE_SERVERS = data.iceServers;
+  } catch { /* STUN fallback remains available */ }
+}
 
 let call = null;        // { id, chatId, peer, media, role, state }
 let pc = null;          // RTCPeerConnection
@@ -2131,24 +4509,27 @@ function callSupported() {
   return !!(window.RTCPeerConnection && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 }
 
-function callTone(kind) {
+function callTone(kind, force = false) {
   callToneStop();
+  if (!force && !notificationPrefs.callSounds) return;
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx.resume?.();
     const ctx = audioCtx;
     const gain = ctx.createGain();
     gain.gain.value = kind === 'ring' ? 0.05 : 0.035;
     gain.connect(ctx.destination);
+    const ringtone = notificationPrefs.ringtone;
     const beat = () => {
       const o = ctx.createOscillator();
       const g = ctx.createGain();
-      o.type = 'sine';
-      o.frequency.value = kind === 'ring' ? 520 : 440;
+      o.type = ringtone === 'pulse' ? 'square' : 'sine';
+      o.frequency.value = kind !== 'ring' ? 440 : ({ classic: 520, gentle: 392, pulse: 660 }[ringtone] || 520);
       o.connect(g); g.connect(gain);
       g.gain.setValueAtTime(0.0001, ctx.currentTime);
       g.gain.exponentialRampToValueAtTime(1, ctx.currentTime + 0.05);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.9);
-      o.start(); o.stop(ctx.currentTime + 0.95);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + (ringtone === 'gentle' ? 1.15 : 0.9));
+      o.start(); o.stop(ctx.currentTime + 1.2);
     };
     beat();
     ringTone = { gain, timer: setInterval(beat, kind === 'ring' ? 2400 : 3000) };
@@ -2268,6 +4649,7 @@ function attachLocal(stream) {
 }
 
 async function startCall(media) {
+  pauseReelVideos();
   const c = activeChat();
   if (!c) return;
   if (c.type !== 'dm') return toast('Calls are one-to-one only');
@@ -2297,8 +4679,10 @@ async function startCall(media) {
 
 function onCallIncoming({ callId, chatId, media, from }) {
   if (call) return;  // server guards this, belt & braces
+  pauseReelVideos();
   call = { id: callId, chatId, peer: from, media, role: 'callee', state: 'ringing' };
   ringShow(from, media);
+  showCallNotification(from, media);
   callTone('ring');
 }
 
@@ -2316,6 +4700,7 @@ async function acceptCall() {
   attachLocal(stream);
   callShow(call.peer, call.media, 'Connecting…');
   callToneStop();
+  closeCallNotification();
 
   pc = makePeer(call.id);
   stream.getTracks().forEach(t => pc.addTrack(t, stream));
@@ -2406,6 +4791,7 @@ function hangUp() {
 
 function teardown() {
   callToneStop();
+  closeCallNotification();
   ringHide();
   callHide();
   if (pc) { try { pc.close(); } catch (_) {} pc = null; }
@@ -2628,6 +5014,46 @@ function wire() {
   $('btn-menu').onclick = mainMenu;
   $('btn-back').onclick = closeChat;
   $('btn-chat-menu').onclick = chatMenu;
+  $('btn-stories').onclick = openStories;
+  $('stories-close').onclick = closeStories;
+  $('story-viewer-close').onclick = closeStoryViewer;
+  $('story-create-button').onclick = openStoryComposer;
+  $('story-empty-create').onclick = openStoryComposer;
+  $('story-boosts-button').onclick = openStoryBoosts;
+  $('story-review-button').onclick = openStoryReview;
+  $('story-prev').onclick = showPreviousStory;
+  $('story-next').onclick = () => showNextStory();
+  $('story-delete').onclick = deleteCurrentStory;
+  $('story-save').onclick = saveCurrentStory;
+  $('story-pause').onclick = toggleStoryPlayback;
+  $('story-media-button').onclick = () => { $('story-file-input').value = ''; $('story-file-input').click(); };
+  $('story-file-input').onchange = event => chooseStoryMedia(event.target.files?.[0]);
+  $('story-media-remove').onclick = removeStoryMedia;
+  $('story-text').oninput = updateStoryComposePreview;
+  $('story-boost-toggle').onchange = event => { $('story-boost-fields').hidden = !event.target.checked; };
+  $('boost-objective').onchange = event => { $('boost-url-row').hidden = event.target.value !== 'website_visits'; };
+  $('boost-budget').oninput = updateBoostEstimate;
+  $('boost-days').onchange = updateBoostEstimate;
+  $('story-publish').onclick = publishStory;
+  document.querySelectorAll('[data-story-color]').forEach(button => {
+    button.onclick = () => {
+      storyBackground = button.dataset.storyColor;
+      document.querySelectorAll('[data-story-color]').forEach(choice => choice.classList.toggle('selected', choice === button));
+      updateStoryComposePreview();
+    };
+  });
+  $('btn-reels').onclick = toggleReels;
+  $('btn-reels-chat').onclick = toggleReels;
+  $('reels-close').onclick = closeReels;
+  $('reel-upload-button').onclick = chooseReelFile;
+  $('reel-file-input').onchange = event => prepareReelUpload(event.target.files?.[0]);
+  $('reel-publish').onclick = publishReel;
+  $('reels-feed').addEventListener('scroll', () => {
+    const feed = $('reels-feed');
+    if (!reelsLoading && !reelsExhausted && feed.scrollHeight - feed.scrollTop < feed.clientHeight * 2.25) {
+      loadReels(false, true);
+    }
+  }, { passive: true });
   $('btn-call-voice').onclick = () => startCall('audio');
   $('btn-call-video').onclick = () => startCall('video');
   $('call-hangup').onclick = () => hangUp();
@@ -2637,13 +5063,60 @@ function wire() {
   wireRatingStars();
   $('ring-decline').onclick = () => declineCall();
   document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape' || !call) return;
-    if ($('ring').classList.contains('on')) declineCall();
+    const storyViewerOpen = !$('story-viewer').hidden;
+    if (storyViewerOpen && e.key === 'Tab') {
+      const controls = [...$('story-viewer').querySelectorAll('button:not([hidden]):not([disabled]), a[href]:not([hidden])')];
+      if (!controls.length) {
+        e.preventDefault();
+        $('story-viewer').focus();
+        return;
+      }
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === $('story-viewer'))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+      return;
+    }
+    if (storyViewerOpen && e.key === 'ArrowLeft') {
+      e.preventDefault();
+      showPreviousStory();
+      return;
+    }
+    if (storyViewerOpen && e.key === 'ArrowRight') {
+      e.preventDefault();
+      showNextStory();
+      return;
+    }
+    if (storyViewerOpen && e.key === ' ' && e.target.closest?.('#story-stage')) {
+      e.preventDefault();
+      toggleStoryPlayback();
+      return;
+    }
+    if (e.key !== 'Escape') return;
+    if (!$('view-once-viewer').hidden) closeViewOnce();
+    else if (call && $('ring').classList.contains('on')) declineCall();
+    else if ($('modal-story-compose').classList.contains('show')) closeModal('modal-story-compose');
+    else if (storyViewerOpen) closeStoryViewer();
+    else if ($('stories-screen').classList.contains('open')) closeStories();
+    else if ($('modal-reel-upload').classList.contains('show')) closeModal('modal-reel-upload');
+    else if (document.body.classList.contains('reels-open')) closeReels();
   });
 
   $('btn-chat-search').onclick = () => { $('search-input').focus(); if (window.innerWidth <= 900) closeChat(); };
   $('peer-open').onclick = openDrawer;
   $('drawer-close').onclick = () => $('drawer').classList.remove('open');
+  $('view-once-close').onclick = closeViewOnce;
+
+  $('chat-lock-pin').onclick = setChatLockPin;
+  $('chat-lock-unlock').onclick = unlockChatLockWithPin;
+  $('chat-lock-now').onclick = lockChatsNow;
+  $('chat-lock-passkey-add').onclick = addChatLockPasskey;
+  $('chat-lock-passkey-unlock').onclick = unlockChatLockWithPasskey;
 
   $('search-input').oninput = e => {
     searchQuery = e.target.value.trim();
@@ -2689,14 +5162,6 @@ function wire() {
     };
   });
   $('file-input').onchange = e => { const f = e.target.files[0]; if (f) uploadFile(f); };
-  $('wp-file').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) onWallpaperFile(f); };
-  $('wp-dim').oninput = e => {
-    const dim = Number(e.target.value) || 40;
-    const prev = loadWallpaper();
-    if (prev.id !== 'custom') return;
-    saveWallpaper({ ...prev, dim });
-    applyWallpaper();
-  };
 
   $('messages').addEventListener('scroll', () => {
     if (nearBottom()) { $('jump-btn').classList.remove('show'); $('jump-n').style.display = 'none'; $('jump-n').textContent = ''; }
@@ -2720,12 +5185,18 @@ function wire() {
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────
-loadOutbox();
+// Delete the pre-hardening browser-global plaintext queue. It is intentionally
+// not migrated because it cannot be safely attributed to an account.
+localStorage.removeItem('vchat.outbox');
 document.body.classList.toggle('lite', lite);
-applyWallpaper();
 // The browser tells us before the socket does.
 window.addEventListener('online', () => flushOutbox());
 window.addEventListener('offline', () => updateOfflineBar());
+window.addEventListener('pagehide', closeViewOnce);
+window.addEventListener('beforeunload', closeViewOnce);
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}
 initLogin();
 wire();
 

@@ -1,0 +1,38 @@
+services:
+  vchat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: vchat:local-pilot
+    env_file:
+      - path: .env.production
+        required: true
+    environment:
+      NODE_ENV: production
+      WEB_CONCURRENCY: "1"
+      INSTANCE_COUNT: "1"
+      VCHAT_DATA_DIR: /var/lib/vchat
+      VCHAT_MEDIA_DIR: /var/lib/vchat/media
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 15s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    volumes:
+      - vchat-data:/var/lib/vchat
+    ports:
+      - "127.0.0.1:3000:3000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+
+volumes:
+  vchat-data:
