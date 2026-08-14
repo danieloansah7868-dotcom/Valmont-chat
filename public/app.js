@@ -303,6 +303,47 @@ function guessCountry() {
   return 'GH';
 }
 
+// ── Username (@handle) ─────────────────────────────────────────────────
+const HANDLE_RE = /^[a-z0-9_]{3,20}$/;
+const normalizeHandleInput = value => String(value || '').trim().replace(/^@+/, '').toLowerCase();
+
+let handleCheckTimer = null;
+let handleCheckSeq = 0;
+
+function setHandleState(text, kind) {
+  const node = $('handle-state');
+  if (!node) return;
+  node.textContent = text;
+  node.className = 'handle-state' + (kind ? ` ${kind}` : '');
+}
+
+async function checkHandleAvailability(handle) {
+  const seq = ++handleCheckSeq;
+  setHandleState('checking…', 'busy');
+  const { ok, data } = await api(`/api/auth/username-available?handle=${encodeURIComponent(handle)}`);
+  // A slower earlier request must never overwrite a newer answer.
+  if (seq !== handleCheckSeq) return;
+  if (!ok) return setHandleState('', '');
+  if (data.available) setHandleState('available', 'ok');
+  else setHandleState(data.error === 'That username is already taken' ? 'taken' : 'invalid', 'bad');
+}
+
+function initHandleField() {
+  const input = $('handle-input');
+  if (!input) return;
+  input.oninput = () => {
+    const cleaned = normalizeHandleInput(input.value).replace(/[^a-z0-9_]/g, '');
+    if (input.value !== cleaned) input.value = cleaned;
+    $('profile-err').textContent = '';
+    clearTimeout(handleCheckTimer);
+    handleCheckSeq++;                       // invalidate any in-flight lookup
+    if (!cleaned) return setHandleState('', '');
+    if (!HANDLE_RE.test(cleaned)) return setHandleState('3-20 chars', 'bad');
+    handleCheckTimer = setTimeout(() => checkHandleAvailability(cleaned), 350);
+  };
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') submitProfile(); });
+}
+
 function showStep(id) {
   ['step-phone', 'step-code', 'step-profile'].forEach(s => { $(s).hidden = s !== id; });
   const login = $('login');
@@ -396,6 +437,7 @@ function initLogin() {
   $('btn-resend').onclick = () => requestCode(true);
   initCodeBoxes();
 
+  initHandleField();
   $('login-btn').onclick = submitProfile;
   $('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitProfile(); });
 
@@ -531,8 +573,9 @@ async function submitCode() {
 
   clearInterval(resendTimer);
 
-  if (data.needsProfile) {          // new number → ask for a name
+  if (data.needsProfile) {          // new number → ask for a name and username
     showStep('step-profile');
+    suggestHandleFromName();
     $('name-input').focus();
     return;
   }
@@ -554,9 +597,15 @@ async function submitCode() {
 // ── Step 3: name + avatar for first-time numbers ───────────────────────
 async function submitProfile() {
   const username = $('name-input').value.trim();
+  const handle = normalizeHandleInput($('handle-input').value);
   const accountType = document.querySelector('input[name="register-account-type"]:checked')?.value;
   const businessName = $('business-name-input').value.trim();
   if (username.length < 2) { $('profile-err').textContent = 'Please enter at least 2 characters'; return; }
+  if (!HANDLE_RE.test(handle)) {
+    $('profile-err').textContent = 'Username must be 3-20 characters using letters, numbers or underscore';
+    $('handle-input').focus();
+    return;
+  }
   if (!['personal', 'business'].includes(accountType)) {
     $('profile-err').textContent = 'Choose Personal or Business to continue';
     document.querySelector('input[name="register-account-type"]')?.focus();
@@ -575,6 +624,7 @@ async function submitProfile() {
   const { ok, data } = await api('/api/auth/register', {
     phone: authPhone,
     username,
+    handle,
     avatar: pickedAvatar,
     accountType,
     businessProfile: accountType === 'business' ? {
@@ -609,6 +659,17 @@ async function submitProfile() {
   registrationPhotoPreviewUrl = null;
   registrationPhotoFile = null;
   finishAuth(data);
+}
+
+// Pre-fills the username from the display name, but never overwrites what the
+// person has already typed into the username field themselves.
+function suggestHandleFromName() {
+  const input = $('handle-input');
+  if (!input || input.value.trim()) return;
+  const suggestion = normalizeHandleInput($('name-input').value).replace(/[^a-z0-9_]/g, '').slice(0, 20);
+  if (!HANDLE_RE.test(suggestion)) return;
+  input.value = suggestion;
+  checkHandleAvailability(suggestion);
 }
 
 function finishAuth({ user }) {
@@ -1081,9 +1142,15 @@ function renderChatList() {
 
   // "Start a chat with" suggestions when searching
   if (searchQuery) {
-    const q = searchQuery.toLowerCase();
-    const matches = users.filter(u => u.id !== me.id && u.username.toLowerCase().includes(q) &&
-      !chats.some(c => c.type === 'dm' && c.peer?.id === u.id));
+    // A leading @ scopes the search to usernames only.
+    const raw = searchQuery.toLowerCase().trim();
+    const handleOnly = raw.startsWith('@');
+    const q = handleOnly ? raw.slice(1) : raw;
+    const matches = q ? users.filter(u => u.id !== me.id &&
+      (handleOnly
+        ? (u.handle || '').includes(q)
+        : (u.username.toLowerCase().includes(q) || (u.handle || '').includes(q))) &&
+      !chats.some(c => c.type === 'dm' && c.peer?.id === u.id)) : [];
     if (matches.length) {
       box.appendChild(el('div', 'list-section-title', 'Contacts'));
       matches.forEach(u => box.appendChild(contactRow(u)));
@@ -1107,7 +1174,7 @@ function contactRow(u) {
     ${avatarHTML(u, 49, true)}
     <div class="body">
       <div class="row-top"><div class="row-name">${esc(u.username)}</div></div>
-      <div class="row-bottom"><div class="row-preview">${esc(u.about || 'Hey there! I am using VChat.')}</div></div>
+      <div class="row-bottom"><div class="row-preview">${u.handle ? `@${esc(u.handle)}` : esc(u.about || 'Hey there! I am using VChat.')}</div></div>
     </div>`;
   row.onclick = () => {
     socket.emit('chat:startDM', { targetUserId: u.id }, res => {

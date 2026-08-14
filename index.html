@@ -107,11 +107,21 @@
 
     <!-- Step 3 — profile (new numbers only) -->
     <section class="auth-step" id="step-profile" hidden>
-      <h2>Profile info</h2>
-      <p class="sub">Please provide your name and an optional profile photo.</p>
+      <h2>Create your account</h2>
+      <p class="sub">Pick a name and a unique username. Friends find you with @username — not your phone number.</p>
 
-      <label class="field-label" for="name-input">Your name</label>
+      <label class="field-label" for="name-input">Display name</label>
       <input id="name-input" type="text" placeholder="e.g. Daniel" autocomplete="name" maxlength="24" />
+
+      <label class="field-label" for="handle-input">Username</label>
+      <div class="handle-row">
+        <span class="handle-prefix" aria-hidden="true">@</span>
+        <input id="handle-input" type="text" placeholder="danny" autocomplete="username" maxlength="20"
+               inputmode="latin" spellcheck="false" autocapitalize="none"
+               aria-describedby="handle-hint" />
+        <span class="handle-state" id="handle-state" role="status" aria-live="polite"></span>
+      </div>
+      <p class="field-hint block" id="handle-hint">3–20 characters. Letters, numbers and underscore. This is how people search for you.</p>
 
       <label class="field-label">Account type</label>
       <div class="account-type-picker" role="radiogroup" aria-label="Account type">
@@ -133,7 +143,7 @@
         <div><button class="btn-text" id="registration-photo-button" type="button">Choose photo</button><button class="btn-text danger" id="registration-photo-remove" type="button" hidden>Remove</button><small id="registration-photo-name">You can replace or remove it later.</small></div>
       </div>
       <input id="registration-photo-input" type="file" accept="image/jpeg,image/png,image/webp" hidden />
-      <label class="field-label">Or choose an avatar</label>
+      <label class="field-label">Choose an avatar</label>
       <div class="avatar-picker" id="avatar-picker"></div>
 
       <button class="btn-primary" id="login-btn">Start chatting</button>
@@ -161,7 +171,7 @@
       <div class="side-search">
         <div class="search-wrap">
           <svg class="icon-sm"><use href="#i-search"/></svg>
-          <input id="search-input" type="text" placeholder="Search or start a new chat" autocomplete="off" />
+          <input id="search-input" type="text" placeholder="Search name or @username" autocomplete="off" />
         </div>
       </div>
 
