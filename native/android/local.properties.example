@@ -1,0 +1,5 @@
+## Copy to local.properties (never commit SDK paths).
+## sdk.dir=/home/you/Android/Sdk
+## vchat.server.url=https://your-vchat-host
+sdk.dir=
+vchat.server.url=
