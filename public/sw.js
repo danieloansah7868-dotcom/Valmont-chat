@@ -33,13 +33,15 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  // Network-first keeps installed clients on the current application contract.
+  // The last verified shell remains available only as an offline fallback.
   event.respondWith(
-    caches.match(request).then(cached => cached || fetch(request).then(response => {
+    fetch(request).then(response => {
       if (response.ok && ['style', 'script', 'manifest', 'image', 'font'].includes(request.destination)) {
         const copy = response.clone();
-        caches.open(CACHE).then(cache => cache.put(request, copy));
+        event.waitUntil(caches.open(CACHE).then(cache => cache.put(request, copy)));
       }
       return response;
-    }))
+    }).catch(() => caches.match(request))
   );
 });

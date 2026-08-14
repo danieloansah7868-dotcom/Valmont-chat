@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta name="theme-color" content="#0b1f3a" />
 <title>VChat</title>
 <link rel="icon" href="/favicon.svg" />
@@ -115,8 +115,8 @@
 
       <label class="field-label">Account type</label>
       <div class="account-type-picker" role="radiogroup" aria-label="Account type">
-        <label class="account-type-card selected"><input type="radio" name="register-account-type" value="personal" checked /><strong>Personal</strong><span>For everyday conversations</span></label>
-        <label class="account-type-card"><input type="radio" name="register-account-type" value="business" /><strong>Business</strong><span>Public purpose page and Status boosting</span></label>
+        <label class="account-type-card"><input type="radio" name="register-account-type" value="personal" required /><strong>Personal</strong><span>For everyday conversations</span></label>
+        <label class="account-type-card"><input type="radio" name="register-account-type" value="business" required /><strong>Business</strong><span>Public purpose page and Status boosting</span></label>
       </div>
       <div class="business-register-fields" id="business-register-fields" hidden>
         <label class="field-label" for="business-name-input">Business name</label>
@@ -321,15 +321,16 @@
       <button class="story-primary-button" id="story-empty-create" type="button">Share your first status</button>
     </div>
   </div>
-  <div class="story-viewer" id="story-viewer" hidden>
+  <div class="story-viewer" id="story-viewer" role="dialog" aria-modal="true" aria-labelledby="story-viewer-name" aria-describedby="story-viewer-time" tabindex="-1" hidden>
     <div class="story-progress" id="story-progress" aria-hidden="true"></div>
-    <div class="story-viewer-meta">
+    <div class="story-viewer-meta" aria-live="polite">
       <div id="story-viewer-avatar"></div>
       <div class="story-viewer-who"><strong id="story-viewer-name"></strong><span id="story-viewer-time"></span></div>
       <span class="sponsored-label" id="story-sponsored" hidden>Sponsored</span>
       <span class="story-ad-countdown" id="story-ad-countdown" hidden></span>
-      <a class="story-icon-button" id="story-save" aria-label="Save status" title="Save status" download hidden><svg class="icon"><use href="#i-download"/></svg></a>
+      <button class="story-icon-button" id="story-save" type="button" aria-label="Save status" title="Save status" hidden><svg class="icon"><use href="#i-download"/></svg></button>
       <button class="story-icon-button" id="story-delete" type="button" aria-label="Delete status" hidden><svg class="icon"><use href="#i-trash"/></svg></button>
+      <button class="story-icon-button" id="story-pause" type="button" aria-label="Pause status playback"><svg class="icon"><use href="#i-pause"/></svg></button>
       <button class="story-icon-button" id="story-viewer-close" type="button" aria-label="Close viewer"><svg class="icon"><use href="#i-close"/></svg></button>
     </div>
     <div class="story-stage" id="story-stage"></div>
@@ -577,6 +578,9 @@
       <div id="chat-lock-credentials" class="device-list"></div>
       <div class="settings-section-title">Two-step verification</div>
       <div class="setting-action"><span id="two-step-status">Add a PIN for extra account protection</span><span class="setting-buttons"><button class="btn-text" id="two-step-set">Set PIN</button><button class="btn-text danger" id="two-step-disable" hidden>Disable</button></span></div>
+      <div class="settings-section-title">Your data</div>
+      <div class="setting-action"><span><strong>Download account data</strong><small>Export your profile, active conversations, Status, reels, campaigns, payment records, reports, and call ratings as JSON.</small></span><button class="btn-text" id="account-export" type="button">Download</button></div>
+      <div class="setting-action"><span><strong>Delete account permanently</strong><small>Revokes every device, removes your profile and Status, and redacts your messages. Legally required payment and abuse-prevention records remain pseudonymized.</small></span><button class="btn-text danger" id="account-delete" type="button">Delete account</button></div>
       <div class="settings-section-title">Linked devices</div>
       <div id="device-list" class="device-list"><div class="empty-list">Loading…</div></div>
       <button class="drawer-action danger" id="devices-revoke-all">Log out all other devices</button>
@@ -623,13 +627,13 @@
   </div>
 </div>
 
-<div class="ctx-menu" id="ctx-menu"></div>
+<div class="ctx-menu" id="ctx-menu" role="menu" aria-hidden="true" aria-label="Actions"></div>
 
-<div class="lightbox" id="lightbox">
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="lb-name">
   <div class="lb-bar">
-    <button id="lb-close"><svg class="icon"><use href="#i-close"/></svg></button>
+    <button id="lb-close" aria-label="Close image viewer"><svg class="icon"><use href="#i-close"/></svg></button>
     <span id="lb-name" style="flex:1;font-size:15px"></span>
-    <a id="lb-download" download><svg class="icon"><use href="#i-download"/></svg></a>
+    <a id="lb-download" download aria-label="Download image"><svg class="icon"><use href="#i-download"/></svg></a>
   </div>
   <img id="lb-img" alt="" />
 </div>

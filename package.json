@@ -7,7 +7,11 @@
     "start": "node server.js",
     "dev": "node server.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check server.js && node --check lib/http-auth.js && node --check lib/messenger.js && node --check lib/messenger-store.js && node --check lib/sms.js && node --check public/app.js && node --check public/sw.js"
+    "check": "node --check server.js && node --check lib/*.js && node --check scripts/*.js && node --check public/app.js && node --check public/sw.js",
+    "check:env": "node scripts/check-env.js",
+    "backup:local": "node scripts/backup-local.js",
+    "restore:local": "node scripts/restore-local.js",
+    "ci": "npm run check && npm test && npm audit --audit-level=high"
   },
   "keywords": [
     "chat",
@@ -23,7 +27,6 @@
     "@simplewebauthn/server": "^13.2.2",
     "express": "^4.19.2",
     "express-rate-limit": "^8.6.2",
-    "helmet": "^8.3.0",
     "multer": "^2.2.0",
     "socket.io": "^4.7.5",
     "uuid": "^11.1.1"

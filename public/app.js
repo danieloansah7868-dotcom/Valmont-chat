@@ -35,6 +35,7 @@ let storyAds = [];
 let storySequence = [];
 let storyIndex = -1;
 let storyPlayback = null;
+let storyViewerReturnFocus = null;
 let storiesLoading = false;
 let storiesRefreshTimer = null;
 let storyMaxBytes = 30 * 1024 * 1024;
@@ -88,6 +89,17 @@ const EMOJI_SEARCH_TERMS = {
 // ── Tiny DOM helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 const el = (tag, cls, html) => { const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
+function makeKeyboardClickable(node, label) {
+  node.setAttribute('role', 'button');
+  node.tabIndex = 0;
+  if (label) node.setAttribute('aria-label', label);
+  node.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    node.click();
+  });
+  return node;
+}
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 const icon = (name, cls = 'icon') => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
 
@@ -540,10 +552,14 @@ async function submitCode() {
 // ── Step 3: name + avatar for first-time numbers ───────────────────────
 async function submitProfile() {
   const username = $('name-input').value.trim();
-  const accountType = document.querySelector('input[name="register-account-type"]:checked')?.value === 'business'
-    ? 'business' : 'personal';
+  const accountType = document.querySelector('input[name="register-account-type"]:checked')?.value;
   const businessName = $('business-name-input').value.trim();
   if (username.length < 2) { $('profile-err').textContent = 'Please enter at least 2 characters'; return; }
+  if (!['personal', 'business'].includes(accountType)) {
+    $('profile-err').textContent = 'Choose Personal or Business to continue';
+    document.querySelector('input[name="register-account-type"]')?.focus();
+    return;
+  }
   if (accountType === 'business' && businessName.length < 2) {
     $('profile-err').textContent = 'Please enter a public business name';
     $('business-name-input').focus();
@@ -605,13 +621,14 @@ function connect() {
   socket = io({ transports: ['websocket', 'polling'], withCredentials: true });
 
   socket.on('connect', () => {
-    socket.emit('user:join', {}, (res) => {
+    socket.emit('user:join', {}, async (res) => {
       $('login-btn').disabled = false;
       if (!res || res.error) {
         $('code-err').textContent = res?.error || 'Could not join';
         return;
       }
       me = res.user;
+      await loadOutbox(me.id);
       chats = res.chats;
       users = res.users;
       localStorage.setItem('vchat.name', me.username);
@@ -643,6 +660,8 @@ function connect() {
   });
 
   socket.on('session:revoked', () => {
+    clearPrivateOutbox(me?.id).catch(() => {});
+    teardown();
     socket.close();
     closeModal('modal-reel-upload');
     closeModal('modal-story-compose');
@@ -658,6 +677,8 @@ function connect() {
 
   socket.on('connect_error', error => {
     if (/Authentication required/i.test(error?.message || '')) {
+      clearPrivateOutbox(me?.id).catch(() => {});
+      teardown();
       socket.close();
       $('login').style.display = '';
       document.body.classList.remove('ready');
@@ -690,6 +711,10 @@ function connect() {
     if (!user || user.id !== me?.id) return;
     me = { ...me, ...user };
     renderChatLockState();
+    if (!chatLockIsUnlocked() && call?.chatId && chats.some(c => c.id === call.chatId && c.locked)) {
+      teardown();
+      toast('Call ended because this chat relocked');
+    }
     if (!chatLockIsUnlocked() && activeChat()?.locked) closeChat();
   });
   socket.on('chats:refresh', () => {});
@@ -1087,6 +1112,7 @@ function contactRow(u) {
       if (res?.chat) { $('search-input').value = ''; searchQuery = ''; openChat(res.chat.id); }
     });
   };
+  makeKeyboardClickable(row, `Start chat with ${u.username}`);
   return row;
 }
 
@@ -1130,7 +1156,15 @@ function chatRow(c) {
     </div>`;
 
   row.onclick = () => openChat(c.id);
-  row.querySelector('.row-menu').onclick = e => { e.stopPropagation(); chatContextMenu(e, c); };
+  makeKeyboardClickable(row, `Open chat ${c.name}`);
+  row.setAttribute('aria-haspopup', 'menu');
+  const rowMenu = row.querySelector('.row-menu');
+  rowMenu.onclick = e => { e.stopPropagation(); chatContextMenu(e, c); };
+  row.addEventListener('keydown', event => {
+    if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+    event.preventDefault();
+    chatContextMenu(event, c);
+  });
   row.oncontextmenu = e => { e.preventDefault(); chatContextMenu(e, c); };
   return row;
 }
@@ -1158,32 +1192,78 @@ function chatContextMenu(e, c) {
 
 // ── Context menu ───────────────────────────────────────────────────────
 let ctxOpenEvent = null;
+let ctxReturnFocus = null;
 function showCtxMenu(e, items, emojis) {
   const menu = $('ctx-menu');
   menu.innerHTML = '';
+  ctxReturnFocus = document.activeElement;
   if (emojis) {
     const bar = el('div', 'ctx-emoji');
-    emojis.forEach(({ emoji, fn }) => { const b = el('button', '', emoji); b.onclick = () => { hideCtx(); fn(); }; bar.appendChild(b); });
+    emojis.forEach(({ emoji, fn }) => {
+      const b = el('button', '', emoji);
+      b.type = 'button';
+      b.setAttribute('role', 'menuitem');
+      b.setAttribute('aria-label', `React with ${emoji}`);
+      b.onclick = event => { hideCtx(event.detail === 0); fn(); };
+      bar.appendChild(b);
+    });
     menu.appendChild(bar);
   }
   items.forEach(it => {
-    if (it.sep) { menu.appendChild(el('div', 'sep')); return; }
+    if (it.sep) {
+      const separator = el('div', 'sep');
+      separator.setAttribute('role', 'separator');
+      menu.appendChild(separator);
+      return;
+    }
     const b = el('button', it.danger ? 'danger' : '', esc(it.label));
-    b.onclick = () => { hideCtx(); it.fn(); };
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    b.onclick = event => { hideCtx(event.detail === 0); it.fn(); };
     menu.appendChild(b);
   });
   ctxOpenEvent = e;
   menu.classList.add('show');
+  menu.setAttribute('aria-hidden', 'false');
   const r = menu.getBoundingClientRect();
-  const x = Math.min(e.clientX, window.innerWidth - r.width - 12);
-  const y = Math.min(e.clientY, window.innerHeight - r.height - 12);
+  const anchor = e.currentTarget?.getBoundingClientRect?.();
+  const requestedX = Number.isFinite(e.clientX) && e.clientX > 0 ? e.clientX : (anchor?.left || 12);
+  const requestedY = Number.isFinite(e.clientY) && e.clientY > 0 ? e.clientY : (anchor?.bottom || 12);
+  const x = Math.max(12, Math.min(requestedX, window.innerWidth - r.width - 12));
+  const y = Math.max(12, Math.min(requestedY, window.innerHeight - r.height - 12));
   menu.style.left = x + 'px';
   menu.style.top = y + 'px';
+  requestAnimationFrame(() => menu.querySelector('[role="menuitem"]')?.focus());
 }
-const hideCtx = () => { ctxOpenEvent = null; $('ctx-menu').classList.remove('show'); };
+function hideCtx(restoreFocus = false) {
+  ctxOpenEvent = null;
+  const menu = $('ctx-menu');
+  menu.classList.remove('show');
+  menu.setAttribute('aria-hidden', 'true');
+  if (restoreFocus && ctxReturnFocus?.isConnected) requestAnimationFrame(() => ctxReturnFocus.focus());
+  ctxReturnFocus = null;
+}
 document.addEventListener('click', e => {
   if (e === ctxOpenEvent) { ctxOpenEvent = null; return; } // ignore the click that opened it
   if (!$('ctx-menu').contains(e.target)) hideCtx();
+});
+document.addEventListener('keydown', event => {
+  const menu = $('ctx-menu');
+  if (!menu.classList.contains('show')) return;
+  const items = [...menu.querySelectorAll('[role="menuitem"]')];
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    hideCtx(true);
+    return;
+  }
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || !items.length) return;
+  event.preventDefault();
+  const current = Math.max(0, items.indexOf(document.activeElement));
+  const next = event.key === 'Home' ? 0
+    : event.key === 'End' ? items.length - 1
+      : event.key === 'ArrowDown' ? (current + 1) % items.length
+        : (current - 1 + items.length) % items.length;
+  items[next].focus();
 });
 window.addEventListener('resize', hideCtx);
 
@@ -1365,7 +1445,7 @@ function messageRow(m, grouped) {
       if (t.startsWith('image/')) {
         // In lite mode a photo costs nothing until it is actually wanted.
         inner += ((lite || notificationPrefs.mediaVisibility === 'tap') && !shownPhotos.has(m.file.url))
-          ? `<button class="photo-hold" data-load="${esc(m.file.url)}">
+          ? `<button class="photo-hold" type="button" data-load="${esc(m.file.url)}">
                <span class="ph-icon">${icon('photo', 'icon-sm')}</span>
                <span class="ph-label">Tap to load photo</span>
                <span class="ph-size">${fileSize(m.file.size)}</span>
@@ -1397,15 +1477,15 @@ function messageRow(m, grouped) {
   const reactions = Object.entries(m.reactions || {});
   const reactHTML = reactions.length
     ? `<div class="reactions">${reactions.map(([e, ids]) =>
-        `<span class="reaction-pill ${ids.includes(me.id) ? 'mine' : ''}" title="${esc(ids.map(id => users.find(u => u.id === id)?.username || '?').join(', '))}">${e}${ids.length > 1 ? ' ' + ids.length : ''}</span>`).join('')}</div>`
+        `<span class="reaction-pill ${ids.includes(me.id) ? 'mine' : ''}" title="${esc(ids.map(id => users.find(u => u.id === id)?.username || '?').join(', '))}">${esc(e)}${ids.length > 1 ? ' ' + ids.length : ''}</span>`).join('')}</div>`
     : '';
 
   const bubble = el('div', `bubble${emojiOnly ? ' emoji-only' : ''}${m.deleted ? ' deleted' : ''}`, inner + reactHTML);
 
   const tools = el('div', 'msg-tools', `
-    <button data-act="react" title="React">${icon('emoji', 'icon-sm')}</button>
-    <button data-act="reply" title="Reply">${icon('reply', 'icon-sm')}</button>
-    <button data-act="more" title="More">${icon('chevron', 'icon-sm')}</button>`);
+    <button type="button" data-act="react" title="React" aria-label="React to message">${icon('emoji', 'icon-sm')}</button>
+    <button type="button" data-act="reply" title="Reply" aria-label="Reply to message">${icon('reply', 'icon-sm')}</button>
+    <button type="button" data-act="more" title="More" aria-label="More message actions">${icon('chevron', 'icon-sm')}</button>`);
 
   if (out) { row.appendChild(tools); row.appendChild(bubble); }
   else { row.appendChild(bubble); row.appendChild(tools); }
@@ -1417,15 +1497,19 @@ function messageRow(m, grouped) {
 
   bubble.querySelectorAll('[data-voice]').forEach(wireVoice);
   bubble.querySelector('[data-view-once]')?.addEventListener('click', () => openViewOnce(m));
-  bubble.querySelector('[data-photo]')?.addEventListener('click', ev => {
-    openLightbox(ev.target.dataset.photo, ev.target.dataset.name);
-  });
+  const photo = bubble.querySelector('[data-photo]');
+  if (photo) {
+    makeKeyboardClickable(photo, `Open ${photo.dataset.name || 'shared photo'}`);
+    photo.addEventListener('click', ev => openLightbox(ev.currentTarget.dataset.photo, ev.currentTarget.dataset.name));
+  }
   bubble.querySelector('[data-load]')?.addEventListener('click', ev => {
     // Tapped a held-back photo: remember it and swap the placeholder for the image.
     shownPhotos.add(ev.currentTarget.dataset.load);
     renderMessages();
   });
-  bubble.querySelector('[data-jump]')?.addEventListener('click', ev => {
+  const replyQuote = bubble.querySelector('[data-jump]');
+  if (replyQuote) makeKeyboardClickable(replyQuote, 'Jump to replied message');
+  replyQuote?.addEventListener('click', ev => {
     const target = $('messages').querySelector(`[data-id="${ev.currentTarget.dataset.jump}"]`);
     if (target) {
       target.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1656,7 +1740,8 @@ function onInput() {
  * socket comes back. Ten seconds of signal is enough to empty a day of
  * writing.
  */
-const OUTBOX_KEY = 'vchat.outbox';
+const OUTBOX_DB_NAME = 'vchat-private-v1';
+const OUTBOX_DB_VERSION = 1;
 // A send is given this long to be acknowledged before we assume the phone lost
 // signal mid-flight. Short enough to notice a dead bundle, long enough that a
 // slow 2G round trip is not mistaken for failure.
@@ -1665,22 +1750,107 @@ const SEND_TIMEOUT_MS = 12000;
 // tries, then we back off instead of burning battery on a dead radio.
 const RETRY_BACKOFF_MS = [3000, 8000, 20000, 60000];
 let outbox = [];
+let outboxOwnerId = null;
+let outboxCryptoKey = null;
+let outboxSaveChain = Promise.resolve();
+let privateDbPromise = null;
 let flushing = false;
 let retryTimer = null;
 let inflight = null;     // resolver of the send we are currently waiting on
 let flushAgain = false;
 
-function loadOutbox() {
-  try { outbox = JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); }
-  catch { outbox = []; }
+function privateDb() {
+  if (!('indexedDB' in window) || !crypto?.subtle) return Promise.reject(new Error('Private browser storage unavailable'));
+  if (!privateDbPromise) privateDbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(OUTBOX_DB_NAME, OUTBOX_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains('keys')) db.createObjectStore('keys', { keyPath: 'userId' });
+      if (!db.objectStoreNames.contains('outboxes')) db.createObjectStore('outboxes', { keyPath: 'userId' });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Private storage failed'));
+    request.onblocked = () => reject(new Error('Private storage upgrade is blocked'));
+  });
+  return privateDbPromise;
+}
+
+async function privateStoreRequest(storeName, mode, operation) {
+  const db = await privateDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, mode);
+    const request = operation(tx.objectStore(storeName));
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Private storage operation failed'));
+    tx.onabort = () => reject(tx.error || new Error('Private storage transaction aborted'));
+  });
+}
+
+async function privateOutboxKey(userId) {
+  const existing = await privateStoreRequest('keys', 'readonly', store => store.get(userId));
+  if (existing?.key) return existing.key;
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  await privateStoreRequest('keys', 'readwrite', store => store.put({ userId, key, createdAt: Date.now() }));
+  return key;
+}
+
+async function loadOutbox(userId) {
+  outboxOwnerId = String(userId || '');
+  outbox = [];
+  outboxCryptoKey = null;
+  if (!outboxOwnerId) return;
+  try {
+    outboxCryptoKey = await privateOutboxKey(outboxOwnerId);
+    const record = await privateStoreRequest('outboxes', 'readonly', store => store.get(outboxOwnerId));
+    if (record?.ciphertext && record?.iv) {
+      const plaintext = await crypto.subtle.decrypt({
+        name: 'AES-GCM',
+        iv: record.iv,
+        additionalData: new TextEncoder().encode(outboxOwnerId),
+      }, outboxCryptoKey, record.ciphertext);
+      outbox = JSON.parse(new TextDecoder().decode(plaintext));
+    }
+  } catch {
+    // Corruption, an unavailable keystore, or a moved record must fail closed:
+    // never fall back to plaintext browser-global storage.
+    outbox = [];
+  }
   if (!Array.isArray(outbox)) outbox = [];
-  // Nothing is mid-flight after a reload, however it ended.
-  for (const i of outbox) i.sending = false;
+  for (const item of outbox) item.sending = false;
 }
 
 function saveOutbox() {
-  try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox)); }
-  catch { /* storage full or blocked — the queue stays in memory */ }
+  if (!outboxOwnerId || !outboxCryptoKey) return;
+  const ownerId = outboxOwnerId;
+  const key = outboxCryptoKey;
+  const snapshot = JSON.stringify(outbox);
+  outboxSaveChain = outboxSaveChain.catch(() => {}).then(async () => {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt({
+      name: 'AES-GCM',
+      iv,
+      additionalData: new TextEncoder().encode(ownerId),
+    }, key, new TextEncoder().encode(snapshot));
+    await privateStoreRequest('outboxes', 'readwrite', store => store.put({
+      userId: ownerId, iv, ciphertext, updatedAt: Date.now(),
+    }));
+  }).catch(() => { /* the in-memory queue remains available for this tab */ });
+}
+
+async function clearPrivateOutbox(userId = outboxOwnerId) {
+  const ownerId = String(userId || '');
+  outbox = [];
+  clearTimeout(retryTimer); retryTimer = null;
+  if (!ownerId) return;
+  await outboxSaveChain.catch(() => {});
+  await Promise.allSettled([
+    privateStoreRequest('outboxes', 'readwrite', store => store.delete(ownerId)),
+    privateStoreRequest('keys', 'readwrite', store => store.delete(ownerId)),
+  ]);
+  if (ownerId === outboxOwnerId) {
+    outboxOwnerId = null;
+    outboxCryptoKey = null;
+  }
 }
 
 function online() { return !!socket && socket.connected; }
@@ -1777,8 +1947,13 @@ function sendQueued(item) {
         clientId: item.clientId,
       }, res => {
         clearTimeout(bail);
-        // A rejection is permanent — retrying cannot fix a deleted chat.
-        if (res && res.error) { toast(res.error); done('drop'); return; }
+        // Authorization/content rejections are permanent. A persistence outage
+        // is explicitly retryable, so the encrypted outbox retains the item.
+        if (res && res.error) {
+          toast(res.error);
+          done(res.retryable === true ? false : 'drop');
+          return;
+        }
         done(true);
       });
     } catch {
@@ -2359,6 +2534,7 @@ function openDrawer() {
         const about = prompt('Group description', c.about || '');
         if (about != null) socket.emit('group:update', { chatId: c.id, about }, result => result?.error && toast(result.error));
       };
+      makeKeyboardClickable(info, 'Edit group description');
     }
     body.appendChild(info);
   }
@@ -2390,6 +2566,7 @@ function openDrawer() {
         ${(c.admins || []).includes(u.id) ? '<span class="mr-tag">Admin</span>' : ''}`);
       if (u.id !== me.id) {
         row.onclick = () => socket.emit('chat:startDM', { targetUserId: u.id }, r => r?.chat && openChat(r.chat.id));
+        makeKeyboardClickable(row, `Start chat with ${u.username}`);
         if (isGroupAdmin) {
           row.oncontextmenu = event => {
             event.preventDefault();
@@ -2472,19 +2649,80 @@ function openDrawer() {
 function refreshDrawerIfOpen() { if ($('drawer').classList.contains('open')) openDrawer(); }
 
 // ── Modals ─────────────────────────────────────────────────────────────
-function openModal(id) { $(id).classList.add('show'); }
+const modalFocusSelector = [
+  'a[href]', 'button:not([disabled])', 'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])', 'textarea:not([disabled])', '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+function openModal(id) {
+  const overlay = $(id);
+  if (!overlay) return;
+  overlay._returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  overlay.classList.add('show');
+  overlay.setAttribute('aria-hidden', 'false');
+  const dialog = overlay.querySelector('.modal');
+  const first = dialog?.querySelector(modalFocusSelector);
+  requestAnimationFrame(() => (first || dialog)?.focus());
+}
 function closeModal(id) {
-  $(id).classList.remove('show');
+  const overlay = $(id);
+  if (!overlay) return;
+  overlay.classList.remove('show');
+  overlay.setAttribute('aria-hidden', 'true');
+  const returnFocus = overlay._returnFocus;
+  overlay._returnFocus = null;
+  if (returnFocus?.isConnected) requestAnimationFrame(() => returnFocus.focus());
   if (id === 'modal-profile') profileModalCleanup?.();
   if (id === 'modal-reel-upload') reelUploadCleanup?.();
   if (id === 'modal-story-compose') cleanupStoryComposer();
   if (id === 'modal-rate') rating = null;
 }
-document.querySelectorAll('.overlay').forEach(o => {
-  o.addEventListener('click', e => {
-    if (e.target === o) closeModal(o.id);
+document.querySelectorAll('.overlay').forEach((overlay, index) => {
+  const dialog = overlay.querySelector('.modal');
+  const heading = dialog?.querySelector('.modal-head');
+  if (dialog) {
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.tabIndex = -1;
+    if (heading) {
+      heading.id ||= `${overlay.id || `modal-${index}`}-title`;
+      dialog.setAttribute('aria-labelledby', heading.id);
+    } else {
+      dialog.setAttribute('aria-label', 'Dialog');
+    }
+  }
+  overlay.setAttribute('aria-hidden', overlay.classList.contains('show') ? 'false' : 'true');
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay) closeModal(overlay.id);
   });
-  o.querySelectorAll('[data-close]').forEach(b => b.onclick = () => closeModal(o.id));
+  overlay.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeModal(overlay.id);
+      return;
+    }
+    if (event.key !== 'Tab' || !dialog) return;
+    const focusable = [...dialog.querySelectorAll(modalFocusSelector)]
+      .filter(node => node.getClientRects().length && node.getAttribute('aria-hidden') !== 'true');
+    if (!focusable.length) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+  overlay.querySelectorAll('[data-close]').forEach(button => {
+    button.onclick = () => closeModal(overlay.id);
+  });
 });
 
 const businessCategoryLabel = value => String(value || 'other').replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
@@ -2550,6 +2788,7 @@ function openNewChat() {
     list.forEach(u => {
       const row = el('div', 'pick-row', `${avatarHTML(u, 40, true)}<div class="pk-name">${esc(u.username)}<div style="font-size:12.5px;color:var(--text-secondary)">${esc(u.about || '')}</div></div>`);
       row.onclick = () => socket.emit('chat:startDM', { targetUserId: u.id }, res => { closeModal('modal-newchat'); if (res?.chat) openChat(res.chat.id); });
+      makeKeyboardClickable(row, `Start chat with ${u.username}`);
       box.appendChild(row);
     });
   };
@@ -2581,7 +2820,9 @@ function openNewGroup() {
     [...picked].forEach(id => {
       const u = users.find(x => x.id === id);
       if (!u) return;
-      const chip = el('span', 'sc', `${avatarHTML(u, 32)}<span>${esc(u.username)}</span>`);
+      const chip = el('button', 'sc', `${avatarHTML(u, 32)}<span>${esc(u.username)}</span>`);
+      chip.type = 'button';
+      chip.setAttribute('aria-label', `Remove ${u.username} from group`);
       chip.onclick = () => { picked.delete(id); renderChips(); renderList(); };
       box.appendChild(chip);
     });
@@ -2644,15 +2885,46 @@ function openAddMembers(c) {
 
 // ── Lightbox ───────────────────────────────────────────────────────────
 function openLightbox(url, name) {
+  const lightbox = $('lightbox');
+  lightbox._returnFocus = document.activeElement;
   $('lb-img').src = url;
-  $('lb-name').textContent = name || '';
+  $('lb-img').alt = name || 'Shared image';
+  $('lb-name').textContent = name || 'Shared image';
   $('lb-download').href = url;
   $('lb-download').download = name || 'image';
   $('lb-download').hidden = !!activeChat()?.advancedPrivacy;
-  $('lightbox').classList.add('show');
+  lightbox.classList.add('show');
+  lightbox.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => $('lb-close').focus());
 }
-$('lb-close').onclick = () => $('lightbox').classList.remove('show');
-$('lightbox').onclick = e => { if (e.target.id === 'lightbox') $('lightbox').classList.remove('show'); };
+function closeLightbox() {
+  const lightbox = $('lightbox');
+  lightbox.classList.remove('show');
+  lightbox.setAttribute('aria-hidden', 'true');
+  const returnFocus = lightbox._returnFocus;
+  lightbox._returnFocus = null;
+  if (returnFocus?.isConnected) requestAnimationFrame(() => returnFocus.focus());
+}
+$('lb-close').onclick = closeLightbox;
+$('lightbox').onclick = e => { if (e.target.id === 'lightbox') closeLightbox(); };
+$('lightbox').addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeLightbox();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const focusable = [...$('lightbox').querySelectorAll(modalFocusSelector)].filter(node => !node.hidden && node.getClientRects().length);
+  if (!focusable.length) return;
+  const current = focusable.indexOf(document.activeElement);
+  if (event.shiftKey && current <= 0) {
+    event.preventDefault();
+    focusable[focusable.length - 1].focus();
+  } else if (!event.shiftKey && current === focusable.length - 1) {
+    event.preventDefault();
+    focusable[0].focus();
+  }
+});
 
 // ── In-chat search ─────────────────────────────────────────────────────
 function runGlobalSearch(q) {
@@ -2666,6 +2938,7 @@ function runGlobalSearch(q) {
         <div class="sr-top"><span class="sr-name">${esc(r.chat.name)}</span><span>${rowTime(r.message.timestamp)}</span></div>
         <div class="sr-text">${r.message.senderId === me.id ? 'You: ' : esc(r.message.sender?.username || '') + ': '}${hl}</div>`);
       row.onclick = () => { $('search-input').value = ''; searchQuery = ''; openChat(r.chat.id); };
+      makeKeyboardClickable(row, `Open search result in ${r.chat.name}`);
       box.appendChild(row);
     });
   });
@@ -2958,6 +3231,71 @@ $('two-step-set').onclick = async () => {
   $('two-step-set').textContent = 'Change PIN';
   $('two-step-disable').hidden = false;
   toast('Two-step verification enabled');
+};
+
+$('account-export').onclick = async () => {
+  const button = $('account-export');
+  const currentPin = me.twoStepEnabled
+    ? prompt('Enter your current two-step PIN to download your account data') : '';
+  if (currentPin == null) return;
+  button.disabled = true;
+  button.textContent = 'Preparing…';
+  try {
+    const response = await fetch('/api/account/export', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ currentPin }),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || 'Could not prepare your account export');
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition') || '';
+    const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || 'vchat-account.json';
+    const url = URL.createObjectURL(blob);
+    const download = el('a');
+    download.href = url;
+    download.download = filename;
+    document.body.appendChild(download);
+    download.click();
+    download.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast('Account data downloaded');
+  } catch (error) {
+    toast(error.message || 'Could not download account data');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Download';
+  }
+};
+
+$('account-delete').onclick = async () => {
+  if (!confirm('Permanently delete this Vchat account? This cannot be undone. Download your account data first if you need a copy.')) return;
+  const confirmation = prompt('Type DELETE to permanently remove your account and sign out every device');
+  if (confirmation == null) return;
+  if (confirmation !== 'DELETE') return toast('Account deletion cancelled: confirmation did not match DELETE');
+  const currentPin = me.twoStepEnabled
+    ? prompt('Enter your current two-step PIN to delete this account') : '';
+  if (currentPin == null) return;
+  const button = $('account-delete');
+  button.disabled = true;
+  button.textContent = 'Deleting…';
+  try {
+    const { ok, data } = await api('/api/account', { confirmation, currentPin }, { method: 'DELETE' });
+    if (!ok) throw new Error(data.error || 'Could not delete your account');
+    await clearPrivateOutbox(me?.id).catch(() => {});
+    ['vchat.token', 'vchat.outbox', 'vchat.phone', 'vchat.name', 'vchat.avatar']
+      .forEach(key => localStorage.removeItem(key));
+    socket?.close();
+    location.reload();
+  } catch (error) {
+    toast(error.message || 'Could not delete your account');
+    button.disabled = false;
+    button.textContent = 'Delete account';
+  }
 };
 
 $('two-step-disable').onclick = async () => {
@@ -3408,11 +3746,13 @@ async function loadStories({ quiet = false } = {}) {
 
 function openSponsoredStory(item) {
   if (!item) return;
+  storyViewerReturnFocus = document.activeElement;
   storySequence = [{ ...item, kind: 'ad' }];
   $('stories-home').hidden = true;
   $('story-viewer').hidden = false;
   storyIndex = 0;
   renderCurrentStory();
+  requestAnimationFrame(() => $('story-viewer-close').focus());
 }
 
 function renderSponsoredDiscovery() {
@@ -3486,10 +3826,12 @@ function buildStorySequence(ownerId) {
 function openStoryViewer(ownerId) {
   storySequence = buildStorySequence(ownerId);
   if (!storySequence.length) return;
+  storyViewerReturnFocus = document.activeElement;
   $('stories-home').hidden = true;
   $('story-viewer').hidden = false;
   storyIndex = 0;
   renderCurrentStory();
+  requestAnimationFrame(() => $('story-viewer-close').focus());
 }
 
 function closeStoryViewer() {
@@ -3499,6 +3841,9 @@ function closeStoryViewer() {
   $('stories-home').hidden = false;
   storySequence = [];
   storyIndex = -1;
+  const returnFocus = storyViewerReturnFocus;
+  storyViewerReturnFocus = null;
+  if (returnFocus?.isConnected) requestAnimationFrame(() => returnFocus.focus());
   if ($('stories-screen').classList.contains('open')) loadStories({ quiet: true }).catch(() => {});
 }
 
@@ -3506,22 +3851,51 @@ function renderStoryProgress() {
   $('story-progress').innerHTML = storySequence.map((_item, index) => `<span class="story-progress-part${index < storyIndex ? ' done' : ''}"><span class="story-progress-fill"></span></span>`).join('');
 }
 
+function updateStoryPauseControl() {
+  const paused = storyPlayback?.paused === true;
+  const button = $('story-pause');
+  button.setAttribute('aria-label', paused ? 'Resume status playback' : 'Pause status playback');
+  button.setAttribute('aria-pressed', String(paused));
+  button.innerHTML = icon(paused ? 'play' : 'pause');
+}
+
 function stopStoryPlayback() {
   if (storyPlayback?.raf) cancelAnimationFrame(storyPlayback.raf);
   storyPlayback = null;
+  updateStoryPauseControl();
+}
+
+function setStoryPlaybackPaused(paused) {
+  if (!storyPlayback) return;
+  storyPlayback.paused = paused;
+  storyPlayback.last = performance.now();
+  const video = $('story-stage').querySelector('video');
+  if (video) {
+    if (paused) video.pause();
+    else video.play().catch(() => { video.controls = true; });
+  }
+  updateStoryPauseControl();
+}
+
+function toggleStoryPlayback() {
+  setStoryPlaybackPaused(storyPlayback?.paused !== true);
 }
 
 function startStoryPlayback(duration) {
   stopStoryPlayback();
   const index = storyIndex;
-  const state = { duration: Math.max(1000, duration), elapsed: 0, last: performance.now(), raf: 0 };
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+  const state = {
+    duration: Math.max(1000, duration), elapsed: 0, last: performance.now(), raf: 0, paused: reducedMotion,
+  };
   storyPlayback = state;
+  updateStoryPauseControl();
   const fill = $('story-progress').children[index]?.firstElementChild;
   const tick = now => {
     if (storyPlayback !== state || index !== storyIndex) return;
     const delta = Math.min(250, now - state.last);
     state.last = now;
-    if (!document.hidden) state.elapsed += delta;
+    if (!document.hidden && !state.paused) state.elapsed += delta;
     if (fill) fill.style.width = `${Math.min(100, (state.elapsed / state.duration) * 100)}%`;
     if (storySequence[index]?.kind === 'ad') $('story-ad-countdown').textContent = `${Math.max(0, Math.ceil((state.duration - state.elapsed) / 1000))}s`;
     if (state.elapsed >= state.duration) return showNextStory(true);
@@ -3598,7 +3972,8 @@ function renderCurrentStory() {
     video.onloadedmetadata = () => {
       const normalDuration = Number.isFinite(video.duration) ? Math.min(60000, Math.max(3000, video.duration * 1000)) : 10000;
       if (!isAd) startStoryPlayback(normalDuration);
-      video.play().catch(() => { video.controls = true; });
+      if (storyPlayback?.paused) video.pause();
+      else video.play().catch(() => { video.controls = true; });
     };
     video.onerror = () => toast('This status video is unavailable');
     stage.appendChild(video);
@@ -3636,6 +4011,10 @@ function showNextStory(adFinished = false) {
 }
 
 function showPreviousStory() {
+  if (storySequence[storyIndex]?.kind === 'ad') {
+    toast(`Sponsored story · ${$('story-ad-countdown').textContent || '30s'} remaining`);
+    return;
+  }
   if (storyIndex <= 0) return;
   storyIndex -= 1;
   renderCurrentStory();
@@ -4043,6 +4422,8 @@ function mainMenu(e) {
     { sep: true },
     { label: 'Log out', danger: true, fn: async () => {
       localStorage.removeItem('vchat.token');
+      await clearPrivateOutbox(me?.id).catch(() => {});
+      teardown();
       try { await api('/api/auth/logout', {}); } catch { /* offline */ }
       location.reload();
     } },
@@ -4644,6 +5025,7 @@ function wire() {
   $('story-next').onclick = () => showNextStory();
   $('story-delete').onclick = deleteCurrentStory;
   $('story-save').onclick = saveCurrentStory;
+  $('story-pause').onclick = toggleStoryPlayback;
   $('story-media-button').onclick = () => { $('story-file-input').value = ''; $('story-file-input').click(); };
   $('story-file-input').onchange = event => chooseStoryMedia(event.target.files?.[0]);
   $('story-media-remove').onclick = removeStoryMedia;
@@ -4681,11 +5063,45 @@ function wire() {
   wireRatingStars();
   $('ring-decline').onclick = () => declineCall();
   document.addEventListener('keydown', e => {
+    const storyViewerOpen = !$('story-viewer').hidden;
+    if (storyViewerOpen && e.key === 'Tab') {
+      const controls = [...$('story-viewer').querySelectorAll('button:not([hidden]):not([disabled]), a[href]:not([hidden])')];
+      if (!controls.length) {
+        e.preventDefault();
+        $('story-viewer').focus();
+        return;
+      }
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === $('story-viewer'))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+      return;
+    }
+    if (storyViewerOpen && e.key === 'ArrowLeft') {
+      e.preventDefault();
+      showPreviousStory();
+      return;
+    }
+    if (storyViewerOpen && e.key === 'ArrowRight') {
+      e.preventDefault();
+      showNextStory();
+      return;
+    }
+    if (storyViewerOpen && e.key === ' ' && e.target.closest?.('#story-stage')) {
+      e.preventDefault();
+      toggleStoryPlayback();
+      return;
+    }
     if (e.key !== 'Escape') return;
     if (!$('view-once-viewer').hidden) closeViewOnce();
     else if (call && $('ring').classList.contains('on')) declineCall();
     else if ($('modal-story-compose').classList.contains('show')) closeModal('modal-story-compose');
-    else if (!$('story-viewer').hidden) closeStoryViewer();
+    else if (storyViewerOpen) closeStoryViewer();
     else if ($('stories-screen').classList.contains('open')) closeStories();
     else if ($('modal-reel-upload').classList.contains('show')) closeModal('modal-reel-upload');
     else if (document.body.classList.contains('reels-open')) closeReels();
@@ -4769,7 +5185,9 @@ function wire() {
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────
-loadOutbox();
+// Delete the pre-hardening browser-global plaintext queue. It is intentionally
+// not migrated because it cannot be safely attributed to an account.
+localStorage.removeItem('vchat.outbox');
 document.body.classList.toggle('lite', lite);
 // The browser tells us before the socket does.
 window.addEventListener('online', () => flushOutbox());

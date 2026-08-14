@@ -19,7 +19,7 @@ than separate native apps.
 Vchat requires Node.js 20 or newer.
 
 ```bash
-npm install
+npm ci
 npm start
 ```
 
@@ -30,9 +30,10 @@ sign-in screen. Never expose that development transport publicly.
 Useful commands:
 
 ```bash
-npm run check            # parse all server and browser JavaScript
-npm test                 # security and integration tests
+npm run check            # parse all server, browser, and operations JavaScript
+npm test                 # security, integration, and restore-integrity tests
 npm audit --omit=dev     # production dependency audit
+npm run ci               # the complete local CI gate
 ```
 
 ## Enable real SMS verification
@@ -59,9 +60,10 @@ After redeploying, request a code using a real E.164 number such as
 generates a cryptographically random six-digit code, stores only a salted hash,
 expires it after five minutes, limits resends and guesses, and consumes successful
 verification. In `NODE_ENV=production`, missing or incomplete Twilio configuration
-now returns HTTP 503 and never displays or logs the development code.
+rejects process startup before state is loaded and never displays or logs the
+development code.
 
-The current OTP state is process-local. A single production server can use it, but
+The current OTP state is process-local. A controlled single-node pilot can use it, but
 a multi-instance deployment must move pending-code, attempt, and resend state to a
 shared atomic store such as Redis before traffic is load-balanced across instances.
 
@@ -70,8 +72,10 @@ shared atomic store such as Redis before traffic is load-balanced across instanc
 ### Accounts and privacy
 
 - Phone-number registration and six-digit verification codes with expiry, resend
-  limits, and attempt limits; each new registration chooses an immutable Personal
-  or Business account type while retaining the same phone sign-in
+  limits, and attempt limits. New-account completion uses a short-lived, digest-
+  stored, phone-bound, single-use continuation in a strict HttpOnly browser cookie;
+  each new registration chooses an immutable Personal or Business account type
+  while retaining the same phone sign-in
 - Business accounts have a public business-purpose page (name, category,
   description, HTTPS website, contact details, address, and hours) plus an owner
   dashboard linked to Status boosting. Catalogs, carts, and shopping are not part
@@ -93,8 +97,12 @@ shared atomic store such as Redis before traffic is load-balanced across instanc
 ### Messaging and groups
 
 - Authorized direct chats and groups over Socket.IO
-- Optimistic sending with a persistent browser outbox and idempotent client IDs
-- Delivery/read receipts, replies, reactions, editing, delete-for-me/everyone,
+- Optimistic sending with idempotent client IDs and account-scoped AES-GCM encrypted
+  IndexedDB outboxes backed by non-extractable browser keys; legacy plaintext queues
+  and account records/keys are removed on the relevant reset/logout paths
+- Server-canonical message types, call metadata, reply snapshots, and reaction
+  projections prevent clients from forging trusted presentation fields
+- Delivery/read receipts, replies, allowlisted reactions, editing, delete-for-me/everyone,
   starring, forwarding to at most five chats, and temporary message pins
 - Lightweight escaped rich text, code spans/blocks, links, forwarded labels, and
   disappearing-message indicators
@@ -105,6 +113,8 @@ shared atomic store such as Redis before traffic is load-balanced across instanc
   unlocked. Unlock uses a separate salted-`scrypt` six-digit chat-lock PIN or a
   device biometric/screen lock/security key through WebAuthn passkeys, expires
   automatically after a bounded interval, and never unlocks other device sessions.
+  Relocking also ends established calls whose chat becomes inaccessible and notifies
+  peers rather than only blocking future signaling.
 - A searchable, categorized emoji picker spanning smileys, people, animals, food,
   activities, travel, objects, symbols, and flags
 - Group admin roles, participant add/remove, invite-link reset and join,
@@ -114,16 +124,25 @@ shared atomic store such as Redis before traffic is load-balanced across instanc
 
 ### Protected media and calls
 
-- Chat-bound attachment IDs and authorization checks on every media request
+- Chat-bound attachment IDs and exact visible-message/file authorization checks on
+  every media request
 - Media stored outside the public web root; legacy `/uploads` access is explicitly
   denied
+- Signature-checked uploads, a deduplicated per-account byte quota spanning chat
+  attachments, profile photos, Reels, Status media, and sponsored creative, plus a
+  pending-upload quota, owner-only discard of unclaimed uploads, and physical byte
+  cleanup after final references, expiry, abandoned uploads, or fully consumed View
+  Once transfers
 - One-use upload claims and safe attachment metadata cloning when a message is
   forwarded to another authorized chat
 - WhatsApp-style View Once for chat photos and videos: ordinary recipient media
   URLs are withheld, every recipient gets one independent server-side opening,
   and Vchat forward/download actions are disabled. An opening uses a short-lived,
-  authenticated, `no-store` media grant; this is a product/privacy control rather
-  than DRM and cannot prevent an external camera or a modified device.
+  issuing-session-bound, authenticated, `no-store` media grant. Independent group
+  grants preserve shared bytes until every transfer terminates; expiry, logout,
+  device revocation, chat relock, and restart reconcile grants and bytes. This is a
+  product/privacy control rather than DRM and cannot prevent an external camera or
+  a modified device.
 - Image compression, inline image/video/audio, documents, voice recording and
   playback, and authenticated downloads
 - One-to-one WebRTC voice/video calls with dynamic STUN/TURN configuration, call
@@ -210,8 +229,9 @@ refund, and operational controls appropriate to the deployment are in place.
 
 The service worker caches only the static shell. It can reopen the sign-in/chat
 shell while offline, but messages still require the server and are not copied into
-Cache Storage. Messages composed while disconnected remain in the existing local
-outbox and retry when the socket reconnects.
+Cache Storage. Messages composed while disconnected remain in an encrypted,
+account-scoped IndexedDB outbox and retry only for that same signed-in account when
+the socket reconnects.
 
 Install from the Vchat menu where supported, or use the browser's **Install app** /
 **Add to Home Screen** command.
@@ -221,17 +241,26 @@ Install from the Vchat menu where supported, or use the browser's **Install app*
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `PORT` | HTTP port | `3000` |
-| `NODE_ENV` | Enables production cookie/HSTS behavior when `production` | unset |
+| `NODE_ENV` | Activates fail-closed production validation and secure runtime behavior | unset |
 | `COOKIE_SECURE` | Explicit secure-cookie override | production-dependent |
 | `SESSION_COOKIE_NAME` | Session cookie name | `__Host-vchat_session` in secure mode |
 | `SESSION_TTL_DAYS` | Session lifetime | `30` |
+| `PUBLIC_APP_URL` | Canonical HTTPS application origin | required in production |
 | `ALLOWED_ORIGINS` | Comma-separated additional browser origins | same host only |
-| `TRUST_PROXY` | Explicit Express proxy hop count or trusted subnet | disabled |
-| `API_RATE_LIMIT` | API requests per minute per client | `240` |
+| `TRUST_PROXY` | Explicit Express proxy hop count or trusted subnet | required in production |
+| `ALLOW_TRANSITIONAL_LOCAL_STORAGE` | Explicit single-node pilot override; omission blocks the bundled adapter in production | unset/blocked |
+| `WEB_CONCURRENCY` / `INSTANCE_COUNT` | Replica guard while transitional override is active | `1` |
+| `API_RATE_WINDOW_MS` | HTTP API rate-limit window | `60000` |
+| `API_RATE_MAX` | HTTP API requests per client/window | `600` |
 | `AUTH_RATE_LIMIT` | Authentication requests per 15 minutes | `20` |
+| `CHAT_LOCK_RATE_LIMIT` | Chat-lock attempts per 15 minutes | `12` |
+| `SOCKET_EVENT_RATE_LIMIT` | Realtime actions per account/event bucket/minute | `600` |
+| `SOCKET_MESSAGE_RATE_LIMIT` | Realtime sends per account/minute | `60` |
 | `VCHAT_DATA_DIR` | Transitional database and media root | `./data` |
 | `VCHAT_MEDIA_DIR` | Protected media storage override | `$VCHAT_DATA_DIR/media` |
 | `MAX_UPLOAD_MB` | Maximum chat attachment size | `100` |
+| `MAX_ACCOUNT_STORAGE_MB` | Deduplicated protected bytes across attachments, profile photos, Reels, Status, and sponsored creative | `1024` |
+| `MAX_PENDING_UPLOADS` | Unclaimed uploads allowed per account | `20` |
 | `REEL_MAX_MB` | Maximum Reel video size (clamped to 1–200 MB) | `50` |
 | `REEL_UPLOAD_LIMIT` | Reel upload attempts per client IP per hour (clamped to 1–500) | `20` |
 | `STORY_MAX_MB` | Maximum Status image/video size (clamped to 1–100 MB) | `30` |
@@ -241,27 +270,34 @@ Install from the Vchat menu where supported, or use the browser's **Install app*
 | `STORY_HOUSE_AD_TEXT` | House-ad body copy | Vchat copy |
 | `STORY_HOUSE_AD_CTA` | House-ad CTA label | `Learn more` |
 | `STORY_HOUSE_AD_URL` | Optional HTTPS/HTTP house-ad destination | unset |
+| `ENABLE_PAID_STORY_BOOSTS` | Must be exactly `true` to accept/deliver paid boosts in production | `false` |
 | `STORY_AD_ADMIN_PHONES` | E.164 numbers authorized to review ads, grant credit, and safety-stop delivery | unset |
-| `VALMONTPAY_SECRET_KEY` | Server-only ValmontPay tenant key for checkout, verification, and webhook signatures | unset |
+| `VALMONTPAY_SECRET_KEY` | Server-only non-placeholder ValmontPay tenant key (at least 32 bytes) for checkout, verification, and webhook signatures | unset |
 | `VALMONTPAY_API_URL` | ValmontPay API origin | `https://valmontpay.app` |
-| `PUBLIC_APP_URL` | Canonical HTTPS application URL used for the ValmontPay checkout return | unset |
-| `PASSKEY_ORIGIN` | Exact canonical browser origin allowed for WebAuthn ceremonies | request origin |
-| `PASSKEY_RP_ID` | WebAuthn relying-party domain (must match the origin host or a parent domain) | origin host |
+| `PASSKEY_ORIGIN` | Exact canonical HTTPS browser origin allowed for WebAuthn ceremonies | required in production |
+| `PASSKEY_RP_ID` | WebAuthn relying-party domain (must match the origin host or a parent domain) | required in production |
 | `TWILIO_ACCOUNT_SID` | Server-only Twilio account SID for real verification SMS | development transport |
-| `TWILIO_AUTH_TOKEN` | Server-only Twilio API secret | development transport |
+| `TWILIO_AUTH_TOKEN` | Server-only non-placeholder 32-character Twilio API token | development transport |
 | `TWILIO_FROM` | SMS-capable Twilio sender in E.164 format | development transport |
-| `TURN_URLS` | Comma-separated TURN URLs | STUN only |
-| `TURN_SECRET` | HMAC secret for temporary TURN credentials | unset |
+| `TURN_URLS` | Comma-separated TURN URLs | required in production |
+| `TURN_SECRET` | Non-placeholder HMAC secret of at least 32 bytes for temporary TURN credentials | required in production |
+| `METRICS_TOKEN` | Bearer token that enables protected Prometheus metrics | endpoint disabled |
+| `LOG_REQUESTS` | Emit structured request-completion logs outside production | `false` |
+| `READINESS_MIN_FREE_MB` | Minimum free persistence space required for readiness | `16` |
+| `SHUTDOWN_TIMEOUT_MS` | Graceful shutdown deadline | `10000` |
 
-For internet deployment, terminate TLS at a trusted reverse proxy, set
-`NODE_ENV=production`, set `TRUST_PROXY` to the exact proxy hop count or subnet,
-configure Twilio and TURN, use an explicit origin allowlist, set `PASSKEY_ORIGIN`
-and `PASSKEY_RP_ID` to the canonical HTTPS deployment identity, and keep `data/` on
-encrypted persistent storage until the database/object-storage phase replaces it.
+Production mode now fails closed before loading state unless all critical identity,
+proxy, Twilio, TURN, and persistence decisions are explicit. The bundled local
+adapter is rejected unless `ALLOW_TRANSITIONAL_LOCAL_STORAGE=true` and exactly one
+replica is declared. That override is for a controlled pilot—not public paid
+production—and is documented in [the operations runbook](docs/operations.md).
+Validate the effective secret-manager environment with `NODE_ENV=production npm run
+check:env`; `.env.production.example` is a non-secret template.
+
 Changing the passkey RP ID later invalidates existing passkeys, so establish the
-production domain before enrollment. If the advertiser pilot is intentionally
-enabled, set an HTTPS `PUBLIC_APP_URL`,
-store `VALMONTPAY_SECRET_KEY` only in the server secret manager, register
+canonical HTTPS domain before enrollment. If the advertiser pilot is intentionally
+and operationally approved, additionally set `ENABLE_PAID_STORY_BOOSTS=true`, keep
+`VALMONTPAY_SECRET_KEY` only in the server secret manager, register
 `/api/story-ads/valmontpay/webhook` as the tenant webhook at ValmontPay, tightly
 control `STORY_AD_ADMIN_PHONES`, publish ad/review/refund policies, and verify the
 signed webhook path through every proxy before accepting money. This integration
@@ -278,18 +314,28 @@ a secure reset. Protected attachments, profile photos, and Reel videos live unde
 sets/maps are serialized into the schema-v2 snapshot. Expired Status files and
 ended/stale campaign creative files are pruned by the single-node maintenance loop.
 
-This adapter is suitable for deterministic local development and phased feature
-work, not horizontal production scale. It has no multi-process consistency,
-transactional database, object-storage durability, Redis fan-out, or disaster
-recovery.
+This adapter is suitable for deterministic local development and a risk-accepted
+single-node pilot, not horizontal production scale. It has no multi-process
+consistency, transactional database, object-storage durability, or Redis fan-out.
+Offline schema/media backup and integrity-verifying atomic restore tools are tested,
+but there is no online snapshot, point-in-time recovery, or provider-native disaster
+recovery. The exact stop/backup/drill procedure is in
+[`docs/operations.md`](docs/operations.md).
+
+The server separates liveness from dependency-aware readiness, emits structured
+request/startup/shutdown logs, returns request IDs, exposes bearer-protected bounded
+Prometheus metrics, and drains HTTP/Socket.IO work on termination. These controls
+improve operability; they do not remove the persistence and E2EE release blockers.
 
 ## Project layout
 
 ```text
-server.js                  Express/Helmet bootstrap and HTTP server
+server.js                  Validated HTTP bootstrap, health, metrics, and shutdown
 lib/http-auth.js           Cookie parsing and session authentication
 lib/messenger.js           Authenticated REST, media, Socket.IO, and call signaling
 lib/messenger-store.js     Transitional schema-v2 data/service adapter
+lib/runtime-config.js      Fail-closed production environment policy
+lib/local-backup.js        Manifest-verified offline backup/restore primitives
 lib/sms.js                 Twilio or local-only verification transport
 index.html                 Application markup and SVG icon sprite
 public/app.js              Browser client
@@ -297,7 +343,12 @@ public/app.css             Responsive themes and component styles
 public/manifest.webmanifest
 public/sw.js               Static-shell-only service worker
 public/icons/              PWA icons
-test/                      Security and HTTP integration tests
+scripts/                   Environment validation and recovery CLIs
+docs/operations.md         Deployment, monitoring, backup, restore, incident runbook
+.github/workflows/ci.yml    Checks, tests, dependency audit, and image build
+Dockerfile                 Locked production container build
+compose.pilot.yml          Hardened single-node reference deployment
+test/                      Security, HTTP, configuration, and recovery tests
 ```
 
 ## Delivery roadmap
@@ -320,10 +371,12 @@ rather than as nonfunctional demo screens:
    advertiser verification, fraud/abuse response, inventory forecasting, pacing,
    frequency caps, attribution, refunds, tax/accounting controls, and production
    reporting exports.
-5. **Production infrastructure and calling:** PostgreSQL, Redis, object storage,
-   jobs/notifications, observability, abuse operations, backup recovery, and an
-   SFU/TURN architecture for scalable group calls, screen sharing, and waiting
-   rooms.
+5. **Production infrastructure and calling:** fail-closed configuration, container/
+   CI artifacts, baseline observability, graceful draining, and tested transitional
+   offline recovery are implemented. PostgreSQL, Redis, object storage, provider-
+   native point-in-time recovery, jobs/notifications, mature abuse operations, and
+   an SFU architecture for scalable group calls, screen sharing, and waiting rooms
+   remain.
 
 Until phases 2–5 land and receive independent review, Vchat should be treated as a
 securely staged development system—not a finished WhatsApp replacement.
