@@ -305,6 +305,8 @@ function guessCountry() {
 
 function showStep(id) {
   ['step-phone', 'step-code', 'step-profile'].forEach(s => { $(s).hidden = s !== id; });
+  const login = $('login');
+  if (login) login.scrollTop = 0;
 }
 
 async function api(path, body, options = {}) {

@@ -88,14 +88,20 @@ button { cursor: pointer; border: none; background: none; color: inherit; }
 /* ── Login ──────────────────────────────────────────────────── */
 #login {
   position: fixed; inset: 0; z-index: 100;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
   background: var(--panel-alt);
+  overflow-y: auto; overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 24px 0 32px;
 }
 #login::before {
-  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 222px; background: var(--wa-green-dark);
+  content: ''; position: fixed; top: 0; left: 0; right: 0; height: 222px;
+  background: var(--wa-green-dark); pointer-events: none;
 }
 .login-card {
   position: relative; z-index: 1; width: min(92vw, 480px);
+  margin: auto;
   background: var(--panel); border-radius: 6px; box-shadow: var(--shadow-md);
   padding: 40px 48px 44px;
 }
@@ -128,6 +134,11 @@ body.dark .avatar-opt.sel { background: #2a3f5c; }
 .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
 .login-err { color: var(--danger); font-size: 13px; margin-top: 12px; min-height: 18px; }
 .login-hint { margin-top: 18px; font-size: 12.5px; color: var(--text-muted); line-height: 1.6; }
+
+@media (max-width: 600px) {
+  #login { padding: 12px 0 24px; }
+  .login-card { padding: 28px 22px 32px; width: min(94vw, 480px); }
+}
 
 /* ── Phone sign-in ──────────────────────────────────────────── */
 .auth-step[hidden] { display: none; }
